@@ -525,15 +525,18 @@ def crop_and_block(sample, crop_coords, labels_of_interest=None,
     # image by more than keep_area_threshold; these boxes are kept 
     
     # also identify bounding boxes that would lie inside the newly cropped
-    # image by less than keep_area_threshold and more than 10%; we are going 
+    # image by less than keep_area_threshold and more than 30%; we are going 
     # to black out the area of these bounding boxes (together with objects 
     # identified with block_label in the annotations) in the image to prevent 
     # the model from seeing thes partial objects
     
-    # for any object with overlap less than 10% with the cropped
+    # for any object with overlap less than 30% with the cropped
     # sub-image, we only remove the bounding box. We allow the model to see the 
     # content of the partial object 
-
+    
+    if keep_area_threshold < 0.33:
+        keep_area_threshold = 0.33
+   
     
     if labels_of_interest is None:
         # consider all objects
@@ -546,7 +549,7 @@ def crop_and_block(sample, crop_coords, labels_of_interest=None,
                                      (min(row['ybr'], crop_height) - max(row['ytl'], 0)) < keep_area_threshold * 
                                      (row['xbr'] - row['xtl']) * (row['ybr'] - row['ytl']) and 
                                      (min(row['xbr'], crop_width) - max(row['xtl'], 0)) * 
-                                     (min(row['ybr'], crop_height) - max(row['ytl'], 0)) >= 0.1 * 
+                                     (min(row['ybr'], crop_height) - max(row['ytl'], 0)) >= 0.3 * 
                                      (row['xbr'] - row['xtl']) * (row['ybr'] - row['ytl'])) or
                                  row['label'] == block_label else False, axis=1)
     else:
@@ -561,7 +564,7 @@ def crop_and_block(sample, crop_coords, labels_of_interest=None,
                                      (min(row['ybr'], crop_height) - max(row['ytl'], 0)) < keep_area_threshold * 
                                      (row['xbr'] - row['xtl']) * (row['ybr'] - row['ytl']) and 
                                      (min(row['xbr'], crop_width) - max(row['xtl'], 0)) * 
-                                     (min(row['ybr'], crop_height) - max(row['ytl'], 0)) >= 0.1 * 
+                                     (min(row['ybr'], crop_height) - max(row['ytl'], 0)) >= 0.3 * 
                                      (row['xbr'] - row['xtl']) * (row['ybr'] - row['ytl']) and 
                                      row['label'] in labels_of_interest) or
                                  row['label'] == block_label  else False, axis=1)
