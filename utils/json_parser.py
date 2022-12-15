@@ -188,8 +188,8 @@ def parse_json_annotations(json_filename, labels_of_interest: Union[List[str], N
 # but in YOLO format, which is (center_x, center_y, w, h) each normalized to the image's width/height
 class CellMaskDataset:
     def __init__(self, images_path: str, annotations_path: str, labels_of_interest: Union[List[str], None] = None, 
-                 color_depth: int = 14, max_larger_side: int = 2000, max_smaller_side: int = 1600, 
-                 normalize:bool = False, class_names_to_ids_map: dict = DEFAULT_CLASS_NAMES_TO_IDS_MAP) -> None:
+                 color_depth: int = 14, scale_factor: float = 1.0, max_larger_side: int = 2000, max_smaller_side: int = 1600, 
+                 normalize: bool = False, class_names_to_ids_map: dict = DEFAULT_CLASS_NAMES_TO_IDS_MAP) -> None:
         self.images_path = images_path
         self.annotations_path = annotations_path
         # load all images and mask annotations
@@ -203,8 +203,11 @@ class CellMaskDataset:
         self.annotations = list(sorted(os.listdir(annotations_path)))
         self.labels_of_interest = labels_of_interest
         # in order to reduce the memory required for the masks (for instance segmentation models)
-        # the images and the annotations will be resized to have the larger side and the smaller side
-        # both smaller than these two maximum set values
+        # the image and the annotations can be downsized by the passed scale_factor (values >= 1 are 
+        # expected to downsize the image by the factor; it is applied to all images)
+        self.scale_factor = scale_factor
+        # the image is further resized (after applying the passed scale_factor above) to have the 
+        # larger side and the smaller side both smaller than these two maximum set values
         self.max_larger_side = max_larger_side
         self.max_smaller_side = max_smaller_side
         # the scaling factor for normalizing the channels after Tensor
@@ -260,10 +263,16 @@ class CellMaskDataset:
             img = (255 * img.astype(float) / self.channel_scale).astype(np.uint8)
             
         image_height, image_width = img.shape[:2]
-        larger_side: int = max(image_width, image_height)
-        smaller_side: int = min(image_width, image_height)
+        # scale factor
+        scale_factor: float = self.scale_factor
+        
+        larger_side: int = max(int(image_width / scale_factor), int(image_height / scale_factor))
+        smaller_side: int = min(int(image_width / scale_factor), int(image_height / scale_factor))
+        
         if larger_side > self.max_larger_side or smaller_side > self.max_smaller_side:
-            scale_factor: float = max(float(larger_side) / self.max_larger_side, float(smaller_side) / self.max_smaller_side)
+            scale_factor *= max(float(larger_side) / self.max_larger_side, float(smaller_side) / self.max_smaller_side)
+        
+        if scale_factor != 1:
             # for decimating an image, cv2.INTER_AREA is the preferred method (scale_factor is always > 1) 
             img = cv2.resize(img, (int(image_width / scale_factor), int(image_height / scale_factor)), interpolation = cv2.INTER_AREA)
             # update all the masks and annotations
