@@ -27,12 +27,43 @@ def iou_batch(bboxes1: np.ndarray, bboxes2: np.ndarray) -> np.ndarray:
     )  # pairwise height of intersection rectangle NxM
     inter_areas = inter_ws * inter_hs  # pairwise intersection area NxM
     union_areas = (
-        (bboxes1[..., 2] - bboxes1[..., 0]) * (bboxes1[..., 3] - bboxes1[..., 1])
-        + (bboxes2[..., 2] - bboxes2[..., 0]) * (bboxes2[..., 3] - bboxes2[..., 1])
-        - inter_areas
-        + 1e-30
+            (bboxes1[..., 2] - bboxes1[..., 0]) * (bboxes1[..., 3] - bboxes1[..., 1])
+            + (bboxes2[..., 2] - bboxes2[..., 0]) * (bboxes2[..., 3] - bboxes2[..., 1])
+            - inter_areas
+            + 1e-30
     )  # pairwise union area NxM
     return inter_areas / union_areas  # pairwise intersection divided by union (iou) NxM
+
+
+def overlap_batch(bboxes1: np.ndarray, bboxes2: np.ndarray, ordered: bool = False) -> np.ndarray:
+    """Given Nx4 & Mx4 ndarrays of bounding boxes, compute pairwise overlaps defined as the intersection over
+    the smallest box area (ordered set to False); a small box fully enclosed by a large box has an "overlap" of 1.
+    if ordered is set to 1, the overlap is the intersection over the area of the box from bboxes2 set. In this case,
+    overlap is close to 1 only if the box from bboxes2 lies inside the box from bboxes1"""
+
+    # expand dims to allow computing pairwise overlap via outerproducts (creates NxM below)
+    bboxes1 = np.expand_dims(bboxes1, 1)  # Nx1x4
+    bboxes2 = np.expand_dims(bboxes2, 0)  # 1xMx4
+
+    # determine the (x, y) coordinates of the intersection rectangle
+    inter_x1s = np.maximum(bboxes1[..., 0], bboxes2[..., 0])  # pairwise max NxM
+    inter_y1s = np.maximum(bboxes1[..., 1], bboxes2[..., 1])  # pairwise max NxM
+    inter_x2s = np.minimum(bboxes1[..., 2], bboxes2[..., 2])  # pairwise min NxM
+    inter_y2s = np.minimum(bboxes1[..., 3], bboxes2[..., 3])  # pairwise min NxM
+    inter_ws = np.maximum(0., inter_x2s - inter_x1s)  # pairwise width of intersection rectangle NxM
+    inter_hs = np.maximum(0., inter_y2s - inter_y1s)  # pairwise height of intersection rectangle NxM
+    inter_areas = inter_ws * inter_hs  # pairwise intersection area NxM
+    if ordered:
+        # use the box area of bboxes2 as the denominator
+        smallest_bb_areas = (bboxes2[..., 2] - bboxes2[..., 0]) * (bboxes2[..., 3] - bboxes2[..., 1])
+    else:
+        smallest_bb_areas = (np.minimum((bboxes1[..., 2] - bboxes1[..., 0])
+                                        * (bboxes1[..., 3] - bboxes1[..., 1]),
+                                        (bboxes2[..., 2] - bboxes2[..., 0])
+                                        * (bboxes2[..., 3] - bboxes2[..., 1]))
+                             + 1e-30)  # smallest bb area of each paired box NXM
+    return inter_areas / smallest_bb_areas  # pairwise intersection divided by smallest box (overlap) NxM
+
 
 # a function to return the area of bounding box
 def box_area(box: np.array) -> float:
@@ -42,14 +73,14 @@ def box_area(box: np.array) -> float:
     Return the area.
     """
     return (box[3] - box[1]) * (box[2] - box[0])
-    
-    
+
+
 def get_crop_corners(
-    image_width: int,
-    image_height: int,
-    overlap_in_x: int = 80,
-    overlap_in_y: int = 80,
-    input_size: Tuple[int, int] = (1200, 800),
+        image_width: int,
+        image_height: int,
+        overlap_in_x: int = 80,
+        overlap_in_y: int = 80,
+        input_size: Tuple[int, int] = (1200, 800),
 ) -> List[List[int]]:
     """
     A function to get the coordinates of the sub-images/crops given the image dimensions, the model input size
@@ -93,9 +124,10 @@ def get_crop_corners(
             crop_corners.append(crop_coords)
 
     return crop_corners
-   
-   
-def show_detections(input_image: Union[Image.Image, np.array], predictions: Dict[str, Union[list, np.array]], label_map: Dict[int, str]):
+
+
+def show_detections(input_image: Union[Image.Image, np.array], predictions: Dict[str, Union[list, np.array]],
+                    label_map: Dict[int, str]):
     """
     A function to display the predictions from the YOLO or Mask R-CNN model. 
     
@@ -104,24 +136,24 @@ def show_detections(input_image: Union[Image.Image, np.array], predictions: Dict
     # colors for displaying bounding boxes
     COLORS: List[Tuple[int, int, int]] = [
         (0, 0, 255),
-        (0, 255, 0),
         (255, 0, 0),
+        (0, 255, 0),
         (255, 0, 255),
         (0, 255, 255),
         (255, 255, 0),
     ]
-    
+
     class_ids: List[int] = list(label_map.keys())
     if isinstance(input_image, np.ndarray):
         image: np.array = input_image.copy()
     else:
         # convert to a numpy array
         image: np.array = np.array(input_image)
-    
+
     # convert to 3-channels
     if len(image.shape) < 3:
         image = np.repeat(np.expand_dims(image, axis=2), 3, axis=2)
-    
+
     boxes = predictions['boxes']
     labels = predictions['labels']
     if 'masks' in predictions:
@@ -137,7 +169,7 @@ def show_detections(input_image: Union[Image.Image, np.array], predictions: Dict
         else:
             color = COLORS[labels[i] % len(COLORS)]
             text = label_map[labels[i]]
-        
+
         if 'masks' in predictions:
             color_mask = color * np.repeat(np.expand_dims(masks[i], axis=2), 3, axis=2)
             blended = 0.4 * color_mask
@@ -146,8 +178,7 @@ def show_detections(input_image: Union[Image.Image, np.array], predictions: Dict
 
             # store the blended ROI in the original image
             image[ytl:ybr, xtl:xbr] = blended.astype(np.uint8)
-        # add the bounding box with yellow color
-        color = (255, 255, 0)
+
         cv2.rectangle(image, (xtl, ytl), (xbr, ybr), color, 1)
         cv2.putText(
             image, text, (xtl, ytl + 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1
