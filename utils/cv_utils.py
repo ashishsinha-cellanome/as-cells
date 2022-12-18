@@ -65,7 +65,7 @@ def overlap_batch(bboxes1: np.ndarray, bboxes2: np.ndarray, ordered: bool = Fals
     return inter_areas / smallest_bb_areas  # pairwise intersection divided by smallest box (overlap) NxM
 
 
-def iou_mask_pair(box1: np.ndarry, mask1: np.ndarray, box2: np.ndarry, mask2: np.ndarray) -> float:
+def iou_mask_pair(box1: np.ndarray, mask1: np.ndarray, box2: np.ndarray, mask2: np.ndarray) -> float:
     """
     Given two np.uint8 M1xN1 and M2xN2 numpy arrays (mask1, mask2) for two object masks and 
     two (4,) (4-element) integer numpy arrays of the top-left/bottom-right corners of the 
