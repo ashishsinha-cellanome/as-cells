@@ -9,4 +9,4 @@ The model requires two files:
 
 YOLOv5 is impleneted and trained in PyTorch framework. To run inference efficiently and without the need for PyTorch, the model is then converted to ONNX and is run using OpenCV dnn module below. 
 
-To be able to run the converted model on GPU, OpenCV built with CUDA should be installed. Otherwise, the model runs on CPU with longer runtimes. 
+To be able to run the converted model on GPU, OpenCV built with CUDA should be installed. Otherwise, the model runs on CPU with longer runtimes. The ONNX conversion and running the model with OpneCV 4.5.4 build with CUDA dnn has been tested with yolov5 release v6.2 and PyTorch 1.11.0 (ONNX opset 12 is used for conversion). OpenCV dnn may not be able to read and run ONNX models converted with newer versions of yolov5 (e.g., v7.0) or PyTorch (e.g., 1.12.0) for conversion. ONNX version is not important.    
