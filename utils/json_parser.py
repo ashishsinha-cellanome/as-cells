@@ -13,7 +13,8 @@ from typing import List, Final, Dict, Union
 # the values (class IDs) should be consistent with results returned by the trained model
 DEFAULT_CLASS_NAMES_TO_IDS_MAP: Final[Dict[str, int]] = {'Cell': 1, 'dying/dead cells': 2, 'Bead': 3, 'Cluster': 4} 
 
-def parse_json_annotations(json_filename, labels_of_interest: Union[List[str], None] = None, download_image: bool = False):
+def parse_json_annotations(json_filename, labels_of_interest: Union[List[str], None] = None, download_image: bool = False, 
+                           percentage_to_expand_bbox_boundaries: float = 0.0):
     """
     A function to parse the JSON annotation files and extract both the bounding boxes and
     the polygon annotations.
@@ -150,21 +151,27 @@ def parse_json_annotations(json_filename, labels_of_interest: Union[List[str], N
             if len(pos[0]) == 0:
                 continue
             
-            # expand by a couple of pixels as the masks may not be covering the boundaries
-            xmin = np.min(pos[1]) - 1
-            xmax = np.max(pos[1]) + 1
-            ymin = np.min(pos[0]) - 1
-            ymax = np.max(pos[0]) + 1
+            xmin = np.min(pos[1])
+            xmax = np.max(pos[1])
+            ymin = np.min(pos[0])
+            ymax = np.max(pos[0])
             
             if xmin >= xmax or ymin >= ymax:
                 continue
             
+            # expand the box boundaries by a few pixels as the masks may not be covering the boundaries
+            delta_x: int = int(percentage_to_expand_bbox_boundaries * (xmax - xmin) / 2)
+            delta_y: int = int(percentage_to_expand_bbox_boundaries * (ymax - ymin) / 2)
+            
+            delta_x = max(1, delta_x)
+            delta_y = max(1, delta_y)
+            
             masks.append(mask)
             annotations_df = pd.concat([annotations_df, pd.DataFrame(data = 
-                                                                    [{'xtl': max(0, xmin), 
-                                                                      'ytl': max(0, ymin), 
-                                                                      'xbr': min(image_width, xmax), 
-                                                                      'ybr': min(image_height, ymax), 
+                                                                    [{'xtl': max(0, xmin - delta_x), 
+                                                                      'ytl': max(0, ymin - delta_y), 
+                                                                      'xbr': min(image_width, xmax + delta_x), 
+                                                                      'ybr': min(image_height, ymax + delta_y), 
                                                                       'label': label}], index=[len(annotations_df)])])
             
             
@@ -188,7 +195,8 @@ def parse_json_annotations(json_filename, labels_of_interest: Union[List[str], N
 # but in YOLO format, which is (center_x, center_y, w, h) each normalized to the image's width/height
 class CellMaskDataset:
     def __init__(self, images_path: str, annotations_path: str, labels_of_interest: Union[List[str], None] = None, 
-                 color_depth: int = 14, scale_factor: float = 1.0, max_larger_side: int = 2000, max_smaller_side: int = 1600, 
+                 percentage_to_expand_bbox_boundaries: float = 0.2, color_depth: int = 14, 
+                 scale_factor: float = 1.0, max_larger_side: int = 2000, max_smaller_side: int = 1600, 
                  normalize: bool = False, class_names_to_ids_map: dict = DEFAULT_CLASS_NAMES_TO_IDS_MAP) -> None:
         self.images_path = images_path
         self.annotations_path = annotations_path
@@ -217,6 +225,7 @@ class CellMaskDataset:
         self.channel_scale = 2 ** color_depth - 1
         self.normalize = normalize
         self.class_names_to_ids_map = class_names_to_ids_map
+        self.percentage_to_expand_bbox_boundaries = percentage_to_expand_bbox_boundaries
         
     def __getitem__(self, idx: int):
         # load images and masks
@@ -238,7 +247,7 @@ class CellMaskDataset:
             download_image: bool = True
                 
         # parse the annotations file
-        annotations = parse_json_annotations(annotation_path, self.labels_of_interest, download_image)
+        annotations = parse_json_annotations(annotation_path, self.labels_of_interest, download_image, self.percentage_to_expand_bbox_boundaries)
         
         # map the class names included in the annotations DataFrame to class IDs if a 
         # mapping is passed
