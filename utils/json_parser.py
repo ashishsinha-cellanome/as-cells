@@ -6,6 +6,8 @@ import cv2
 import pandas as pd
 import json
 import requests
+import pycocotools
+from pycocotools import mask as coco_mask_util
 from typing import List, Final, Dict, Union
 
 # a mapping between the class names and class IDs
@@ -13,8 +15,12 @@ from typing import List, Final, Dict, Union
 # the values (class IDs) should be consistent with results returned by the trained model
 DEFAULT_CLASS_NAMES_TO_IDS_MAP: Final[Dict[str, int]] = {'Cell': 1, 'dying/dead cells': 2, 'Bead': 3, 'Cluster': 4} 
 
-def parse_json_annotations(json_filename, labels_of_interest: Union[List[str], None] = None, download_image: bool = False, 
-                           percentage_to_expand_bbox_boundaries: float = 0.0):
+def parse_json_annotations(json_filename: str, 
+                           labels_of_interest: Union[List[str], None] = None, 
+                           download_image: bool = False, 
+                           percentage_to_expand_bbox_boundaries: float = 0.0,
+                           min_diameter_for_annotated_objects: float = 0.0,
+                           return_masks_in_coco_rle_format: bool = False):
     """
     A function to parse the JSON annotation files and extract both the bounding boxes and
     the polygon annotations.
@@ -26,14 +32,20 @@ def parse_json_annotations(json_filename, labels_of_interest: Union[List[str], N
             a label not included in this list will be ignored. If None passed, all the objects will be returned.   
         download_image (bool): If set to True, the image will also be downloaded from the URL
             provided in the annotation file.
+        min_diameter_for_annotated_objects (float): The minimum diameter in um for objects to keep.
+        return_masks_in_coco_rle_format (bool): If set, the masks are reported in COCO's RLE format to save 
+            memory. 
     Returns:
         a dictionary with keys and values as 
             'name'(str): image name, 
             'image'(numpy.ndarray): H x W (Gray scale) or H x W x 3 image array in RGB format,
             'annotations' (pandas DataFrame): A DataFrame with columns 'xtl', 'ytl', 'xbr', 'ybr', 'label'.
                 The i-th row is the bounding box coordinates and the label for the i-th annotated object, 
-            'masks'(list of numpy.ndarrays): masks[i] is the H x W array mask for the i-th object with 
-                value 1 for the object. 
+            'masks'(list of numpy.ndarrays or COCO RLE format dictionaries): If return_masks_in_coco_rle_format is
+                set to False, masks[i] is the H x W array mask for the i-th object with value 1 for the object. If
+                return_masks_in_coco_rle_format is set to True, the numpy mask above is converted to COCO RLE format
+                for masks (a dictionary with keys as 'size, 'count' and values as 2-element list and bytes 
+                (encoded mask).
     """
     
     #  drop the path from the json_filename to get the filename
@@ -82,6 +94,21 @@ def parse_json_annotations(json_filename, labels_of_interest: Union[List[str], N
         except Exception as ex:
             print(f"[EXCEPTION]: Downloading image {image_name} failed on {repr(ex)}")
 
+    
+    # filter small objects from annotations
+    if image_height == 1600 and image_width == 2000:
+        mag: int = 10
+        pixel_size: float = 4.54
+        
+    elif image_height == 4512 and image_width == 4512:
+        mag: int = 9
+        pixel_size: float = 2.74
+    else:
+        print(f"[WARNING]: The image resolution for {json_filename} is not supported! Not possible to filter small objects")
+        mag: int = 0
+        pixel_size: float = 1.0
+    
+    min_diameter_in_pixels: int = int(min_diameter_for_annotated_objects * mag / pixel_size)
     
     # number of objects
     num_objects: int = len(json_annotations.get('annotations'))
@@ -156,7 +183,8 @@ def parse_json_annotations(json_filename, labels_of_interest: Union[List[str], N
             ymin = np.min(pos[0])
             ymax = np.max(pos[0])
             
-            if xmin >= xmax or ymin >= ymax:
+            # filter the small objects here before modifying the bounding boxes
+            if xmin >= xmax or ymin >= ymax or max(xmax - xmin, ymax - ymin) < min_diameter_in_pixels:
                 continue
             
             # expand the box boundaries by a few pixels as the masks may not be covering the boundaries
@@ -165,8 +193,11 @@ def parse_json_annotations(json_filename, labels_of_interest: Union[List[str], N
             
             delta_x = max(1, delta_x)
             delta_y = max(1, delta_y)
-            
-            masks.append(mask)
+            if return_masks_in_coco_rle_format:
+                encoded_mask: dict = coco_mask_util.encode(np.asarray(mask, order="F"))    
+                masks.append(encoded_mask)
+            else:
+                masks.append(mask)
             annotations_df = pd.concat([annotations_df, pd.DataFrame(data = 
                                                                     [{'xtl': max(0, xmin - delta_x), 
                                                                       'ytl': max(0, ymin - delta_y), 
