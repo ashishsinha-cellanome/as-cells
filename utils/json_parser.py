@@ -579,7 +579,11 @@ def crop_and_block(sample, crop_coords, labels_of_interest=None,
             # find the overlapping part between the object's bounding box (where the mask is defined within)
             # and the crop
             box_xtl, box_ytl, box_xbr, box_ybr = df.loc[obj_id, ['xtl', 'ytl', 'xbr', 'ybr']].values
-            
+            # the upper bound for xmin, ymin (the outher min) is not really needed becuase
+            # the DataFrame is already filtered to keep overlapping bounding boxes with the crop 
+            # with xc1 < box_xbr and yc1 < box_ybr for df.index
+            # similarly, the lower bound of 0 for xmax, ymax (the inner max) is not needed 
+            # becuase the DataFrame is already filtered and box_xtl < xbr2 and box_ytl < yc2 for df.index
             xmin = min(max(0, xc1 - box_xtl), box_xbr - box_xtl)
             xmax = min(max(0, xc2 - box_xtl), box_xbr - box_xtl)
             ymin = min(max(0, yc1 - box_ytl), box_ybr - box_ytl)
@@ -665,10 +669,10 @@ def crop_and_block(sample, crop_coords, labels_of_interest=None,
     if 'masks' in sample:
         # keep the masks for the objects that we need to keep 
         # (lie in the crop)
-        out_masks = []
-        for obj_id in df[idxs_to_keep].index:
+        masks = [masks[i] for i in df[idxs_to_keep].index]
+        for i, obj_id in enumerate(df[idxs_to_keep].index):
             box_xtl, box_ytl, box_xbr, box_ybr = df.loc[obj_id, ['xtl', 'ytl', 'xbr', 'ybr']].values
-            out_masks.append((masks[obj_id] * crop_mask[box_ytl:box_ybr, box_xtl:box_xbr]).astype(np.uint8))
+            masks[i] = (masks[i] * crop_mask[box_ytl:box_ybr, box_xtl:box_xbr]).astype(np.uint8)
     
     # reset the indexes in the annotations DataFrame
     df = df[idxs_to_keep].reset_index(drop=True)
@@ -679,7 +683,7 @@ def crop_and_block(sample, crop_coords, labels_of_interest=None,
     
     if 'masks' in sample:
         return  {'name': name, 'image': image[yc1: yc2, xc1: xc2] * crop_mask, 
-                 'annotations': df, 'masks': out_masks} 
+                 'annotations': df, 'masks': masks} 
     
     return  {'name': name, 'image': image[yc1: yc2, xc1: xc2] * crop_mask, 'annotations': df}
     
