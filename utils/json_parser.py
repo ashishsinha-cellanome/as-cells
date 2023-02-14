@@ -8,12 +8,15 @@ import json
 import requests
 import pycocotools
 from pycocotools import mask as coco_mask_util
-from typing import List, Final, Dict, Union
+from typing import List, Final, Dict, Union, Tuple
 
 # a mapping between the class names and class IDs
 # this dictionary should have identical string keys as the class names used in annotations
 # the values (class IDs) should be consistent with results returned by the trained model
 DEFAULT_CLASS_NAMES_TO_IDS_MAP: Final[Dict[str, int]] = {'Cell': 1, 'dying/dead cells': 2, 'Bead': 3, 'Cluster': 4} 
+
+# optical characteristics of the images (used to map the minimum diameter of objects in um to pixels)
+OPTICAL_CHARACTERISTICS: Final[Dict[Tuple, Dict[str, float]]] = {(2000, 1600): {'mag': 10.0, 'pixel_size': 4.54}, (4512, 4512): {'mag': 9.0, 'pixel_size': 2.74}}
 
 def parse_json_annotations(json_filename: str, 
                            labels_of_interest: Union[List[str], None] = None, 
@@ -45,7 +48,7 @@ def parse_json_annotations(json_filename: str,
                 set to False, masks[i] is the H x W array mask for the i-th object with value 1 for the object. If
                 return_masks_in_coco_rle_format is set to True, the numpy mask above is converted to COCO RLE format
                 for masks (a dictionary with keys as 'size, 'count' and values as 2-element list and bytes 
-                (encoded mask).
+                (encoded mask)).
     """
     
     #  drop the path from the json_filename to get the filename
@@ -96,16 +99,12 @@ def parse_json_annotations(json_filename: str,
 
     
     # filter small objects from annotations
-    if image_height == 1600 and image_width == 2000:
-        mag: int = 10
-        pixel_size: float = 4.54
-        
-    elif image_height == 4512 and image_width == 4512:
-        mag: int = 9
-        pixel_size: float = 2.74
+    if (image_width, image_height) in OPTICAL_CHARACTERISTICS:
+        mag: float = OPTICAL_CHARACTERISTICS[(image_width, image_height)]['mag']
+        pixel_size: float = OPTICAL_CHARACTERISTICS[(image_width, image_height)]['pixel_size']
     else:
         print(f"[WARNING]: The image resolution for {json_filename} is not supported! Not possible to filter small objects")
-        mag: int = 0
+        mag: float = 0
         pixel_size: float = 1.0
     
     min_diameter_in_pixels: int = int(min_diameter_for_annotated_objects * mag / pixel_size)
@@ -164,24 +163,15 @@ def parse_json_annotations(json_filename: str,
             continue
         
         for poly in polygon_points_list:
-            # pandas is just used to simplicity
+            # pandas is just used for simplicity
             polygon_points: np.ndarray = pd.DataFrame(poly).values.astype(np.int32)
-            # CV2 contours format
-            polygon_points = np.expand_dims(polygon_points, axis=1)
-            mask: np.ndarray = np.zeros((image_height, image_width), np.uint8)
-            # create the mask for the object (the mask value is set to 1 for the object)
-            cv2.drawContours(mask, [polygon_points], 0, 1, -1)
-            # masks[obj_id] = cv2.bitwise_or(masks[obj_id], mask)
             
-            
-            pos = np.where(mask)
-            if len(pos[0]) == 0:
-                continue
-            
-            xmin = np.min(pos[1])
-            xmax = np.max(pos[1])
-            ymin = np.min(pos[0])
-            ymax = np.max(pos[0])
+            # the bounding box around the polygon points
+            # we draw the mask (polygon) within this confined box to save processing
+            xmin: int = max(0, np.min(polygon_points[:, 0]))
+            xmax: int = min(image_width, np.max(polygon_points[:, 0]))
+            ymin: int = max(0, np.min(polygon_points[:, 1]))
+            ymax: int = min(image_height, np.max(polygon_points[:, 1]))
             
             # filter the small objects here before modifying the bounding boxes
             if xmin >= xmax or ymin >= ymax or max(xmax - xmin, ymax - ymin) < min_diameter_in_pixels:
@@ -193,16 +183,29 @@ def parse_json_annotations(json_filename: str,
             
             delta_x = max(1, delta_x)
             delta_y = max(1, delta_y)
+            
+            xmin = max(0, xmin - delta_x)
+            ymin = max(0, ymin - delta_y)
+            xmax = min(image_width, xmax + delta_x)
+            ymax = min(image_height, ymax + delta_y)
+            
+            # draw the polygon mask within the bounding box
+            # CV2 contours format
+            polygon_points = np.expand_dims(polygon_points, axis=1)
+            mask: np.ndarray = np.zeros((ymax - ymin, xmax - xmin), np.uint8)
+            # create the mask for the object (the mask value is set to 1 for the object)
+            cv2.drawContours(mask, [polygon_points - np.array([xmin, ymin])], 0, 1, -1)
+            
             if return_masks_in_coco_rle_format:
                 encoded_mask: dict = coco_mask_util.encode(np.asarray(mask, order="F"))    
                 masks.append(encoded_mask)
             else:
                 masks.append(mask)
             annotations_df = pd.concat([annotations_df, pd.DataFrame(data = 
-                                                                    [{'xtl': max(0, xmin - delta_x), 
-                                                                      'ytl': max(0, ymin - delta_y), 
-                                                                      'xbr': min(image_width, xmax + delta_x), 
-                                                                      'ybr': min(image_height, ymax + delta_y), 
+                                                                    [{'xtl': xmin, 
+                                                                      'ytl': ymin, 
+                                                                      'xbr': xmax, 
+                                                                      'ybr': ymax, 
                                                                       'label': label}], index=[len(annotations_df)])])
             
             
@@ -227,6 +230,7 @@ def parse_json_annotations(json_filename: str,
 class CellMaskDataset:
     def __init__(self, images_path: str, annotations_path: str, labels_of_interest: Union[List[str], None] = None, 
                  percentage_to_expand_bbox_boundaries: float = 0.2, color_depth: int = 14, 
+                 min_diameter_for_annotated_objects: float = 0.0, 
                  scale_factor: float = 1.0, max_larger_side: int = 2000, max_smaller_side: int = 1600, 
                  normalize: bool = False, class_names_to_ids_map: dict = DEFAULT_CLASS_NAMES_TO_IDS_MAP) -> None:
         self.images_path = images_path
@@ -257,6 +261,11 @@ class CellMaskDataset:
         self.normalize = normalize
         self.class_names_to_ids_map = class_names_to_ids_map
         self.percentage_to_expand_bbox_boundaries = percentage_to_expand_bbox_boundaries
+        # minimum diameter of objects to keep in micro meter, objects smaller than this
+        # minimum diameter are expected from the returned annotations
+        # only 2000x1600 and 4512x4512 image resolutions are supported as this
+        # diameter should be converted to a number of pixels based on magnification and sensor pixel size
+        self.min_diameter_for_annotated_objects = min_diameter_for_annotated_objects
         
     def __getitem__(self, idx: int):
         # load images and masks
@@ -278,7 +287,12 @@ class CellMaskDataset:
             download_image: bool = True
                 
         # parse the annotations file
-        annotations = parse_json_annotations(annotation_path, self.labels_of_interest, download_image, self.percentage_to_expand_bbox_boundaries)
+        annotations = parse_json_annotations(json_filename = annotation_path, 
+                                             labels_of_interest = self.labels_of_interest, 
+                                             download_image = download_image, 
+                                             percentage_to_expand_bbox_boundaries = self.percentage_to_expand_bbox_boundaries, 
+                                             min_diameter_for_annotated_objects = self.min_diameter_for_annotated_objects,
+                                             return_masks_in_coco_rle_format = False)
         
         # map the class names included in the annotations DataFrame to class IDs if a 
         # mapping is passed
@@ -318,21 +332,22 @@ class CellMaskDataset:
             # update all the masks and annotations
             annotations['annotations'][['xtl', 'ytl', 'xbr', 'ybr']] = annotations['annotations'][['xtl', 'ytl', 'xbr', 'ybr']].div(scale_factor).astype(int)
             
-            for idx in range(len(annotations['masks'])):
-                annotations['masks'][idx] = cv2.resize(annotations['masks'][idx], 
-                                                       (int(image_width / scale_factor), int(image_height / scale_factor)),
-                                                       interpolation = cv2.INTER_NEAREST)
-                
-        
             # make sure no box width/height becomes zero after the resize
-            annotations['annotations'].reset_index(inplace=True, drop=True)
             # only keep boxes with positive width and height
             annotations['annotations'] = annotations['annotations'][
                 (annotations['annotations']['ybr'] - annotations['annotations']['ytl'] > 0) & 
                 (annotations['annotations']['xbr'] - annotations['annotations']['xtl'] > 0)]
-        
+            
+            # keep the corresponding masks after resizing
             annotations['masks'] = [annotations['masks'][i] for i in annotations['annotations'].index]
+            # reset the index
             annotations['annotations'].reset_index(inplace=True, drop=True)
+            
+            # now resize the masks (note that they are defined within the bounding boxes)
+            for idx in range(len(annotations['masks'])):
+                box_xtl, box_ytl, box_xbr, box_ybr = annotations['annotations'].loc[idx, ['xtl', 'ytl', 'xbr', 'ybr']].values
+                annotations['masks'][idx] = cv2.resize(annotations['masks'][idx], (box_xbr - box_xtl, box_ybr - box_ytl), interpolation = cv2.INTER_NEAREST)
+                
         
         annotations['image'] = img
         
@@ -511,7 +526,7 @@ def crop_and_block(sample, crop_coords, labels_of_interest=None,
             for passing the image name, the image in np.uint8 1/3-channel numpy array, 
             the bounding boxes pandas DataFrame (with columns 'xtl', 'ytl', 'xbr', 'ybr') 
             and optionally the list of masks for annotated each object (each as a 
-            numpy array of the same size as the image).
+            numpy array of the same size the the bounding box specified in "annotations").
         crop_coords (4-tuple or 4-element list of int): xtl, ytl, xbr, and ybr 
             box coordinates for cropping.
         labels_of_interest (list of integers or strings or None): List of classnames or 
@@ -544,10 +559,6 @@ def crop_and_block(sample, crop_coords, labels_of_interest=None,
         # incorrect input dimensions
         return None
     
-    # transform the bounding boxes
-    df[['xtl', 'xbr']] = df[['xtl', 'xbr']] - xc1
-    df[['ytl', 'ybr']] = df[['ytl', 'ybr']] - yc1
-    
     # sizes of cropped image
     crop_width = xc2 - xc1
     crop_height = yc2 - yc1
@@ -556,17 +567,29 @@ def crop_and_block(sample, crop_coords, labels_of_interest=None,
     # keep the ones that have some non-zero overlap
         
     df = df[df.apply(lambda row: True if 
-                     max(0, min(row['xbr'], crop_width) - max(row['xtl'], 0)) * \
-                     max(0, min(row['ybr'], crop_height) - max(row['ytl'], 0)) > 0\
+                     max(0, min(row['xbr'] - xc1, crop_width) - max(row['xtl'] - xc1, 0)) * \
+                     max(0, min(row['ybr'] - yc1, crop_height) - max(row['ytl'] - yc1, 0)) > 0\
                      else False, axis = 1)]
     
-    # crop the masks is available, and only keep the ones inside the crop
+    # crop the masks if available, and only keep the ones inside the crop
     # we further remove or block the partial objects
     if 'masks' in sample:
         masks = []
         for obj_id in df.index:
-            masks.append(sample['masks'][obj_id][yc1: yc2, xc1: xc2])
+            # find the overlapping part between the object's bounding box (where the mask is defined within)
+            # and the crop
+            box_xtl, box_ytl, box_xbr, box_ybr = df.loc[obj_id, ['xtl', 'ytl', 'xbr', 'ybr']].values
+            
+            xmin = min(max(0, xc1 - box_xtl), box_xbr - box_xtl)
+            xmax = min(max(0, xc2 - box_xtl), box_xbr - box_xtl)
+            ymin = min(max(0, yc1 - box_ytl), box_ybr - box_ytl)
+            ymax = min(max(0, yc2 - box_ytl), box_ybr - box_ytl)
+            
+            masks.append(sample['masks'][obj_id][ymin: ymax, xmin: xmax])
     
+    # transform the bounding boxes
+    df[['xtl', 'xbr']] = df[['xtl', 'xbr']] - xc1
+    df[['ytl', 'ybr']] = df[['ytl', 'ybr']] - yc1
     # reset the index
     df = df.reset_index(drop=True)
 
@@ -644,7 +667,8 @@ def crop_and_block(sample, crop_coords, labels_of_interest=None,
         # (lie in the crop)
         out_masks = []
         for obj_id in df[idxs_to_keep].index:
-            out_masks.append((masks[obj_id] * crop_mask).astype(np.uint8))
+            box_xtl, box_ytl, box_xbr, box_ybr = df.loc[obj_id, ['xtl', 'ytl', 'xbr', 'ybr']].values
+            out_masks.append((masks[obj_id] * crop_mask[box_ytl:box_ybr, box_xtl:box_xbr]).astype(np.uint8))
     
     # reset the indexes in the annotations DataFrame
     df = df[idxs_to_keep].reset_index(drop=True)
@@ -672,7 +696,7 @@ def show_sample(sample, class_id_to_name_mapping=None):
             for passing the image name, the image in np.uint8 1/3-channel numpy array, 
             the bounding boxes pandas DataFrame (with columns 'xtl', 'ytl', 'xbr', 'ybr', 
             'label') and optionally the list of masks for annotated each object (each as a 
-            numpy array of the same size as the image).
+            numpy array of the same size as the object's bounding box returned in "annotations").
         class_id_to_name_mapping (dictionary or None): A dictionary with keys as class IDs 
             and values as class names. Should be passed if sample['annotations']['label']
             includes class IDs instead of names. Otherwise, None should be passed. 
@@ -718,7 +742,7 @@ def show_sample(sample, class_id_to_name_mapping=None):
         cv2.putText(image, text, (xtl, ytl + 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
         
         if 'masks' in sample:
-            color_mask = color * np.repeat(np.expand_dims(masks[i][ytl:ybr, xtl:xbr], axis=2), 3, axis=2)
+            color_mask = color * np.repeat(np.expand_dims(masks[i], axis=2), 3, axis=2)
             blended = 0.4 * color_mask
             blended[color_mask == 0] = image[ytl:ybr, xtl:xbr][color_mask == 0]
             blended[color_mask > 0] += 0.6 * image[ytl:ybr, xtl:xbr][color_mask > 0]
