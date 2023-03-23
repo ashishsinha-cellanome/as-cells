@@ -9,7 +9,7 @@ using namespace std;
 using namespace cv::dnn;
 
 // Constants
-const string MODEL_WEIGHTS_PATH = "weights/microscope-images-batch-1-091922-not-reviewed_20_epochs.onnx";
+const string MODEL_WEIGHTS_PATH = "weights/batch_1_batch_2_batch_3_images_20_epochs.onnx";
 const string CLASS_NAMES_PATH = "weights/cells.names";
 const float SCORE_THRESHOLD = 0.5; 
 const float DEFAULT_DETECTION_CONFIDENCE = 0.4;
@@ -353,7 +353,8 @@ public:
         {
             cout << "Using GPU device" << endl;
             _net.setPreferableBackend(DNN_BACKEND_CUDA);
-            _net.setPreferableTarget(DNN_TARGET_CUDA);
+             // _net.setPreferableTarget(DNN_TARGET_CUDA);
+            _net.setPreferableTarget(DNN_TARGET_CUDA_FP16);
         }
     }
 
@@ -871,7 +872,7 @@ int main(int argc, char** argv)
 
         auto end = chrono::system_clock::now();
         auto elapsed = end - start;
-        string elapsedTime = format("Running YOLOv5 model took : %.2f ms", (elapsed.count() / 10000.0));
+        string elapsedTime = format("Running YOLOv5 model took : %.2f ms", (elapsed.count() / 1000000.0));
         cout << elapsedTime << endl;
 
         cout << "Successfully run the model!" << endl;
