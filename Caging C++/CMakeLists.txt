@@ -6,9 +6,8 @@ find_package( OpenCV REQUIRED )
 
 include_directories( ${OpenCV_INCLUDE_DIRS})
 
-MACRO(add_example name)
-  ADD_EXECUTABLE(${name} ${name}.cpp)
-  TARGET_LINK_LIBRARIES(${name} ${OpenCV_LIBS})
-ENDMACRO()
+ADD_EXECUTABLE(caging caging.cpp src/Yolov5ObjectDetector.cpp src/utils.cpp)
+TARGET_INCLUDE_DIRECTORIES(caging PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+TARGET_LINK_LIBRARIES(caging ${OpenCV_LIBS})
 
-add_example(caging)
+
