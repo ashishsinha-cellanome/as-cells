@@ -69,6 +69,15 @@ def parse_json_annotations(json_filename: str,
                 'masks': np.array((0, 0, 0), np.uint8)}
     
     image_info: dict = json_annotations.get('image')
+    if image_info is None:
+        # Darwin 2.0 (JSON) annotations format
+        return parse_json_annotations_2p0(json_filename,
+                                          labels_of_interest,
+                                          download_image,
+                                          percentage_to_expand_bbox_boundaries,
+                                          min_diameter_for_annotated_objects,
+                                          return_masks_in_coco_rle_format)
+                               
     image_width: int = image_info.get('width')
     image_height: int = image_info.get('height')
     image_name: str = image_info.get('original_filename')    
@@ -481,7 +490,7 @@ class CellMaskDataset:
             download_image: bool = True
                 
         # parse the annotations file
-        annotations = parse_json_annotations_2p0(json_filename = annotation_path, 
+        annotations = parse_json_annotations(json_filename = annotation_path, 
                                              labels_of_interest = self.labels_of_interest, 
                                              download_image = download_image, 
                                              percentage_to_expand_bbox_boundaries = self.percentage_to_expand_bbox_boundaries, 
