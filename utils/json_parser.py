@@ -225,6 +225,200 @@ def parse_json_annotations(json_filename: str,
          
     return {'name': image_name, 'image': img, 'annotations': annotations_df, 'masks': masks}
 
+def parse_json_annotations_2p0(json_filename: str, 
+                               labels_of_interest: Union[List[str], None] = None, 
+                               download_image: bool = False, 
+                               percentage_to_expand_bbox_boundaries: float = 0.0,
+                               min_diameter_for_annotated_objects: float = 0.0,
+                               return_masks_in_coco_rle_format: bool = False):
+    """
+    A function to parse the JSON annotation files and extract both the bounding boxes and
+    the polygon annotations for Darwin 2.0 format.
+    
+    Args:
+        json_filename (str): The JSON filename (including the path) for extracting the 
+            annotations.
+        labels_of_interest (list of strings or None): List of labels to return. Any annotated object with
+            a label not included in this list will be ignored. If None passed, all the objects will be returned.   
+        download_image (bool): If set to True, the image will also be downloaded from the URL
+            provided in the annotation file.
+        min_diameter_for_annotated_objects (float): The minimum diameter in um for objects to keep.
+        return_masks_in_coco_rle_format (bool): If set, the masks are reported in COCO's RLE format to save 
+            memory. 
+    Returns:
+        a dictionary with keys and values as 
+            'name'(str): image name, 
+            'image'(numpy.ndarray): H x W (Gray scale) or H x W x 3 image array in RGB format,
+            'annotations' (pandas DataFrame): A DataFrame with columns 'xtl', 'ytl', 'xbr', 'ybr', 'label'.
+                The i-th row is the bounding box coordinates and the label for the i-th annotated object, 
+            'masks'(list of numpy.ndarrays or COCO RLE format dictionaries): If return_masks_in_coco_rle_format is
+                set to False, masks[i] is the H x W array mask for the i-th object with value 1 for the object. If
+                return_masks_in_coco_rle_format is set to True, the numpy mask above is converted to COCO RLE format
+                for masks (a dictionary with keys as 'size, 'count' and values as 2-element list and bytes 
+                (encoded mask)).
+    """
+    
+    #  drop the path from the json_filename to get the filename
+    filename_wo_path = json_filename.strip().split('/')[-1]
+    
+    try:
+        with open(json_filename, 'r') as annotations:
+            json_annotations = json.load(annotations)
+    except FileNotFoundError:
+        print(f"[ERROR]: Annotation file {json_filename} was not found!")
+        return {'name': 'UNKNOWN', 'image': None, 
+                'annotations': pd.DataFrame(columns=['xtl', 'ytl', 'xbr', 'ybr', 'label']), 
+                'masks': np.array((0, 0, 0), np.uint8)}
+    except Exception as ex:
+        print(f"[EXCEPTION]: Unable to open annotation file {json_filename} failed on {repr(ex)}")
+        return {'name': 'UNKNOWN', 'image': None, 
+                'annotations': pd.DataFrame(columns=['xtl', 'ytl', 'xbr', 'ybr', 'label']), 
+                'masks': np.array((0, 0, 0), np.uint8)}
+    
+    image_info: dict = json_annotations.get('item')
+    image_name: str = image_info.get('name') 
+    details = image_info.get('slots')[0]
+    image_width: int = details.get('width')
+    image_height: int = details.get('height')    
+    
+    img = None
+    if download_image:
+        img_url = details.get('source_files')[0].get('url')
+        try:
+            img = Image.open(requests.get(img_url, stream = True).raw)
+            # convert to an array in RGB format
+            img = np.array(img)
+            if image_height is None:
+                image_height = img.shape[0]
+            if image_width is None:
+                image_width = img.shape[1]
+            
+            if image_height != img.shape[0] or image_width != img.shape[1]:
+                # image shapes reported in the 
+                print(f"[ERROR]: Image dimensions: {img.shape[:2]} are not consistent with json " + 
+                      f"file: {(image_height, image_width)}! Skipping the file")
+                return {'name': 'UNKNOWN', 'image': None, 
+                        'annotations': pd.DataFrame(columns=['xtl', 'ytl', 'xbr', 'ybr', 'label']), 
+                        'masks': np.array((0, 0, 0), np.uint8)}
+        except Exception as ex:
+            print(f"[EXCEPTION]: Downloading image {image_name} failed on {repr(ex)}")
+
+    
+    # filter small objects from annotations
+    if (image_width, image_height) in OPTICAL_CHARACTERISTICS:
+        mag: float = OPTICAL_CHARACTERISTICS[(image_width, image_height)]['mag']
+        pixel_size: float = OPTICAL_CHARACTERISTICS[(image_width, image_height)]['pixel_size']
+    else:
+        print(f"[WARNING]: The image resolution for {json_filename} is not supported! Not possible to filter small objects")
+        mag: float = 0
+        pixel_size: float = 1.0
+    
+    min_diameter_in_pixels: int = int(min_diameter_for_annotated_objects * mag / pixel_size)
+    
+    # number of objects
+    num_objects: int = len(json_annotations.get('annotations'))
+        
+    # print(f"[INFO]: {filename_wo_path} includes {num_objects} annotated objects")
+    
+    # create a pandas DataFrame for ease of procesing
+    # the i-th row includes the bounding box coodinates (top-left and bottom-right) 
+    # and the label for the i-th object
+    annotations_df = pd.DataFrame(columns=['xtl', 'ytl', 'xbr', 'ybr', 'label'])
+    # the masks array, masks[i] is a image_height x image_width np.uint8 array for the i-th
+    # object with object mask values set to 1
+    masks: List[np.ndarray] = []
+    
+    obj_id = 0
+    
+    for idx, annots in enumerate(json_annotations.get('annotations')):
+        # the label for the annotated object
+        label: str = annots.get('name')
+        if label is None:
+            print(f"[ERROR]: No label was provided for {idx}th object in {filename_wo_path}")
+            continue
+        # skip labels not included in the labels_of_interest list
+        if labels_of_interest is not None and label not in labels_of_interest:
+            continue
+        # the bounding box for the object
+        # we are not using these reported bounding boxes for now because of the issue
+        # with complex_polygon
+        bbox: dict = annots.get('bounding_box')
+        if bbox is None or 'x' not in bbox or 'y' not in bbox or 'w' not in bbox or 'h' not in bbox:
+            print(f"[ERROR]: No bounding box was provided for {idx}th object in {filename_wo_path}")
+            continue   
+            
+        polygon: dict = annots.get('polygon')
+        if polygon is None:
+            print(f"[ERROR]: No polygon was provided for {idx}th object in {filename_wo_path}")
+            continue
+        
+        # for a simple polygon, we also create a list of polygons 
+        # to process them identically below
+        polygon_points_list = polygon.get('paths')
+            
+        if polygon_points_list is None or polygon_points_list[0] is None:
+            print(f"[ERROR]: No polygon was provided for {idx}th object in {filename_wo_path}")
+            continue
+        
+        for poly in polygon_points_list:
+            # pandas is just used for simplicity
+            polygon_points: np.ndarray = pd.DataFrame(poly).values.astype(np.int32)
+            
+            # the bounding box around the polygon points
+            # we draw the mask (polygon) within this confined box to save processing
+            xmin: int = max(0, np.min(polygon_points[:, 0]))
+            xmax: int = min(image_width, np.max(polygon_points[:, 0]))
+            ymin: int = max(0, np.min(polygon_points[:, 1]))
+            ymax: int = min(image_height, np.max(polygon_points[:, 1]))
+            
+            # filter the small objects here before modifying the bounding boxes
+            if xmin >= xmax or ymin >= ymax or max(xmax - xmin, ymax - ymin) < min_diameter_in_pixels:
+                continue
+            
+            # expand the box boundaries by a few pixels as the masks may not be covering the boundaries
+            delta_x: int = int(percentage_to_expand_bbox_boundaries * (xmax - xmin) / 2)
+            delta_y: int = int(percentage_to_expand_bbox_boundaries * (ymax - ymin) / 2)
+            
+            delta_x = max(1, delta_x)
+            delta_y = max(1, delta_y)
+            
+            xmin = max(0, xmin - delta_x)
+            ymin = max(0, ymin - delta_y)
+            xmax = min(image_width, xmax + delta_x)
+            ymax = min(image_height, ymax + delta_y)
+            
+            # draw the polygon mask within the bounding box
+            # CV2 contours format
+            polygon_points = np.expand_dims(polygon_points, axis=1)
+            mask: np.ndarray = np.zeros((ymax - ymin, xmax - xmin), np.uint8)
+            # create the mask for the object (the mask value is set to 1 for the object)
+            cv2.drawContours(mask, [polygon_points - np.array([xmin, ymin])], 0, 1, -1)
+            
+            if return_masks_in_coco_rle_format:
+                encoded_mask: dict = coco_mask_util.encode(np.asarray(mask, order="F"))    
+                masks.append(encoded_mask)
+            else:
+                masks.append(mask)
+            annotations_df = pd.concat([annotations_df, pd.DataFrame(data = 
+                                                                    [{'xtl': xmin, 
+                                                                      'ytl': ymin, 
+                                                                      'xbr': xmax, 
+                                                                      'ybr': ymax, 
+                                                                      'label': label}], index=[len(annotations_df)])])
+            
+            
+            obj_id += 1
+        
+    # remove duplicate objects (bounding boxes)
+    # make sure the indexes are 0 1, ...
+    annotations_df.reset_index(inplace=True, drop=True)
+    annotations_df = annotations_df.drop_duplicates()
+    masks = [masks[i] for i in annotations_df.index]
+    annotations_df.reset_index(inplace=True, drop=True)
+         
+    return {'name': image_name, 'image': img, 'annotations': annotations_df, 'masks': masks}
+
+
 # a similar class to pytorch dataset to "parse" the masks and extract the bounding boxes
 # but in YOLO format, which is (center_x, center_y, w, h) each normalized to the image's width/height
 class CellMaskDataset:
@@ -287,7 +481,7 @@ class CellMaskDataset:
             download_image: bool = True
                 
         # parse the annotations file
-        annotations = parse_json_annotations(json_filename = annotation_path, 
+        annotations = parse_json_annotations_2p0(json_filename = annotation_path, 
                                              labels_of_interest = self.labels_of_interest, 
                                              download_image = download_image, 
                                              percentage_to_expand_bbox_boundaries = self.percentage_to_expand_bbox_boundaries, 
