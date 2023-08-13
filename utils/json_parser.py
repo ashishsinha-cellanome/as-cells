@@ -18,38 +18,49 @@ DEFAULT_CLASS_NAMES_TO_IDS_MAP: Final[Dict[str, int]] = {'Cell': 1, 'dying/dead 
 # optical characteristics of the images (used to map the minimum diameter of objects in um to pixels)
 OPTICAL_CHARACTERISTICS: Final[Dict[Tuple, Dict[str, float]]] = {(2000, 1600): {'mag': 10.0, 'pixel_size': 4.54}, (4512, 4512): {'mag': 9.0, 'pixel_size': 2.74}}
 
-def parse_json_annotations(json_filename: str, 
-                           labels_of_interest: Union[List[str], None] = None, 
-                           download_image: bool = False, 
-                           percentage_to_expand_bbox_boundaries: float = 0.0,
-                           min_diameter_for_annotated_objects: float = 0.0,
-                           return_masks_in_coco_rle_format: bool = False):
+def parse_json_annotations(
+    json_filename: str,
+    labels_of_interest: Union[List[str], None] = None,
+    download_image: bool = False,
+    percentage_to_expand_bbox_boundaries: float = 0.0,
+    min_object_diameter: float = 0.0,
+    optical_characteristics: Dict[
+        Tuple[int, int], Dict[str, float]
+    ] = OPTICAL_CHARACTERISTICS,
+    return_masks_in_coco_rle_format: bool = True,
+):
     """
     A function to parse the JSON annotation files and extract both the bounding boxes and
     the polygon annotations.
-    
+
     Args:
-        json_filename (str): The JSON filename (including the path) for extracting the 
+        json_filename (str): The JSON filename (including the path) for extracting the
             annotations.
         labels_of_interest (list of strings or None): List of labels to return. Any annotated object with
-            a label not included in this list will be ignored. If None passed, all the objects will be returned.   
+            a label not included in this list will be ignored. If None passed, all the objects will be returned.
         download_image (bool): If set to True, the image will also be downloaded from the URL
             provided in the annotation file.
-        min_diameter_for_annotated_objects (float): The minimum diameter in um for objects to keep.
-        return_masks_in_coco_rle_format (bool): If set, the masks are reported in COCO's RLE format to save 
-            memory. 
+        percentage_to_expand_bbox_boundaries (float): Percentage to expand the bounding boxes around the mask to improve
+            training the box regressor of Mask R-CNN
+        min_object_diameter (float): The minimum diameter in um for objects to keep.
+        optical_characteristics (dictionary): A dictionary with keys as image resolution tuples and values as
+            dictionaries with two keys: "pixel_size" and "mag", the optical characteristics of the device; these
+            are used to convert the min_object_diameter in micro meter to pixels
+        return_masks_in_coco_rle_format (bool): If set, the masks are reported in COCO's RLE format to save
+            memory.
     Returns:
-        a dictionary with keys and values as 
-            'name'(str): image name, 
+        a dictionary with keys and values as
+            'name'(str): image name,
             'image'(numpy.ndarray): H x W (Gray scale) or H x W x 3 image array in RGB format,
             'annotations' (pandas DataFrame): A DataFrame with columns 'xtl', 'ytl', 'xbr', 'ybr', 'label'.
-                The i-th row is the bounding box coordinates and the label for the i-th annotated object, 
+                The i-th row is the bounding box coordinates and the label for the i-th annotated object,
             'masks'(list of numpy.ndarrays or COCO RLE format dictionaries): If return_masks_in_coco_rle_format is
                 set to False, masks[i] is the H x W array mask for the i-th object with value 1 for the object. If
                 return_masks_in_coco_rle_format is set to True, the numpy mask above is converted to COCO RLE format
-                for masks (a dictionary with keys as 'size, 'count' and values as 2-element list and bytes 
+                for masks (a dictionary with keys as 'size, 'count' and values as 2-element list and bytes
                 (encoded mask)).
     """
+
     
     #  drop the path from the json_filename to get the filename
     filename_wo_path = json_filename.strip().split('/')[-1]
@@ -75,7 +86,8 @@ def parse_json_annotations(json_filename: str,
                                           labels_of_interest,
                                           download_image,
                                           percentage_to_expand_bbox_boundaries,
-                                          min_diameter_for_annotated_objects,
+                                          min_object_diameter,
+                                          optical_characteristics,
                                           return_masks_in_coco_rle_format)
                                
     image_width: int = image_info.get('width')
@@ -108,15 +120,15 @@ def parse_json_annotations(json_filename: str,
 
     
     # filter small objects from annotations
-    if (image_width, image_height) in OPTICAL_CHARACTERISTICS:
-        mag: float = OPTICAL_CHARACTERISTICS[(image_width, image_height)]['mag']
-        pixel_size: float = OPTICAL_CHARACTERISTICS[(image_width, image_height)]['pixel_size']
+    if (image_width, image_height) in optical_characteristics:
+        mag: float = optical_characteristics[(image_width, image_height)]['mag']
+        pixel_size: float = optical_characteristics[(image_width, image_height)]['pixel_size']
     else:
         print(f"[WARNING]: The image resolution for {json_filename} is not supported! Not possible to filter small objects")
         mag: float = 0
         pixel_size: float = 1.0
     
-    min_diameter_in_pixels: int = int(min_diameter_for_annotated_objects * mag / pixel_size)
+    min_diameter_in_pixels: int = int(min_object_diameter * mag / pixel_size)
     
     # number of objects
     num_objects: int = len(json_annotations.get('annotations'))
@@ -234,36 +246,46 @@ def parse_json_annotations(json_filename: str,
          
     return {'name': image_name, 'image': img, 'annotations': annotations_df, 'masks': masks}
 
-def parse_json_annotations_2p0(json_filename: str, 
-                               labels_of_interest: Union[List[str], None] = None, 
-                               download_image: bool = False, 
-                               percentage_to_expand_bbox_boundaries: float = 0.0,
-                               min_diameter_for_annotated_objects: float = 0.0,
-                               return_masks_in_coco_rle_format: bool = False):
+def parse_json_annotations_2p0(
+        json_filename: str,
+        labels_of_interest: Union[List[str], None] = None,
+        download_image: bool = False,
+        percentage_to_expand_bbox_boundaries: float = 0.0,
+        min_object_diameter: float = 0.0,
+        optical_characteristics: Dict[
+            Tuple[int, int], Dict[str, float]
+        ] = OPTICAL_CHARACTERISTICS,
+        return_masks_in_coco_rle_format: bool = True,
+):
     """
     A function to parse the JSON annotation files and extract both the bounding boxes and
-    the polygon annotations for Darwin 2.0 format.
-    
+    the polygon annotations.
+
     Args:
-        json_filename (str): The JSON filename (including the path) for extracting the 
+        json_filename (str): The JSON filename (including the path) for extracting the
             annotations.
         labels_of_interest (list of strings or None): List of labels to return. Any annotated object with
-            a label not included in this list will be ignored. If None passed, all the objects will be returned.   
+            a label not included in this list will be ignored. If None passed, all the objects will be returned.
         download_image (bool): If set to True, the image will also be downloaded from the URL
             provided in the annotation file.
-        min_diameter_for_annotated_objects (float): The minimum diameter in um for objects to keep.
-        return_masks_in_coco_rle_format (bool): If set, the masks are reported in COCO's RLE format to save 
-            memory. 
+        percentage_to_expand_bbox_boundaries (float): Percentage to expand the bounding boxes around the mask to improve
+            training the box regressor of Mask R-CNN
+        min_object_diameter (float): The minimum diameter in um for objects to keep.
+        optical_characteristics (dictionary): A dictionary with keys as image resolution tuples and values as
+            dictionaries with two keys: "pixel_size" and "mag", the optical characteristics of the device; these
+            are used to convert the min_object_diameter in micro meter to pixels
+        return_masks_in_coco_rle_format (bool): If set, the masks are reported in COCO's RLE format to save
+            memory.
     Returns:
-        a dictionary with keys and values as 
-            'name'(str): image name, 
+        a dictionary with keys and values as
+            'name'(str): image name,
             'image'(numpy.ndarray): H x W (Gray scale) or H x W x 3 image array in RGB format,
             'annotations' (pandas DataFrame): A DataFrame with columns 'xtl', 'ytl', 'xbr', 'ybr', 'label'.
-                The i-th row is the bounding box coordinates and the label for the i-th annotated object, 
+                The i-th row is the bounding box coordinates and the label for the i-th annotated object,
             'masks'(list of numpy.ndarrays or COCO RLE format dictionaries): If return_masks_in_coco_rle_format is
                 set to False, masks[i] is the H x W array mask for the i-th object with value 1 for the object. If
                 return_masks_in_coco_rle_format is set to True, the numpy mask above is converted to COCO RLE format
-                for masks (a dictionary with keys as 'size, 'count' and values as 2-element list and bytes 
+                for masks (a dictionary with keys as 'size, 'count' and values as 2-element list and bytes
                 (encoded mask)).
     """
     
@@ -314,15 +336,15 @@ def parse_json_annotations_2p0(json_filename: str,
 
     
     # filter small objects from annotations
-    if (image_width, image_height) in OPTICAL_CHARACTERISTICS:
-        mag: float = OPTICAL_CHARACTERISTICS[(image_width, image_height)]['mag']
-        pixel_size: float = OPTICAL_CHARACTERISTICS[(image_width, image_height)]['pixel_size']
+    if (image_width, image_height) in optical_characteristics:
+        mag: float = optical_characteristics[(image_width, image_height)]['mag']
+        pixel_size: float = optical_characteristics[(image_width, image_height)]['pixel_size']
     else:
         print(f"[WARNING]: The image resolution for {json_filename} is not supported! Not possible to filter small objects")
         mag: float = 0
         pixel_size: float = 1.0
     
-    min_diameter_in_pixels: int = int(min_diameter_for_annotated_objects * mag / pixel_size)
+    min_diameter_in_pixels: int = int(min_object_diameter * mag / pixel_size)
     
     # number of objects
     num_objects: int = len(json_annotations.get('annotations'))
@@ -428,31 +450,57 @@ def parse_json_annotations_2p0(json_filename: str,
     return {'name': image_name, 'image': img, 'annotations': annotations_df, 'masks': masks}
 
 
-# a similar class to pytorch dataset to "parse" the masks and extract the bounding boxes
-# but in YOLO format, which is (center_x, center_y, w, h) each normalized to the image's width/height
+# a dataset classe to "parse" the masks and extract the bounding boxes from annotations
 class CellMaskDataset:
-    def __init__(self, images_path: str, annotations_path: str, labels_of_interest: Union[List[str], None] = None, 
-                 percentage_to_expand_bbox_boundaries: float = 0.2, color_depth: int = 14, 
-                 min_diameter_for_annotated_objects: float = 0.0, 
-                 scale_factor: float = 1.0, max_larger_side: int = 2000, max_smaller_side: int = 1600, 
-                 normalize: bool = False, class_names_to_ids_map: dict = DEFAULT_CLASS_NAMES_TO_IDS_MAP) -> None:
+    def __init__(self,
+                 images_path: str,
+                 annotations_path: str,
+                 annotations: List[str],
+                 labels_of_interest: Union[List[str], None] = None,
+                 percentage_to_expand_bbox_boundaries: float = 0.2,
+                 color_depth: int = 14,
+                 min_object_diameter: float = 0.0,
+                 optical_characteristics: Dict[Tuple[int, int], Dict[str, float]] = OPTICAL_CHARACTERISTICS,
+                 scale_factor_dict: Dict[Tuple[int, int], float] = {},
+                 max_larger_side: int = 2000,
+                 max_smaller_side: int = 1600,
+                 normalize: bool = False,
+                 class_names_to_ids_map: dict = DEFAULT_CLASS_NAMES_TO_IDS_MAP) -> None:
+        """_summary_
+
+        Args:
+            images_path (str): Path to images.
+            annotations_path (str): Path to annotations.
+            annotations (List[str]): List of train/test annotations files without extension.
+            labels_of_interest (Union[List[str], None], optional): _description_. Defaults to None.
+            percentage_to_expand_bbox_boundaries (float, optional): _description_. Defaults to 0.2.
+            color_depth (int, optional): _description_. Defaults to 14.
+            min_object_diameter (float, optional): _description_. Defaults to 0.0.
+            optical_characteristics (Dict[Tuple[int, int], Dict[str, float]]): _description_. Defaults to
+                OPTICAL_CHARACTERISTICS.
+            scale_factor_dict (Dict[Tuple[int, int], float]): _description_. Defaults to {}.
+            max_larger_side (int, optional): _description_. Defaults to 2000.
+            max_smaller_side (int, optional): _description_. Defaults to 1600.
+            normalize (bool, optional): _description_. Defaults to False.
+            class_names_to_ids_map (dict, optional): _description_. Defaults to DEFAULT_CLASS_NAMES_TO_IDS_MAP.
+        """
         self.images_path = images_path
         self.annotations_path = annotations_path
-        # load all images and mask annotations
-        # the assumption is the image and its mask annotation use the same name
+        # annotations contain the list of train or test files without extension.
+        self.annotations = annotations
+        # the assumption is the image and its mask/label annotation use the same name
         # if the images are not already downloaded in the images_path, the function
         # __getitem__ will also download the image to images_path folder from the location
         # specified in the json annotation file
-        self.imgs = list(sorted(os.listdir(images_path)))
-        # the image names without extension
-        self.names = [".".join(name.strip().split('.')[:-1]) for name in self.imgs]
-        self.annotations = list(sorted(os.listdir(annotations_path)))
+
         self.labels_of_interest = labels_of_interest
         # in order to reduce the memory required for the masks (for instance segmentation models)
-        # the image and the annotations can be downsized by the passed scale_factor (values >= 1 are 
-        # expected to downsize the image by the factor; it is applied to all images)
-        self.scale_factor = scale_factor
-        # the image is further resized (after applying the passed scale_factor above) to have the 
+        # the image and the annotations can be downsized by the passed scale_factor_dict
+        # this is a dictionary with keys as the image resolutions for which the scaling should be
+        # applied and values as the scaling factor
+        # (values >= 1 are expected to downsize the image by the factor)
+        self.scale_factor_dict = scale_factor_dict
+        # the image is further resized (after applying the passed scale_factor above) to have the
         # larger side and the smaller side both smaller than these two maximum set values
         self.max_larger_side = max_larger_side
         self.max_smaller_side = max_smaller_side
@@ -468,17 +516,17 @@ class CellMaskDataset:
         # minimum diameter are expected from the returned annotations
         # only 2000x1600 and 4512x4512 image resolutions are supported as this
         # diameter should be converted to a number of pixels based on magnification and sensor pixel size
-        self.min_diameter_for_annotated_objects = min_diameter_for_annotated_objects
-        
+        self.min_object_diameter = min_object_diameter
+        # the optical characteristics of the device (used to convert the above min_object_diameter from um to pixels)
+        self.optical_characteristics = optical_characteristics
+
     def __getitem__(self, idx: int):
         # load images and masks
-        annotation_path = os.path.join(self.annotations_path, self.annotations[idx])
-        # the name of the json annotation file without the extension
-        name = ".".join(self.annotations[idx].strip().split('.')[:-1])
-        
-        if name in self.names:
-            img_index = self.names.index(name)
-            img_path = os.path.join(self.images_path, self.imgs[img_index])
+        annotation_path = os.path.join(self.annotations_path, f"{self.annotations[idx]}.json")
+        name = self.annotations[idx]
+        img_path = self.get_image_path(idx)
+
+        if img_path is not None:
             # read the image, do not change the format
             # depending on the set color_depth, the values will be in [0, 2^color_depth - 1]
             # img = cv2.imread(img_path, cv2.IMREAD_UNCHANGED)
@@ -486,79 +534,103 @@ class CellMaskDataset:
             download_image: bool = False
         else:
             # download the image as well
-            print(f"[INFO]: Image for {name} was not found! Downloading the image ...")
+            logging.debug(f"Image for {name} was not found! Downloading the image ...")
             download_image: bool = True
-                
+
         # parse the annotations file
-        annotations = parse_json_annotations(json_filename = annotation_path, 
-                                             labels_of_interest = self.labels_of_interest, 
-                                             download_image = download_image, 
-                                             percentage_to_expand_bbox_boundaries = self.percentage_to_expand_bbox_boundaries, 
-                                             min_diameter_for_annotated_objects = self.min_diameter_for_annotated_objects,
-                                             return_masks_in_coco_rle_format = False)
-        
-        # map the class names included in the annotations DataFrame to class IDs if a 
+        annotations = parse_json_annotations(json_filename=annotation_path,
+                                             labels_of_interest=self.labels_of_interest,
+                                             download_image=download_image,
+                                             percentage_to_expand_bbox_boundaries=self.percentage_to_expand_bbox_boundaries,
+                                             min_object_diameter=self.min_object_diameter,
+                                             optical_characteristics=self.optical_characteristics,
+                                             return_masks_in_coco_rle_format=False)
+
+        # map the class names included in the annotations DataFrame to class IDs if a
         # mapping is passed
         # Note that class_names_to_ids_map should include all the class names used in the annotations
         # as the keys
         if self.class_names_to_ids_map is not None:
             annotations['annotations']['label'] = annotations['annotations']['label'].map(self.class_names_to_ids_map)
-        
+
         if download_image:
             img = annotations['image']
             # save the image using PIL.Image
             Image.fromarray(img).save(os.path.join(self.images_path, name + '.jpg'))
-            
+
         # convert the returned np.unit32 image to float with values between 0, 1
         if self.normalize:
-            # if this flag is set, normalize the image such the the minimum intensity 
+            # if this flag is set, normalize the image such the the minimum intensity
             # is mapped to zero, and the maximum is mapped to one
-             # convert the image to a numpy array
+            # convert the image to a numpy array
             img = cv2.normalize(img, img, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX).astype(np.uint8)
-        else:    
+        else:
             # the intensity of the images is color_deptj bits, so we need to divide by 2^color_depth - 1
             img = (255 * img.astype(float) / self.channel_scale).astype(np.uint8)
-            
+
         image_height, image_width = img.shape[:2]
         # scale factor
-        scale_factor: float = self.scale_factor
-        
+        if (image_width, image_height) in self.scale_factor_dict:
+            scale_factor: float = self.scale_factor_dict[(image_width, image_height)]
+        else:
+            scale_factor: float = 1.0
+
         larger_side: int = max(int(image_width / scale_factor), int(image_height / scale_factor))
         smaller_side: int = min(int(image_width / scale_factor), int(image_height / scale_factor))
-        
+
         if larger_side > self.max_larger_side or smaller_side > self.max_smaller_side:
             scale_factor *= max(float(larger_side) / self.max_larger_side, float(smaller_side) / self.max_smaller_side)
-        
+
         if scale_factor != 1:
-            # for decimating an image, cv2.INTER_AREA is the preferred method (scale_factor is always > 1) 
-            img = cv2.resize(img, (int(image_width / scale_factor), int(image_height / scale_factor)), interpolation = cv2.INTER_AREA)
+            # for decimating an image, cv2.INTER_AREA is the preferred method (scale_factor is always > 1)
+            img = cv2.resize(img, (int(image_width / scale_factor), int(image_height / scale_factor)),
+                             interpolation=cv2.INTER_AREA)
             # update all the masks and annotations
-            annotations['annotations'][['xtl', 'ytl', 'xbr', 'ybr']] = annotations['annotations'][['xtl', 'ytl', 'xbr', 'ybr']].div(scale_factor).astype(int)
-            
+            annotations['annotations'][['xtl', 'ytl', 'xbr', 'ybr']] = annotations['annotations'][
+                ['xtl', 'ytl', 'xbr', 'ybr']].div(scale_factor).astype(int)
+
             # make sure no box width/height becomes zero after the resize
             # only keep boxes with positive width and height
             annotations['annotations'] = annotations['annotations'][
-                (annotations['annotations']['ybr'] - annotations['annotations']['ytl'] > 0) & 
+                (annotations['annotations']['ybr'] - annotations['annotations']['ytl'] > 0) &
                 (annotations['annotations']['xbr'] - annotations['annotations']['xtl'] > 0)]
-            
+
             # keep the corresponding masks after resizing
             annotations['masks'] = [annotations['masks'][i] for i in annotations['annotations'].index]
             # reset the index
             annotations['annotations'].reset_index(inplace=True, drop=True)
-            
+
             # now resize the masks (note that they are defined within the bounding boxes)
             for idx in range(len(annotations['masks'])):
-                box_xtl, box_ytl, box_xbr, box_ybr = annotations['annotations'].loc[idx, ['xtl', 'ytl', 'xbr', 'ybr']].values
-                annotations['masks'][idx] = cv2.resize(annotations['masks'][idx], (box_xbr - box_xtl, box_ybr - box_ytl), interpolation = cv2.INTER_NEAREST)
-                
-        
+                box_xtl, box_ytl, box_xbr, box_ybr = annotations['annotations'].loc[
+                    idx, ['xtl', 'ytl', 'xbr', 'ybr']].values
+                annotations['masks'][idx] = cv2.resize(annotations['masks'][idx],
+                                                       (box_xbr - box_xtl, box_ybr - box_ytl),
+                                                       interpolation=cv2.INTER_NEAREST)
+
         annotations['image'] = img
-        
-        
+
+        # logging.info(f"annotations[image]: {annotations['image'].shape()}")
+        # logging.info(f"annotations[masks]: {annotations['masks'].shape()}")
+
         return annotations
 
     def __len__(self):
         return len(self.annotations)
+
+    def get_image_path(self, idx):
+        img_name = self.annotations[idx]
+        jpg_file_path = os.path.join(self.images_path, f"{img_name}.jpg")
+        jpeg_file_path = os.path.join(self.images_path, f"{img_name}.jpeg")
+        png_file_path = os.path.join(self.images_path, f"{img_name}.png")
+        if os.path.exists(jpg_file_path):
+            return jpg_file_path
+        elif os.path.exists(jpeg_file_path):
+            return jpeg_file_path
+        elif os.path.exists(png_file_path):
+            return png_file_path
+
+        return None
 
 # helper functions to crop large annotated images into smaller ones 
 # for training
