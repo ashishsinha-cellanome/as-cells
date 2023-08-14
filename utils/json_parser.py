@@ -534,7 +534,7 @@ class CellMaskDataset:
             download_image: bool = False
         else:
             # download the image as well
-            logging.debug(f"Image for {name} was not found! Downloading the image ...")
+            print(f"Image for {name} was not found! Downloading the image ...")
             download_image: bool = True
 
         # parse the annotations file
@@ -609,9 +609,6 @@ class CellMaskDataset:
                                                        interpolation=cv2.INTER_NEAREST)
 
         annotations['image'] = img
-
-        # logging.info(f"annotations[image]: {annotations['image'].shape()}")
-        # logging.info(f"annotations[masks]: {annotations['masks'].shape()}")
 
         return annotations
 
