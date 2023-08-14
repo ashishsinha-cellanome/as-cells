@@ -487,7 +487,11 @@ class CellMaskDataset:
         self.images_path = images_path
         self.annotations_path = annotations_path
         # annotations contain the list of train or test files without extension.
-        self.annotations = annotations
+        self.annotations: List[str] = []
+        for annotation_file in annotations: 
+             annotation_path: str = os.path.join(self.annotations_path, f"{annotation_file}.json")
+             if os.path.exists(annotation_path):
+                 self.annotations.append(annotation_file)
         # the assumption is the image and its mask/label annotation use the same name
         # if the images are not already downloaded in the images_path, the function
         # __getitem__ will also download the image to images_path folder from the location
