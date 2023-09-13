@@ -738,6 +738,7 @@ class MaskDatasetFromMultiAnnotations:
         
         self.annotations: Dict[str, List[str]] = {key: [] for key in annotation_files_exts}
         self.images_names: List[str] = []
+        self.common_names: List[str] = []
         for annotation_file in common_names_to_use:
             img_full_name: str = self.get_image_path(annotation_file)
             if img_full_name is None:
@@ -756,6 +757,7 @@ class MaskDatasetFromMultiAnnotations:
             if found_all_annotation_files:
                 # we have found the image and all the annotation files
                 self.images_names.append(img_full_name)
+                self.common_names.append(annotation_file)
                 for i, annotation_specific_ext in enumerate(annotation_files_exts):
             
                     annotation_path: str = os.path.join(self.annotations_paths[i], 
@@ -811,8 +813,11 @@ class MaskDatasetFromMultiAnnotations:
             
             annotations_df = pd.concat([annotations_df, annotations['annotations']])
             masks += annotations['masks']
-
-        annotations = {'name': annotations['name'], 'annotations': annotations_df.reset_index(drop=True), 'masks': masks}
+        
+        # Note that the name in annotations['name'] is taken from the annotation files, since we are combining 
+        # the annotations here, the name is referred to the FL image used in annotations and is not consistent
+        # with the image name here, so use the image name directly
+        annotations = {'name': self.common_names[idx] + '.jpg', 'annotations': annotations_df.reset_index(drop=True), 'masks': masks}
         # map the class names included in the annotations DataFrame to class IDs if a
         # mapping is passed
         # Note that class_names_to_ids_map should include all the class names used in the annotations
