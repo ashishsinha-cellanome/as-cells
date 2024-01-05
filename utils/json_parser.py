@@ -1,4 +1,5 @@
 # load required libraries
+from pairing_utils import iou_batch, iou_mask_pair
 import os
 from PIL import Image
 import numpy as np
@@ -1225,9 +1226,133 @@ def crop_and_block(sample, crop_coords, labels_of_interest=None,
                  'annotations': df, 'masks': masks} 
     
     return  {'name': name, 'image': image[yc1: yc2, xc1: xc2] * crop_mask, 'annotations': df}
+
+
+def enforce_one_to_one_mapping(data_sample: dict, child_parent_map: Dict[int, int]) -> dict:
+    """
+    A function to clean up annotations and enforce a one-to-one mapping between child-parent pairs of objects.
+    For some annotations, there is a hierarchy between objects of different classes. For example, the mask of an 
+    object from class 'nucleus' should always be inside the mask of another object of class 'cytoplasm'/'cell-adhered'. 
+    Furthermore, this mapping has to be one-to-one in certain scenarios. A 'cytoplasm'/'cell-adhered' object can only 
+    have one 'nucleus', and a 'nucleus' object should belong to only one 'cytoplasm'/'cell-adhered'. 
+    In many annotated images, different objects of class 'cytoplasm' cannot be accurately differentiated and multiple 
+    objects are combined (hence have multiple nuclei). This function is used to remove these invalid annotations by 
+    passing a set of child:parent relationships that should be enforced in 'child_parent_map' argument. 
     
+    Args:
+        - data_sample (dictionary): A dictionary with keys and values as 
+            'name'(str): image name,
+            'image'(numpy.ndarray): H x W (Gray scale) or H x W x 3 image array in BGR format,
+            'annotations' (pandas DataFrame): A DataFrame with columns 'xtl', 'ytl', 'xbr', 'ybr', 'label'.
+                The i-th row is the bounding box coordinates and the label for the i-th annotated object,
+            'masks'(list of numpy.ndarrays): masks[i] is the H x W array mask for the i-th object with value 1 for 
+                the object.
+        - child_parent_map (dictionary): A dictionary with integer keys and values specifying the one-to-one relationship
+            as between child class ID and parent class ID. 
+    Returns:
+        - The filtered data_sample with invalid objects removed and blacked-out in the image.  
+    """
+    
+    # make sure the index in the DataFrame is the same as the row index
+    annotations: pd.DataFrame  = data_sample['annotations'].reset_index(drop=True).copy()
+    
+    # the indexes of invalid objects from the child and parent classes
+    # objects from the child classes (with class IDs specified by the keys in child_parent_map)
+    # that have no objects from the mapped parent class including them, or have multiple objects from 
+    # the mapped parent class covering them (not expected)
+    invalid_child_idxs: List[int] = []
+    # objects from the parent classes (with class IDs specified by the values in child_parent_map)
+    # that have no objects from the mapped child class belonging to them, or cover multiple objects from 
+    # the mapped child class 
+    invalid_parent_idxs: List[int] = []
+        
+    # go over the child-parent pairs for which one-to-one mapping should be enforced
+    for child_class_id, parent_class_id in child_parent_map.items():
+    
+    
+        child_df: pd.DataFrame = annotations[annotations['label'] == child_class_id]
+        parent_df: pd.DataFrame = annotations[annotations['label'] == parent_class_id]
+        
+        # indexes
+        child_idxs: np.ndarray = child_df.index.values
+        parent_idxs: np.ndarray = parent_df.index.values
+            
+        if len(child_idxs) == 0:
+            if len(parent_idxs) > 0:
+                invalid_parent_idxs += parent_idxs.tolist()    
+            continue
+        elif len(parent_idxs) == 0:
+            invalid_child_idxs += child_idxs.tolist()
+            continue    
+        
+        # bounding boxes
+        child_boxes: np.ndarray = child_df[['xtl', 'ytl', 'xbr', 'ybr']].values
+        parent_boxes: np.ndarray = parent_df[['xtl', 'ytl', 'xbr', 'ybr']].values
+
+        # masks
+        child_masks: List[np.ndarray] = [data_sample['masks'][idx] for idx in child_idxs]
+        parent_masks: List[np.ndarray] = [data_sample['masks'][idx] for idx in parent_idxs]
+
+        # the IoU matrix for the bounding boxes, element (i, j) in the matrix below is the 
+        # IoU between the bounding box of the child object i (with index child_idxs[i] in the 
+        # data_sample['annotations'] and data_sample['masks']) and the bounding box of the 
+        # parent object j (with index parent_idxs[j])
+        iou_box_matrix: np.ndarray = iou_batch(child_boxes, parent_boxes)
+    
+        overlapping_child_idxs, overlapping_parent_idxs = np.where(iou_box_matrix > 0)
+    
+        # the IoU matrix for the masks, for efficiency reasons, it is only calculated
+        # for pairs with box IoU > 0
+        iou_mask_matrix: np.ndarray = np.zeros((len(child_idxs), len(parent_idxs)))
+    
+        for (i, j) in zip(overlapping_child_idxs, overlapping_parent_idxs):        
+            iou_mask_matrix[i, j] = iou_mask_pair(child_boxes[i], child_masks[i], 
+                                                  parent_boxes[j], parent_masks[j])
+
+        iou_mask_matrix[iou_mask_matrix > 0] = 1
+        
+        # the (columns) index of parent objects without an object from the child class or 
+        # with multiple objects from the child class 
+        invalid_col_idxs: np.ndarray = np.where(np.sum(iou_mask_matrix, axis=0) != 1)[0]
+        # only keep objects from the parent class with one child, before finding invalid 
+        # objects of class child
+        valid_col_idxs: np.ndarray = np.array([idx for idx in range(len(parent_idxs)) 
+                                               if idx not in invalid_col_idxs])
+            
+        if len(valid_col_idxs) == 0:
+            invalid_row_idxs: np.ndarray = np.array([idx for idx in range(len(child_idxs))])
+        else:
+            # the (row) index of child objects without an object from the parent class or 
+            # with multiple objects from the parent class 
+            invalid_row_idxs: np.ndarray = np.where(np.sum(iou_mask_matrix[:, valid_col_idxs], axis=1) != 1)[0]    
+            
+        
+        invalid_child_idxs += child_idxs[invalid_row_idxs].tolist()
+        invalid_parent_idxs += parent_idxs[invalid_col_idxs].tolist()
+    
+    # black out invalid objects in the image, and remove them from the annotations and masks
+    img: np.ndarray = data_sample['image'].copy()
+    img_mask: np.ndarray = np.zeros(img.shape[:2], np.uint8)
+    blacked_out_mask: np.ndarray = np.ones(img.shape[:2], np.uint8)
+
+    valid_idxs: List[int] = []
+    for idx, row in annotations.iterrows():
+        xtl, ytl, xbr, ybr = row[['xtl', 'ytl', 'xbr', 'ybr']].values
+        if idx in (invalid_child_idxs + invalid_parent_idxs):
+            blacked_out_mask[ytl:ybr, xtl:xbr] = 0
+        else:
+            img_mask[ytl:ybr, xtl:xbr] = 1
+            valid_idxs.append(idx)
+    out: dict = {}
+    out['name'] = data_sample['name']
+    out['image']: np.ndarray = cv2.bitwise_or(blacked_out_mask, img_mask) * img
+    out['annotations']: pd.DataFrame = annotations.loc[valid_idxs].reset_index(drop=True).copy()
+    out['masks']: List[np.ndarray] = [data_sample['masks'][idx].copy() for idx in valid_idxs]
+        
+    return out
+
 # a function to display the samples
-COLORS = [(0, 0, 255), (255, 0, 0), (0, 255, 0), (255, 255, 0)]
+COLORS = [(0, 0, 255), (255, 0, 0), (0, 255, 0), (255, 255, 0), (255, 0, 255), (0, 255, 255)]
 
 def show_sample(sample, class_id_to_name_mapping=None):
     """
