@@ -1,67 +1,9 @@
 from scipy.optimize import linear_sum_assignment  # for Hungarian algorithm
-
+from cv_utils import iou_batch, iou_mask_pair
 import numpy as np
 import cv2
 from typing import Dict, List, Tuple, Optional, Final, Union
 
-# Utility functions
-
-# very efficient batch IoU calculation
-# needed for combining detection results from different image crops on
-# the overlapping parts; we use this function instead of
-# torchvision.ops.box_iou(bboxes1, bboxes2) to remove dependency on torch
-def iou_batch(bboxes1: np.ndarray, bboxes2: np.ndarray) -> np.ndarray:
-    """Given Nx4 and Mx4 ndarrays of bounding boxes, compute pairwise IoUs"""
-    # expand dims to allow computing pairwise IoU via outer products (creates NxM below)
-    bboxes1 = np.expand_dims(bboxes1, 1)  # Nx1x4
-    bboxes2 = np.expand_dims(bboxes2, 0)  # 1xMx4
-    # determine the (x, y) coordinates of the intersection rectangle
-    inter_x1s = np.maximum(bboxes1[..., 0], bboxes2[..., 0])  # pairwise max NxM
-    inter_y1s = np.maximum(bboxes1[..., 1], bboxes2[..., 1])  # pairwise max NxM
-    inter_x2s = np.minimum(bboxes1[..., 2], bboxes2[..., 2])  # pairwise min NxM
-    inter_y2s = np.minimum(bboxes1[..., 3], bboxes2[..., 3])  # pairwise min NxM
-    inter_ws = np.maximum(
-        0.0, inter_x2s - inter_x1s
-    )  # pairwise width of intersection rectangle NxM
-    inter_hs = np.maximum(
-        0.0, inter_y2s - inter_y1s
-    )  # pairwise height of intersection rectangle NxM
-    inter_areas = inter_ws * inter_hs  # pairwise intersection area NxM
-    union_areas = (
-        (bboxes1[..., 2] - bboxes1[..., 0]) * (bboxes1[..., 3] - bboxes1[..., 1])
-        + (bboxes2[..., 2] - bboxes2[..., 0]) * (bboxes2[..., 3] - bboxes2[..., 1])
-        - inter_areas
-        + 1e-30
-    )  # pairwise union area NxM
-    return inter_areas / union_areas  # pairwise intersection divided by union (iou) NxM
-    
-def iou_mask_pair(box1: np.ndarray, mask1: np.ndarray, box2: np.ndarray, mask2: np.ndarray) -> float:
-    """
-    Given two np.uint8 M1xN1 and M2xN2 numpy arrays (mask1, mask2) for two object masks and 
-    two (4,) (4-element) integer numpy arrays of the top-left/bottom-right corners of the 
-    bounding boxes around these objects (box1, box2), the code returns the IoU between the masks of the two objects. 
-    The passed masks should be defined within the passed bounding boxes, and should have 
-    values set to 1 for the object. The bounding boxes should be passed in xtl, ytl, xbr, ybr order, e.g.,  
-    if [xtl, ytl, xbr, ybr] are the passed integer values of the top-left and bottle-right corner of the bounding box
-    for an object, the passed masks should be a numpy array of type np.uint8 and size (ybr - ytl, xbr - xtl)
-    with values set to 1 for the object. 
-    """
-    # union of the box coordinates, make sure the coordinates are integers
-    xtl_1, ytl_1, xbr_1, ybr_1 = box1.astype(int)
-    xtl_2, ytl_2, xbr_2, ybr_2 = box2.astype(int)
-
-    xtl: int = min(xtl_1, xtl_2)
-    ytl: int = min(ytl_1, ytl_2)
-    xbr: int = max(xbr_1, xbr_2)
-    ybr: int = max(ybr_1, ybr_2)
-    union_mask_1: np.ndarray = np.zeros((ybr - ytl, xbr - xtl), np.uint8)
-    union_mask_1[(ytl_1 - ytl):(ybr_1 - ytl), (xtl_1 - xtl):(xbr_1 - xtl)] = mask1
-    union_mask_2: np.ndarray = np.zeros((ybr - ytl, xbr - xtl), np.uint8)
-    union_mask_2[(ytl_2 - ytl):(ybr_2 - ytl), (xtl_2 - xtl):(xbr_2 - xtl)] = mask2
-    union: int = cv2.bitwise_or(union_mask_1, union_mask_2).sum()
-    intersection: int = cv2.bitwise_and(union_mask_1, union_mask_2).sum()
-
-    return intersection / (float(union) + 1e-30)
 
 def pair_gts_dets_bbox(gt_boxes: np.ndarray, det_boxes: np.ndarray, min_iou: float):
     """

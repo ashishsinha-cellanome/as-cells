@@ -1,5 +1,5 @@
 # load required libraries
-from pairing_utils import iou_batch, iou_mask_pair
+from cv_utils import iou_batch, iou_mask_pair
 import os
 from PIL import Image
 import numpy as np
@@ -1129,8 +1129,27 @@ def crop_and_block(sample, crop_coords, labels_of_interest=None,
             ymin = min(max(0, yc1 - box_ytl), box_ybr - box_ytl)
             ymax = min(max(0, yc2 - box_ytl), box_ybr - box_ytl)
             
-            masks.append(sample['masks'][obj_id][ymin: ymax, xmin: xmax])
-    
+            cropped_mask = sample['masks'][obj_id][ymin: ymax, xmin: xmax]
+            
+            # now update the bounding boxes as the mask confined to the crop may be smaller, hence different box 
+            pos = np.where(cropped_mask)
+            delta_x1 = np.min(pos[1])
+            delta_x2 = np.max(pos[1])
+            delta_y1 = np.min(pos[0])
+            delta_y2 = np.max(pos[0])
+            
+            new_box_xtl = box_xtl + xmin + delta_x1
+            new_box_xbr = box_xtl + xmin + delta_x2
+            new_box_ytl = box_ytl + ymin + delta_y1
+            new_box_ybr = box_ytl + ymin + delta_y2
+            
+            df.at[obj_id, 'xtl'] = new_box_xtl
+            df.at[obj_id, 'ytl'] = new_box_ytl
+            df.at[obj_id, 'xbr'] = new_box_xbr
+            df.at[obj_id, 'ybr'] = new_box_ybr
+            masks.append(cropped_mask[delta_y1:delta_y2, delta_x1:delta_x2].copy())
+            
+            
     # transform the bounding boxes
     df[['xtl', 'xbr']] = df[['xtl', 'xbr']] - xc1
     df[['ytl', 'ybr']] = df[['ytl', 'ybr']] - yc1
