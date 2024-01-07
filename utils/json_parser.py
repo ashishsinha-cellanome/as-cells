@@ -1115,6 +1115,7 @@ def crop_and_block(sample, crop_coords, labels_of_interest=None,
     # we further remove or block the partial objects
     if 'masks' in sample:
         masks = []
+        idxs_to_keep = []
         for obj_id in df.index:
             # find the overlapping part between the object's bounding box (where the mask is defined within)
             # and the crop
@@ -1133,11 +1134,17 @@ def crop_and_block(sample, crop_coords, labels_of_interest=None,
             
             # now update the bounding boxes as the mask confined to the crop may be smaller, hence different box 
             pos = np.where(cropped_mask)
+            if len(pos[0]) == 0 or len(pos[1]) == 0:
+                continue
             delta_x1 = np.min(pos[1])
             delta_x2 = np.max(pos[1])
             delta_y1 = np.min(pos[0])
             delta_y2 = np.max(pos[0])
             
+            if delta_x1 >= delta_x2 or delta_y1 >= delta_y2:
+                continue
+            
+            idxs_to_keep.append(obj_id)
             new_box_xtl = box_xtl + xmin + delta_x1
             new_box_xbr = box_xtl + xmin + delta_x2
             new_box_ytl = box_ytl + ymin + delta_y1
@@ -1148,7 +1155,7 @@ def crop_and_block(sample, crop_coords, labels_of_interest=None,
             df.at[obj_id, 'xbr'] = new_box_xbr
             df.at[obj_id, 'ybr'] = new_box_ybr
             masks.append(cropped_mask[delta_y1:delta_y2, delta_x1:delta_x2].copy())
-            
+        df = df.loc[idxs_to_keep]    
             
     # transform the bounding boxes
     df[['xtl', 'xbr']] = df[['xtl', 'xbr']] - xc1
