@@ -900,24 +900,31 @@ class MaskDatasetFromMultiAnnotations:
 # helper functions to crop large annotated images into smaller ones 
 # for training
         
-def optimize_crop(annotations_df, crop_coords, dx, dy, w, h, labels_of_interest):
+def optimize_crop(annotations_df: pd.DataFrame, 
+                  crop_coords: Union[List[int], Tuple[int]], 
+                  dx: int, dy: int, 
+                  w: int, h: int, 
+                  labels_of_interest: List[Union[int, str]]):
     """
     This function finds the "best" center for the crop with corners (x1, y1), 
     (x2, y2) within the specified range +/-dx and +/-dy such that the bouding boxes
     (specified by annotations_df) either lie completely in or completely out of the crop. 
 
     Args:
-        annotations_df (pandas DataFrame): A DataFrame for the bounding boxes with 
+        annotations_df (pandas.DataFrame): A DataFrame for the bounding boxes with 
             columns 'xtl', 'ytl', 'xbr', 'ybr' and 'label'.
         crop_coords (4-tuple or 4-element list of int): xtl, ytl, xbr, and ybr 
-            box coordinates for cropping.
+            box coordinates for the crop.
         dx, dy (int): The limit on moving the center of the crop (+/-).
         w, h (int): The original image sizes. 
         labels_of_interest (list of integers or strings): List of classnames or class IDs 
             of interest depending on the values reporeted in annotations_df['label'] 
             (names or IDs). These object classes will be used to optimize the crop 
-            corners. 
+            corners. Any object not from these classes will be ignored.  
     """
+    
+    # the minimum size of each side of the box to consider it for optimizing the crop
+    min_bbox_size_to_consider: int = 4
     
     (x1, y1, x2, y2) = crop_coords
     
@@ -929,24 +936,24 @@ def optimize_crop(annotations_df, crop_coords, dx, dy, w, h, labels_of_interest)
     h = int(h)
     
     # extend the crop by dx and dy in x and y dimensions on both sizes
-    xc1 = max(x1 - dx, 0)
-    yc1 = max(y1 - dy, 0)
-    xc2 = min(x2 + dx, w)
-    yc2 = min(y2 + dy, h)
+    xc1: int = max(x1 - dx, 0)
+    yc1: int = max(y1 - dy, 0)
+    xc2: int = min(x2 + dx, w)
+    yc2: int = min(y2 + dy, h)
     
     if xc2 <= xc1 or yc2 <= yc1:
         # incorrect input dimensions
         return None
     
     # make a copy of the annotations dataframe
-    df = annotations_df.copy()
+    df: pd.DataFrame = annotations_df.copy()
     
     # transform the bounding boxes
     df[['xtl', 'xbr']] = df[['xtl', 'xbr']] - xc1
     df[['ytl', 'ybr']] = df[['ytl', 'ybr']] - yc1
     
-    crop_width = xc2 - xc1
-    crop_height = yc2 - yc1
+    crop_width: int = xc2 - xc1
+    crop_height: int = yc2 - yc1
     
     # remove the bounding boxes that are totally outside the extended cropped image
     # keep the ones that have some non-zero overlap
@@ -958,98 +965,116 @@ def optimize_crop(annotations_df, crop_coords, dx, dy, w, h, labels_of_interest)
                      else False, axis = 1)].reset_index(drop=True)
     
     # for each pixel x_c in x dimension with 0 <= x_c < crop_width, calculate the cost of having one of the 
-    # crop boundaries (vertical) at x_c as the number of bounding boxes that the vertical line passing 
-    # through x_c crosses
+    # crop boundaries (vertical) at x_c as the number of bounding boxes that the vertical line at 
+    # x_c will cross
     # we assign a weight in [0, 1] to each box depending on where the line through x_c crosses the box: 
     # 0 if the line is within 25% of the length of the box from either edges and 1 otherwise
     # similarly for the y dimension
-    cost_in_x = np.zeros(crop_width)
-    cost_in_y = np.zeros(crop_height)
+    cost_in_x: np.ndarray = np.zeros(crop_width)
+    cost_in_y: np.ndarray = np.zeros(crop_height)
     
-    for i, row in df.iterrows():
-        xtl = int(row['xtl'])
-        ytl = int(row['ytl'])
-        xbr = int(row['xbr'])
-        ybr = int(row['ybr'])
+    edge_score: float = 0.25
+    center_score: float = 1.0
+    
+    for _, row in df.iterrows():
+        xtl: int = int(row['xtl'])
+        ytl: int = int(row['ytl'])
+        xbr: int = int(row['xbr'])
+        ybr: int = int(row['ybr'])
         
-        # skip skinny boxes
-        if (xbr - xtl) < 4 or (ybr - ytl) < 4:
+        if row['label'] not in labels_of_interest:
             continue
         
-        # stepwise weight for the box in x dimension, temp[0] is the weight at x = xtl and 
-        # temp[xbr - xtl - 1] is the weight at x = xbr - 1
-        # temp[0:k] and temp[xbr - xtl - k + 1:xbr - xtl] are 0.25 and the rest are 1
-        k = int((xbr - xtl) / 4)
-        temp = [0.25] * k + [1] * (xbr - xtl - 2 * k) + [0.25] * k
+        # skip skinny boxes
+        if (xbr - xtl) < min_bbox_size_to_consider or (ybr - ytl) < min_bbox_size_to_consider:
+            continue
+        
+        # stepwise weight for the box in x dimension, box_score[0] is the weight at x = xtl and 
+        # box_score[xbr - xtl - 1] is the weight at x = xbr - 1
+        # box_score[0:k] and box_score[xbr - xtl - k + 1:xbr - xtl] are 0.25 and the rest are 1
+        box_edge_portion_1: int = max(1, int((xbr - xtl) / 10))
+        box_edge_portion_2: int = int((xbr - xtl) / 4) - box_edge_portion_1
+        box_edge_portion: int = box_edge_portion_1 + box_edge_portion_2
+        box_score: List[float] = [0] * box_edge_portion_1 + [edge_score] * box_edge_portion_2 + [center_score] * (xbr - xtl - 2 * box_edge_portion) + \
+                                 [edge_score] * box_edge_portion_2 + [0] * box_edge_portion_1
         
         """
-        # triangular weight for the box in x dimension, temp[0] is the weight at x = xtl and 
-        # temp[xbr - xtl - 1] is the weight at x = xbr - 1 (both are zero)
+        # triangular weight for the box in x dimension, box_score[0] is the weight at x = xtl and 
+        # box_score[xbr - xtl - 1] is the weight at x = xbr - 1 (both are zero)
         
         # center of the box
         if (xbr + xtl) % 2 == 0:
-            mid_x = (xbr + xtl) // 2 - 1 
-            temp = [float(i - xtl) / (mid_x - xtl) for i in range(xtl, mid_x + 1)]
-            temp += [float(xbr - i - 1) / (xbr - mid_x - 2) for i in range(mid_x + 1, xbr)]
+            mid_x: int = (xbr + xtl) // 2 - 1 
+            box_score = [float(i - xtl) / (mid_x - xtl) for i in range(xtl, mid_x + 1)]
+            box_score += [float(xbr - i - 1) / (xbr - mid_x - 2) for i in range(mid_x + 1, xbr)]
         else:
-            mid_x = (xbr + xtl - 1) // 2 
-            temp = [float(i - xtl) / (mid_x - xtl) for i in range(xtl, mid_x + 1)]
-            temp += [float(xbr - i - 1) / (xbr - mid_x - 1) for i in range(mid_x + 1, xbr)]
+            mid_x: int = (xbr + xtl - 1) // 2 
+            box_score = [float(i - xtl) / (mid_x - xtl) for i in range(xtl, mid_x + 1)]
+            box_score += [float(xbr - i - 1) / (xbr - mid_x - 1) for i in range(mid_x + 1, xbr)]
         """
         
         
         # pixels of the bounding box in x dimension that overlaps with [0, crop_width]
         for i in range(xtl, xbr): 
             if i >= 0 and i < crop_width:
-                cost_in_x[i] += temp[i - xtl] 
+                cost_in_x[i] += box_score[i - xtl] 
         
         # y dimension
-        k = int((ybr - ytl) / 4)
-        temp = [0.25] * k + [1] * (ybr - ytl - 2 * k) + [0.25] * k
+        box_edge_portion_1: int = max(1, int((ybr - ytl) / 10))
+        box_edge_portion_2: int = int((ybr - ytl) / 4) - box_edge_portion_1
+        box_edge_portion: int = box_edge_portion_1 + box_edge_portion_2
+        box_score: List[float] = [0] * box_edge_portion_1 + [edge_score] * box_edge_portion_2 + [center_score] * (ybr - ytl - 2 * box_edge_portion) + \
+                                 [edge_score] * box_edge_portion_2 + [0] * box_edge_portion_1
         
         """
-        # triangular weight for the box in y dimension, temp[0] is the weight at y = ytl and 
-        # temp[ybr - ytl - 1] is the weight at y = ybr - 1 (both are zero)
+        # triangular weight for the box in y dimension, box_score[0] is the weight at y = ytl and 
+        # box_score[ybr - ytl - 1] is the weight at y = ybr - 1 (both are zero)
         
         # center of the box
         if (ybr + ytl) % 2 == 0:
-            mid_y = (ybr + ytl) // 2 - 1 
-            temp = [float(i - ytl) / (mid_y - ytl) for i in range(ytl, mid_y + 1)]
-            temp += [float(ybr - i - 1) / (ybr - mid_y - 2) for i in range(mid_y + 1, ybr)]
+            mid_y: int = (ybr + ytl) // 2 - 1 
+            box_score = [float(i - ytl) / (mid_y - ytl) for i in range(ytl, mid_y + 1)]
+            box_score += [float(ybr - i - 1) / (ybr - mid_y - 2) for i in range(mid_y + 1, ybr)]
         else:
-            mid_y = (ybr + ytl - 1) // 2 
-            temp = [float(i - ytl) / (mid_y - ytl) for i in range(ytl, midY + 1)]
-            temp += [float(ybr - i - 1) / (ybr - mid_y - 1) for i in range(mid_y + 1, ybr)]
+            mid_y: int = (ybr + ytl - 1) // 2 
+            box_score = [float(i - ytl) / (mid_y - ytl) for i in range(ytl, midY + 1)]
+            box_score += [float(ybr - i - 1) / (ybr - mid_y - 1) for i in range(mid_y + 1, ybr)]
         """
         
-        # pixels of the bounding box in x dimension that overlaps with [0, cH]
+        # pixels of the bounding box in x dimension that overlaps with [0, crop_height]
         for i in range(ytl, ybr): 
             if i >= 0 and i < crop_height:
-                cost_in_y[i] += temp[i - ytl] 
+                cost_in_y[i] += box_score[i - ytl] 
        
     # limit the search for the start of the box 
-    left_delta = min(dx, x1)
-    right_delta = min(dx, w - x2)
-    start_cost_x = np.zeros(left_delta + right_delta)
-    for i in range(left_delta + right_delta):
-        start_cost_x[i] = cost_in_x[i] + cost_in_x[x2 - x1 + i]
+    left_delta: int = min(dx, x1)
+    right_delta: int = min(dx, w - x2)
+    start_cost_x: np.ndarray = np.zeros(left_delta + right_delta + 1)
+    
+    for i in range(left_delta + right_delta + 1):
+        start_cost_x[i] = cost_in_x[i] + cost_in_x[x2 - x1 + i - 1]
     
     if len(start_cost_x) > 0:    
-        x1_adjusted = np.argmin(start_cost_x) + x1 - left_delta
+        x1_adjusted: int = np.argmin(start_cost_x) + x1 - left_delta
+        print('min cost_x: ', np.min(start_cost_x))
+        print('cost at original x1: ', start_cost_x[left_delta])
     else:
-        x1_adjusted = x1
+        x1_adjusted: int = x1
     
      # limit the search for the start of the box 
-    top_delta = min(dy, y1)
-    bottom_delta = min(dy, h - y2)
-    start_cost_y = np.zeros(top_delta + bottom_delta)
-    for i in range(top_delta + bottom_delta):
-        start_cost_y[i] = cost_in_y[i] + cost_in_y[y2 - y1 + i]
+    top_delta: int = min(dy, y1)
+    bottom_delta: int = min(dy, h - y2)
+    start_cost_y: np.ndarray = np.zeros(top_delta + bottom_delta + 1)
+    
+    for i in range(top_delta + bottom_delta + 1):
+        start_cost_y[i] = cost_in_y[i] + cost_in_y[y2 - y1 + i - 1]
     
     if len(start_cost_y) > 0:    
-        y1_adjusted = np.argmin(start_cost_y) + y1 - top_delta
+        y1_adjusted: int = np.argmin(start_cost_y) + y1 - top_delta
+        print('min cost_y: ', np.min(start_cost_y))
+        print('cost at original y1: ', start_cost_y[top_delta])
     else:
-        y1_adjusted = y1
+        y1_adjusted: int = y1
         
     return (x1_adjusted, y1_adjusted, x1_adjusted + x2 - x1, y1_adjusted + y2 - y1)
 

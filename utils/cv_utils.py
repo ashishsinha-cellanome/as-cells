@@ -92,7 +92,48 @@ def iou_mask_pair(box1: np.ndarray, mask1: np.ndarray, box2: np.ndarray, mask2: 
     intersection: int = cv2.bitwise_and(union_mask_1, union_mask_2).sum()
 
     return intersection / (float(union) + 1e-30)
-    
+
+
+def overlap_mask_pair(box1: np.ndarray,
+                      mask1: np.ndarray,
+                      box2: np.ndarray,
+                      mask2: np.ndarray,
+                      ordered: bool = False) -> float:
+    """
+    Given two np.uint8 M1xN1 and M2xN2 numpy arrays (mask1, mask2) for two object masks and two (4,) (4-element)
+    integer numpy arrays of the top-left/bottom-right corners of the bounding boxes around these objects (box1, box2),
+    the code returns the overlap between the masks of the two objects. The overlap between the two objects is defined
+    as:
+    - the intersection area between the masks over the smallest area between the two masks when ordered set to False
+    - the intersection area between the masks over the area of mask2 when ordered set to True
+    The passed masks should be defined within the passed bounding boxes, and should have
+    values set to 1 for the object. The bounding boxes should be passed in xtl, ytl, xbr, ybr order, e.g.,
+    if [xtl, ytl, xbr, ybr] are the passed integer values of the top-left and bottle-right corner of the bounding box
+    for an object, the passed masks should be a numpy array of type np.uint8 and size (ybr - ytl, xbr - xtl)
+    with values set to 1 for the object.
+    """
+    # union of the box coordinates, make sure the coordinates are integers
+    xtl_1, ytl_1, xbr_1, ybr_1 = box1.astype(int)
+    xtl_2, ytl_2, xbr_2, ybr_2 = box2.astype(int)
+
+    xtl: int = min(xtl_1, xtl_2)
+    ytl: int = min(ytl_1, ytl_2)
+    xbr: int = max(xbr_1, xbr_2)
+    ybr: int = max(ybr_1, ybr_2)
+    union_mask_1: np.ndarray = np.zeros((ybr - ytl, xbr - xtl), np.uint8)
+    union_mask_1[(ytl_1 - ytl):(ybr_1 - ytl), (xtl_1 - xtl):(xbr_1 - xtl)] = mask1
+    union_mask_2: np.ndarray = np.zeros((ybr - ytl, xbr - xtl), np.uint8)
+    union_mask_2[(ytl_2 - ytl):(ybr_2 - ytl), (xtl_2 - xtl):(xbr_2 - xtl)] = mask2
+    intersection: int = cv2.bitwise_and(union_mask_1, union_mask_2).sum()
+
+    if ordered:
+        # use the mask area of mask2/bboxes2 as the denominator
+        smallest_mask_area: float = mask2.sum()
+    else:
+        smallest_mask_area: float = min(mask1.sum(), mask2.sum()) + 1e-30
+
+    return intersection / smallest_mask_area
+
 
 # a function to return the area of bounding box
 def box_area(box: np.array) -> float:
