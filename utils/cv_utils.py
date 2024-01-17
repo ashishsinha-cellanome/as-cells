@@ -135,6 +135,49 @@ def overlap_mask_pair(box1: np.ndarray,
     return intersection / smallest_mask_area
 
 
+def get_num_partial_objects(boxes: np.ndarray,
+                            masks: List[np.ndarray],
+                            labels: Union[List[int], List[str]],
+                            crop_coords: Union[List[int], Tuple[int]],
+                            w: int, h: int,
+                            labels_of_interest: Union[List[int], List[str]],
+                            partial_object_area_threshold: float = 0.25) -> int:
+    (x1, y1, x2, y2) = crop_coords
+    # make sure the crop is within the image and corners are integer
+    x1, y1, x2, y2 = int(max(0, x1)), int(max(0, y1)), int(min(w, x2)), int(min(h, y2))
+
+    if x2 <= x1 or y2 <= y1:
+        return -1
+
+    crop_box: np.ndarray = np.array([x1, y1, x2, y2]).astype(int)
+    crop_mask = np.ones((y2 - y1, x2 - x1), dtype=np.uint8)
+
+    # to enable the code to run faster, we first compute the ovarlap between the crop and the boxes,
+    # find the potentially overlapping ones and then calculate the overlap between the crop and the masks
+    overlap_box: np.ndarray = overlap_batch(np.array([crop_box]), boxes, True)
+
+    _, overlapping_idxs = np.where(overlap_box > 0)
+
+    num_partial_objects: int = 0
+
+    for idx in overlapping_idxs:
+
+        if labels[idx] not in labels_of_interest:
+            continue
+
+        overlap = overlap_mask_pair(box1=crop_box,
+                                    mask1=crop_mask,
+                                    box2=boxes[idx],
+                                    mask2=masks[idx],
+                                    ordered=True)
+
+        if overlap >= 1 - partial_object_area_threshold or overlap < partial_object_area_threshold:
+            continue
+
+        num_partial_objects += 1
+
+    return num_partial_objects
+
 # a function to return the area of bounding box
 def box_area(box: np.array) -> float:
     """
