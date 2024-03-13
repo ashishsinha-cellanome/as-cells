@@ -7,7 +7,7 @@ import cv2
 import pandas as pd
 import json
 import requests
-import pycocotools
+import random
 from pycocotools import mask as coco_mask_util
 from typing import List, Final, Dict, Union, Tuple
 
@@ -29,7 +29,7 @@ def parse_json_annotations(
         Tuple[int, int], Dict[str, float]
     ] = OPTICAL_CHARACTERISTICS,
     return_masks_in_coco_rle_format: bool = True,
-):
+) -> dict:
     """
     A function to parse the JSON annotation files and extract both the bounding boxes and
     the polygon annotations.
@@ -40,7 +40,7 @@ def parse_json_annotations(
         labels_of_interest (list of strings or None): List of labels to return. Any annotated object with
             a label not included in this list will be ignored. If None passed, all the objects will be returned.
         download_image (bool): If set to True, the image will also be downloaded from the URL
-            provided in the annotation file.
+            provided in the annotation file and returned in the 'image' field of the returned dictionary.
         percentage_to_expand_bbox_boundaries (float): Percentage to expand the bounding boxes around the mask to improve
             training the box regressor of Mask R-CNN
         min_object_diameter (float): The minimum diameter in um for objects to keep.
@@ -52,7 +52,8 @@ def parse_json_annotations(
     Returns:
         a dictionary with keys and values as
             'name'(str): image name,
-            'image'(numpy.ndarray): H x W (Gray scale) or H x W x 3 image array in RGB format,
+            'image'(numpy.ndarray): H x W (Gray scale) or H x W x 3 of the downloaded image array in RGB format. This
+                field is populated only if the input flag download_image is set to True, otherwise, it will be None.
             'annotations' (pandas DataFrame): A DataFrame with columns 'xtl', 'ytl', 'xbr', 'ybr', 'label'.
                 The i-th row is the bounding box coordinates and the label for the i-th annotated object,
             'masks'(list of numpy.ndarrays or COCO RLE format dictionaries): If return_masks_in_coco_rle_format is
@@ -62,9 +63,8 @@ def parse_json_annotations(
                 (encoded mask)).
     """
 
-    
     #  drop the path from the json_filename to get the filename
-    filename_wo_path = json_filename.strip().split('/')[-1]
+    filename_wo_path: str = os.path.basename(json_filename)
     
     try:
         with open(json_filename, 'r') as annotations:
@@ -101,7 +101,7 @@ def parse_json_annotations(
     if download_image:
         img_url = image_info.get('url')
         try:
-            img = Image.open(requests.get(img_url, stream = True).raw)
+            img = Image.open(requests.get(img_url, stream=True).raw)
             # convert to an array in RGB format
             img = np.array(img)
             if image_height is None:
@@ -119,7 +119,6 @@ def parse_json_annotations(
         except Exception as ex:
             print(f"[EXCEPTION]: Downloading image {image_name} failed on {repr(ex)}")
 
-    
     # filter small objects from annotations
     if (image_width, image_height) in optical_characteristics:
         mag: float = optical_characteristics[(image_width, image_height)]['mag']
@@ -136,8 +135,8 @@ def parse_json_annotations(
         
     # print(f"[INFO]: {filename_wo_path} includes {num_objects} annotated objects")
     
-    # create a pandas DataFrame for ease of procesing
-    # the i-th row includes the bounding box coodinates (top-left and bottom-right) 
+    # create a pandas DataFrame for ease of processing
+    # the i-th row includes the bounding box coordinates (top-left and bottom-right)
     # and the label for the i-th object
     annotations_df = pd.DataFrame(columns=['xtl', 'ytl', 'xbr', 'ybr', 'label'])
     # the masks array, masks[i] is a image_height x image_width np.uint8 array for the i-th
@@ -229,15 +228,13 @@ def parse_json_annotations(
                                                                       'xbr': xmax, 
                                                                       'ybr': ymax, 
                                                                       'label': label}], index=[len(annotations_df)])])
-            
-            
+
             obj_id += 1
     
     if complex_polygon_found:
         pass
         # print(f"[WARNING]: Check the annotations for {filename_wo_path} as complex polygon found")
-    
-        
+
     # remove duplicate objects (bounding boxes)
     # make sure the indexes are 0 1, ...
     annotations_df.reset_index(inplace=True, drop=True)
@@ -246,6 +243,7 @@ def parse_json_annotations(
     annotations_df.reset_index(inplace=True, drop=True)
          
     return {'name': image_name, 'image': img, 'annotations': annotations_df, 'masks': masks}
+
 
 def parse_json_annotations_2p0(
         json_filename: str,
@@ -268,7 +266,7 @@ def parse_json_annotations_2p0(
         labels_of_interest (list of strings or None): List of labels to return. Any annotated object with
             a label not included in this list will be ignored. If None passed, all the objects will be returned.
         download_image (bool): If set to True, the image will also be downloaded from the URL
-            provided in the annotation file.
+            provided in the annotation file and returned in the 'image' field of the returned dictionary.
         percentage_to_expand_bbox_boundaries (float): Percentage to expand the bounding boxes around the mask to improve
             training the box regressor of Mask R-CNN
         min_object_diameter (float): The minimum diameter in um for objects to keep.
@@ -280,7 +278,8 @@ def parse_json_annotations_2p0(
     Returns:
         a dictionary with keys and values as
             'name'(str): image name,
-            'image'(numpy.ndarray): H x W (Gray scale) or H x W x 3 image array in RGB format,
+            'image'(numpy.ndarray): H x W (Gray scale) or H x W x 3 of the downloaded image array in RGB format. This
+                field is populated only if the input flag download_image is set to True, otherwise, it will be None.
             'annotations' (pandas DataFrame): A DataFrame with columns 'xtl', 'ytl', 'xbr', 'ybr', 'label'.
                 The i-th row is the bounding box coordinates and the label for the i-th annotated object,
             'masks'(list of numpy.ndarrays or COCO RLE format dictionaries): If return_masks_in_coco_rle_format is
@@ -291,7 +290,7 @@ def parse_json_annotations_2p0(
     """
     
     #  drop the path from the json_filename to get the filename
-    filename_wo_path = json_filename.strip().split('/')[-1]
+    filename_wo_path: str = os.path.basename(json_filename)
     
     try:
         with open(json_filename, 'r') as annotations:
@@ -335,7 +334,6 @@ def parse_json_annotations_2p0(
         except Exception as ex:
             print(f"[EXCEPTION]: Downloading image {image_name} failed on {repr(ex)}")
 
-    
     # filter small objects from annotations
     if (image_width, image_height) in optical_characteristics:
         mag: float = optical_characteristics[(image_width, image_height)]['mag']
@@ -352,8 +350,8 @@ def parse_json_annotations_2p0(
         
     # print(f"[INFO]: {filename_wo_path} includes {num_objects} annotated objects")
     
-    # create a pandas DataFrame for ease of procesing
-    # the i-th row includes the bounding box coodinates (top-left and bottom-right) 
+    # create a pandas DataFrame for ease of processing
+    # the i-th row includes the bounding box coordinates (top-left and bottom-right)
     # and the label for the i-th object
     annotations_df = pd.DataFrame(columns=['xtl', 'ytl', 'xbr', 'ybr', 'label'])
     # the masks array, masks[i] is a image_height x image_width np.uint8 array for the i-th
@@ -479,8 +477,7 @@ def parse_json_annotations_2p0(
                                                                   'xbr': xmax, 
                                                                   'ybr': ymax, 
                                                                   'label': label}], index=[len(annotations_df)])])
-            
-            
+
         obj_id += 1
         
     # remove duplicate objects (bounding boxes)
@@ -496,9 +493,10 @@ def parse_json_annotations_2p0(
 # a dataset classe to "parse" the masks and extract the bounding boxes from annotations
 class CellMaskDataset:
     def __init__(self,
-                 images_path: str,
-                 annotations_path: str,
-                 annotations: List[str],
+                 images_base_path: str,
+                 annotations_base_path: str,
+                 annotations: Union[List[str], Dict[str, str], Dict[str, List[str]]],
+                 max_images_to_consider_for_each_annotation: int = -1,
                  labels_of_interest: Union[List[str], None] = None,
                  percentage_to_expand_bbox_boundaries: float = 0.2,
                  color_depth: int = 14,
@@ -512,9 +510,40 @@ class CellMaskDataset:
         """_summary_
 
         Args:
-            images_path (str): Path to images.
-            annotations_path (str): Path to annotations.
-            annotations (List[str]): List of train/test annotations files without extension.
+            images_base_path (str): Path to images.
+            annotations_base_path (str): Path to annotations.
+            annotations (List[str], or Dict[str, str], or Dict[str, List[str]]: This field provides the list of
+                train/test annotations files and the corresponding image files for the dataset. There are 3 options to
+                provide information this information:
+                    1) In case the annotation files and the images share the same name (excluding the extensions), a
+                    list of annotations filenames without the extension can be passed. For a given 'name' in this list,
+                    the code will search under the specified annotations_path for the annotation file 'name.json' (json
+                    is the only allowed extension for annotations) and under the images_path for the image with the
+                    name and one of the allowed image extensions ('jpg', 'jpeg', and 'png' all in lower case). This is
+                    the legacy behaviour of the code.
+                    2) In case the annotation files are not sharing the same names with the images, a dictionary with
+                    keys as the annotation filenames WITH the extension and values as the image filenames WITH
+                    the extension can be passed. The names for both images and annotations in this case can include an
+                    additional path that will be considered with respect to the provided parent paths: images_path and
+                    annotations_path. For a given key:value pair 'extra_annots_path/annots_name.json':
+                    'extra_img_path/img_name.jpg' in the dictionary, the code will search the annotation file
+                    'annotations_path/extra_annots_path/annots_name.json' and for the image
+                    'images_path/extra_img_path/img_name.jpg'. Note that the file extensions for both annotations and
+                    images should be provided.
+                    3) There are scenarios in which one annotation file is applicable to multiple images. In this case,
+                    a dictionary with keys as the annotation filenames (with the extension and potentially with an extra
+                    path) and values as the list of all applicable image filenames (with the extensions and extra paths)
+                    can be passed. For a given key:value pair 'extra_annots_path/annots_name.json':
+                    ['extra_img_path_1/img_name_1.jpg', 'extra_img_path_2/img_name_2.jpg', ...] in the dictionary, the
+                    code will search the annotation file 'annotations_path/extra_annots_path/annots_name.json' and for
+                    the images 'images_path/extra_img_path_1/img_name_1.jpg',
+                    'images_path/extra_img_path_2/img_name_2.jpg' , ... . Note that the file extensions for both
+                    annotations and images should be provided.
+            max_images_to_consider_for_each_annotation (int): This input is only applicable in case each annotation file
+                is applicable to multiple images (scenario 3 above). Otherwise, it does not have any effect. In case
+                it is set to special value -1 (or any value <= 0), all possible combinations of the annotations and the
+                corresponding images will be considered and returned in the dataset class. Otherwise, the specified
+                number of images are randomly selected to be is used with the annotation and are returned.
             labels_of_interest (Union[List[str], None], optional): _description_. Defaults to None.
             percentage_to_expand_bbox_boundaries (float, optional): _description_. Defaults to 0.2.
             color_depth (int, optional): _description_. Defaults to 14.
@@ -527,18 +556,45 @@ class CellMaskDataset:
             normalize (bool, optional): _description_. Defaults to False.
             class_names_to_ids_map (dict, optional): _description_. Defaults to DEFAULT_CLASS_NAMES_TO_IDS_MAP.
         """
-        self.images_path = images_path
-        self.annotations_path = annotations_path
+        self.images_base_path = images_base_path
+        self.annotations_base_path = annotations_base_path
         # annotations contain the list of train or test files without extension.
-        self.annotations: List[str] = []
-        for annotation_file in annotations: 
-             annotation_path: str = os.path.join(self.annotations_path, f"{annotation_file}.json")
-             if os.path.exists(annotation_path):
-                 self.annotations.append(annotation_file)
-        # the assumption is the image and its mask/label annotation use the same name
-        # if the images are not already downloaded in the images_path, the function
-        # __getitem__ will also download the image to images_path folder from the location
-        # specified in the json annotation file
+        self.annotations_images_map: List[Tuple[str, str]] = []
+        if isinstance(annotations, list):
+            for annotation_file in annotations:
+                annotation_path: str = os.path.join(self.annotations_base_path, f"{annotation_file}.json")
+                image_path: str = self.get_image_path(annotation_file)
+                if os.path.exists(annotation_path):
+                    # image_path will be None if the image does not exist, leave it as None for now
+                    # the assumption here is the image and its mask/label annotation use the same name
+                    # if the images are not already downloaded in the images_path, the function
+                    # __getitem__ will also download the image to images_path folder from the location
+                    # specified in the json annotation file
+                    self.annotations_images_map.append((annotation_path, image_path))
+        elif isinstance(annotations, dict):
+            for annotation_file, value in annotations.items():
+                annotation_path: str = os.path.join(self.annotations_base_path, annotation_file)
+                if isinstance(value, list):
+                    # value is a list of strings specifying the image names (with the extension) corresponding to the
+                    # annotation file
+                    image_paths: List[str] = [os.path.join(self.images_base_path, image_name) for image_name in value]
+                    if 0 < max_images_to_consider_for_each_annotation < len(image_paths):
+                        # TODO: do we want to set a fixed seed to the randomization here to be able to
+                        #  reproduce the same everytime?
+                        # random.seed(7)
+                        random.shuffle(image_paths)
+                        image_paths = image_paths[:max_images_to_consider_for_each_annotation]
+                else:
+                    # value is a string specifying the image name (with the extension)
+                    image_paths: List[str] = [os.path.join(self.images_base_path, value)]
+
+                for image_path in image_paths:
+                    if os.path.exists(annotation_path) and os.path.exists(image_path):
+                        self.annotations_images_map.append((annotation_path, image_path))
+                    else:
+                        print(f"No annotation file or image could be found for {annotation_path}:{image_path}! "
+                              f"This should never happen! Check the passed 'annotations' for a correct mapping between "
+                              f"the annotation files and images. Skipping ...")
 
         self.labels_of_interest = labels_of_interest
         # in order to reduce the memory required for the masks (for instance segmentation models)
@@ -566,12 +622,15 @@ class CellMaskDataset:
         self.min_object_diameter = min_object_diameter
         # the optical characteristics of the device (used to convert the above min_object_diameter from um to pixels)
         self.optical_characteristics = optical_characteristics
+        # a dictionary with keys as the annotations files paths, and values as the parsed dictionary of
+        # annotations, this is used to cache the annotations in case one is used with multiple images and
+        # reuse them
+        self.cached_annotations: Dict[str, dict] = {}
 
     def __getitem__(self, idx: int):
         # load images and masks
-        annotation_path = os.path.join(self.annotations_path, f"{self.annotations[idx]}.json")
-        name = self.annotations[idx]
-        img_path = self.get_image_path(idx)
+        annotation_path: str = self.annotations_images_map[idx][0]
+        img_path: str = self.annotations_images_map[idx][1]
 
         if img_path is not None:
             # read the image, do not change the format
@@ -580,18 +639,37 @@ class CellMaskDataset:
             img = np.array(Image.open(img_path))
             download_image: bool = False
         else:
-            # download the image as well
-            print(f"Image for {name} was not found! Downloading the image ...")
+            # download the image as well, this can only happen when the annotation and the images use the same name
+            annots_name: str = os.path.basename(annotation_path)
+            image_name_without_ext: str = '.'.join(annots_name.strip().split('.')[:-1])
+            print(f"An image with the same name as the annotation file {os.path.basename(annots_name)} was not "
+                  f"found! Downloading the image from the URL in the annotations. This is not considered normal!")
             download_image: bool = True
 
-        # parse the annotations file
-        annotations = parse_json_annotations(json_filename=annotation_path,
-                                             labels_of_interest=self.labels_of_interest,
-                                             download_image=download_image,
-                                             percentage_to_expand_bbox_boundaries=self.percentage_to_expand_bbox_boundaries,
-                                             min_object_diameter=self.min_object_diameter,
-                                             optical_characteristics=self.optical_characteristics,
-                                             return_masks_in_coco_rle_format=False)
+        if annotation_path in self.cached_annotations:
+            # make a (deep) copy
+            # we are not caching the images (hence None below fpr key 'image'), the first time parse_json_annotations is
+            # called with download_image set to True, we save the image to the images_path and update the path in
+            # self.annotations_images_map, so the next time the dataset is called with the same idx, we load the image
+            # from disk and will not download it
+            annotations: dict = {'name': self.cached_annotations[annotation_path]['name'],
+                                 'image': None, # N/A, see parse_json_annotations with download_image = True
+                                 'annotations': self.cached_annotations[annotation_path]['annotations'].copy(),
+                                 'masks': [m.copy() for m in self.cached_annotations[annotation_path]['masks']]}
+        else:
+            # parse the annotations file
+            annotations = parse_json_annotations(json_filename=annotation_path,
+                                                 labels_of_interest=self.labels_of_interest,
+                                                 download_image=download_image,
+                                                 percentage_to_expand_bbox_boundaries=self.percentage_to_expand_bbox_boundaries,
+                                                 min_object_diameter=self.min_object_diameter,
+                                                 optical_characteristics=self.optical_characteristics,
+                                                 return_masks_in_coco_rle_format=False)
+            # cache a copy
+            self.cached_annotations[annotation_path]: dict = {'name': annotations['name'],
+                                                              'image': None, # N/A
+                                                              'annotations': annotations['annotations'].copy(),
+                                                              'masks': [m.copy() for m in annotations['masks']]}
 
         # map the class names included in the annotations DataFrame to class IDs if a
         # mapping is passed
@@ -601,18 +679,22 @@ class CellMaskDataset:
             annotations['annotations']['label'] = annotations['annotations']['label'].map(self.class_names_to_ids_map)
 
         if download_image:
-            img = annotations['image']
+            img: np.ndarray = annotations['image']
+            img_path: str = os.path.join(self.images_base_path, image_name_without_ext + '.jpg')
             # save the image using PIL.Image
-            Image.fromarray(img).save(os.path.join(self.images_path, name + '.jpg'))
+            Image.fromarray(img).save(img_path)
+            # update the map so next time we do not download and read from the file
+            # this is needed because we are caching the parsed annotations, but we are not caching the images
+            self.annotations_images_map[idx] = (annotation_path,  img_path)
 
         # convert the returned np.unit32 image to float with values between 0, 1
         if self.normalize:
-            # if this flag is set, normalize the image such the the minimum intensity
+            # if this flag is set, normalize the image such the minimum intensity
             # is mapped to zero, and the maximum is mapped to one
             # convert the image to a numpy array
             img = cv2.normalize(img, img, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX).astype(np.uint8)
         else:
-            # the intensity of the images is color_deptj bits, so we need to divide by 2^color_depth - 1
+            # the intensity of the images is color_depth bits, so we need to divide by 2^color_depth - 1
             img = (255 * img.astype(float) / self.channel_scale).astype(np.uint8)
 
         image_height, image_width = img.shape[:2]
@@ -660,13 +742,12 @@ class CellMaskDataset:
         return annotations
 
     def __len__(self):
-        return len(self.annotations)
+        return len(self.annotations_images_map)
 
-    def get_image_path(self, idx):
-        img_name = self.annotations[idx]
-        jpg_file_path = os.path.join(self.images_path, f"{img_name}.jpg")
-        jpeg_file_path = os.path.join(self.images_path, f"{img_name}.jpeg")
-        png_file_path = os.path.join(self.images_path, f"{img_name}.png")
+    def get_image_path(self, img_name):
+        jpg_file_path = os.path.join(self.images_base_path, f"{img_name}.jpg")
+        jpeg_file_path = os.path.join(self.images_base_path, f"{img_name}.jpeg")
+        png_file_path = os.path.join(self.images_base_path, f"{img_name}.png")
         if os.path.exists(jpg_file_path):
             return jpg_file_path
         elif os.path.exists(jpeg_file_path):
