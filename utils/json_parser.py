@@ -19,6 +19,10 @@ DEFAULT_CLASS_NAMES_TO_IDS_MAP: Final[Dict[str, int]] = {'Cell': 1, 'dying/dead 
 # optical characteristics of the images (used to map the minimum diameter of objects in um to pixels)
 OPTICAL_CHARACTERISTICS: Final[Dict[Tuple, Dict[str, float]]] = {(2000, 1600): {'mag': 10.0, 'pixel_size': 4.54}, (4512, 4512): {'mag': 9.0, 'pixel_size': 2.74}}
 
+# an upper limit on the number of annotations to cache
+MAX_ANNOTATION_CACHE_LENGTH: Final[int] = 100
+
+
 def parse_json_annotations(
     json_filename: str,
     labels_of_interest: Union[List[str], None] = None,
@@ -596,6 +600,16 @@ class CellMaskDataset:
                               f"This should never happen! Check the passed 'annotations' for a correct mapping between "
                               f"the annotation files and images. Skipping ...")
 
+        # the list of images (with paths) per annotation files (the same content as self.annotations_images_map but
+        # formatted in a dictionary, it is used for caching and checking if all the images per annotation are covered
+        # to clear the cache
+        self.list_of_images_per_annotation: Dict[str, List[str]] = {}
+        for (annotation_path, image_path) in self.annotations_images_map:
+            if annotation_path in self.list_of_images_per_annotation:
+                self.list_of_images_per_annotation[annotation_path].append(image_path)
+            else:
+                self.list_of_images_per_annotation[annotation_path] = [image_path]
+
         self.labels_of_interest = labels_of_interest
         # in order to reduce the memory required for the masks (for instance segmentation models)
         # the image and the annotations can be downsized by the passed scale_factor_dict
@@ -626,6 +640,11 @@ class CellMaskDataset:
         # annotations, this is used to cache the annotations in case one is used with multiple images and
         # reuse them
         self.cached_annotations: Dict[str, dict] = {}
+        # dictionary with keys as the annotations files paths, and values as the list of images already
+        # called, it is used to remove the parsed annotation from the cache (to save memory) once all the
+        # images for a given annotation have been called
+        self.list_of_images_covered_per_annotation: Dict[str, List[str]] = \
+            {key: [] for key in self.list_of_images_per_annotation}
 
     def __getitem__(self, idx: int):
         # load images and masks
@@ -648,16 +667,13 @@ class CellMaskDataset:
 
         if annotation_path in self.cached_annotations:
             # make a (deep) copy
-            # we are not caching the images (hence None below fpr key 'image'), the first time parse_json_annotations is
-            # called with download_image set to True, we save the image to the images_path and update the path in
-            # self.annotations_images_map, so the next time the dataset is called with the same idx, we load the image
-            # from disk and will not download it
+            # we are not caching the images (hence None below fpr key 'image')
             annotations: dict = {'name': self.cached_annotations[annotation_path]['name'],
                                  'image': None, # N/A, see parse_json_annotations with download_image = True
                                  'annotations': self.cached_annotations[annotation_path]['annotations'].copy(),
                                  'masks': [m.copy() for m in self.cached_annotations[annotation_path]['masks']]}
         else:
-            # parse the annotations file
+            # parse the annotations file, this is the first time an image/annotation pair is called
             annotations = parse_json_annotations(json_filename=annotation_path,
                                                  labels_of_interest=self.labels_of_interest,
                                                  download_image=download_image,
@@ -665,11 +681,44 @@ class CellMaskDataset:
                                                  min_object_diameter=self.min_object_diameter,
                                                  optical_characteristics=self.optical_characteristics,
                                                  return_masks_in_coco_rle_format=False)
-            # cache a copy
-            self.cached_annotations[annotation_path]: dict = {'name': annotations['name'],
-                                                              'image': None, # N/A
-                                                              'annotations': annotations['annotations'].copy(),
-                                                              'masks': [m.copy() for m in annotations['masks']]}
+
+            # cache a copy, only if the annotation has multiple images,
+            # make sure we are not growing the cache more than the limit (a safety check)
+            if (len(self.list_of_images_per_annotation[annotation_path]) > 1 and
+                    len(self.cached_annotations) < MAX_ANNOTATION_CACHE_LENGTH):
+                self.cached_annotations[annotation_path]: dict = {'name': annotations['name'],
+                                                                  'image': None, # N/A
+                                                                  'annotations': annotations['annotations'].copy(),
+                                                                  'masks': [m.copy() for m in annotations['masks']]}
+
+        if download_image:
+            # download_image True means img_path is None, and we had to download the image
+            # the first time parse_json_annotations is called with download_image set to True,
+            # we save the image to the images_path and update the path in self.annotations_images_map,
+            # so the next time the dataset is called with the same idx, we load the image
+            # from disk and will not download it
+            img: np.ndarray = annotations['image']
+            img_path: str = os.path.join(self.images_base_path, image_name_without_ext + '.jpg')
+            # save the image using PIL.Image
+            Image.fromarray(img).save(img_path)
+            # update the map so next time we do not download and read from the file
+            self.annotations_images_map[idx] = (annotation_path, img_path)
+            # update the list of images as well, this is not really needed as we are not caching one-to-one
+            # image/annotations, but just to be precise
+            self.list_of_images_per_annotation[annotation_path] = [img_path]
+
+        # check if done with the images, img_path cannot be None if we are here
+        if (annotation_path in self.cached_annotations[annotation_path] and
+                img_path not in self.list_of_images_covered_per_annotation[annotation_path]):
+            # the first condition ensure we are caching this annotation, otherwise, no reason to track
+            # we may not if the number of already cached annotations is more than the limit, or each annotation
+            # is applicable to only one image
+            self.list_of_images_covered_per_annotation[annotation_path].append(img_path)
+            if self.covered_all_images_per_annotation(annotation_path):
+                # all images have been called, delete the annotation from the cache
+                del self.cached_annotations[annotation_path]
+                # reset the tracking dictionary as well
+                self.list_of_images_covered_per_annotation[annotation_path] = []
 
         # map the class names included in the annotations DataFrame to class IDs if a
         # mapping is passed
@@ -677,15 +726,6 @@ class CellMaskDataset:
         # as the keys
         if self.class_names_to_ids_map is not None:
             annotations['annotations']['label'] = annotations['annotations']['label'].map(self.class_names_to_ids_map)
-
-        if download_image:
-            img: np.ndarray = annotations['image']
-            img_path: str = os.path.join(self.images_base_path, image_name_without_ext + '.jpg')
-            # save the image using PIL.Image
-            Image.fromarray(img).save(img_path)
-            # update the map so next time we do not download and read from the file
-            # this is needed because we are caching the parsed annotations, but we are not caching the images
-            self.annotations_images_map[idx] = (annotation_path,  img_path)
 
         # convert the returned np.unit32 image to float with values between 0, 1
         if self.normalize:
@@ -756,6 +796,14 @@ class CellMaskDataset:
             return png_file_path
 
         return None
+
+    def covered_all_images_per_annotation(self, annotation_key: str):
+        uncovered_list: List[str] = [img_path for img_path in self.list_of_images_per_annotation[annotation_key] if
+                                     img_path not in self.list_of_images_covered_per_annotation[annotation_key]]
+        if len(uncovered_list) == 0:
+            return True
+        return False
+
 
 
 # a dataset classe to "parse" the masks and extract the bounding boxes from annotations
