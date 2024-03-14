@@ -787,6 +787,8 @@ class CellMaskDataset:
                                                        interpolation=cv2.INTER_NEAREST)
 
         annotations['image'] = img
+        # update the name of the image
+        annotations['name']: str = os.path.basename(img_path)
 
         return annotations
 
