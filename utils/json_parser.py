@@ -708,7 +708,7 @@ class CellMaskDataset:
             self.list_of_images_per_annotation[annotation_path] = [img_path]
 
         # check if done with the images, img_path cannot be None if we are here
-        if (annotation_path in self.cached_annotations[annotation_path] and
+        if (annotation_path in self.cached_annotations and
                 img_path not in self.list_of_images_covered_per_annotation[annotation_path]):
             # the first condition ensure we are caching this annotation, otherwise, no reason to track
             # we may not if the number of already cached annotations is more than the limit, or each annotation
