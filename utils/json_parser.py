@@ -20,7 +20,7 @@ DEFAULT_CLASS_NAMES_TO_IDS_MAP: Final[Dict[str, int]] = {'Cell': 1, 'dying/dead 
 OPTICAL_CHARACTERISTICS: Final[Dict[Tuple, Dict[str, float]]] = {(2000, 1600): {'mag': 10.0, 'pixel_size': 4.54}, (4512, 4512): {'mag': 9.0, 'pixel_size': 2.74}}
 
 # an upper limit on the number of annotations to cache
-MAX_ANNOTATION_CACHE_LENGTH: Final[int] = 100
+MAX_ANNOTATION_CACHE_LENGTH: Final[int] = 5
 
 
 def parse_json_annotations(
@@ -645,6 +645,12 @@ class CellMaskDataset:
         # images for a given annotation have been called
         self.list_of_images_covered_per_annotation: Dict[str, List[str]] = \
             {key: [] for key in self.list_of_images_per_annotation}
+        # in case some annotations (with more than one corresponding images) are blocked from being cached (because
+        # the cache is already full at the time of call), we add them to this list to block them from being cached
+        # later (when called for another image) when some room becomes available in the cache
+        # if cached, these will be left in the cache because we never complete a full-cycle read of images for them
+        # this step is needed to avoid having some left over in the cache from these annotations
+        self.blocked_annotations_from_caching: List[str] = []
 
     def __getitem__(self, idx: int):
         # load images and masks
@@ -682,14 +688,17 @@ class CellMaskDataset:
                                                  optical_characteristics=self.optical_characteristics,
                                                  return_masks_in_coco_rle_format=False)
 
-            # cache a copy, only if the annotation has multiple images,
+            # cache a copy, only if the annotation has multiple images and has not been blocked before
             # make sure we are not growing the cache more than the limit (a safety check)
             if (len(self.list_of_images_per_annotation[annotation_path]) > 1 and
-                    len(self.cached_annotations) < MAX_ANNOTATION_CACHE_LENGTH):
-                self.cached_annotations[annotation_path]: dict = {'name': annotations['name'],
-                                                                  'image': None, # N/A
-                                                                  'annotations': annotations['annotations'].copy(),
-                                                                  'masks': [m.copy() for m in annotations['masks']]}
+                    annotation_path not in self.blocked_annotations_from_caching):
+                if len(self.cached_annotations) < MAX_ANNOTATION_CACHE_LENGTH:
+                    self.cached_annotations[annotation_path]: dict = {'name': annotations['name'],
+                                                                      'image': None,  # N/A
+                                                                      'annotations': annotations['annotations'].copy(),
+                                                                      'masks': [m.copy() for m in annotations['masks']]}
+                else:
+                    self.blocked_annotations_from_caching.append(annotation_path)
 
         if download_image:
             # download_image True means img_path is None, and we had to download the image
