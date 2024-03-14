@@ -497,8 +497,8 @@ def parse_json_annotations_2p0(
 # a dataset classe to "parse" the masks and extract the bounding boxes from annotations
 class CellMaskDataset:
     def __init__(self,
-                 images_base_path: str,
-                 annotations_base_path: str,
+                 images_path: str,
+                 annotations_path: str,
                  annotations: Union[List[str], Dict[str, str], Dict[str, List[str]]],
                  max_images_to_consider_for_each_annotation: int = -1,
                  labels_of_interest: Union[List[str], None] = None,
@@ -514,8 +514,8 @@ class CellMaskDataset:
         """_summary_
 
         Args:
-            images_base_path (str): Path to images.
-            annotations_base_path (str): Path to annotations.
+            images_path (str): Path to images.
+            annotations_path (str): Path to annotations.
             annotations (List[str], or Dict[str, str], or Dict[str, List[str]]: This field provides the list of
                 train/test annotations files and the corresponding image files for the dataset. There are 3 options to
                 provide information this information:
@@ -560,8 +560,8 @@ class CellMaskDataset:
             normalize (bool, optional): _description_. Defaults to False.
             class_names_to_ids_map (dict, optional): _description_. Defaults to DEFAULT_CLASS_NAMES_TO_IDS_MAP.
         """
-        self.images_base_path = images_base_path
-        self.annotations_base_path = annotations_base_path
+        self.images_base_path = images_path
+        self.annotations_base_path = annotations_path
         # annotations contain the list of train or test files without extension.
         self.annotations_images_map: List[Tuple[str, str]] = []
         if isinstance(annotations, list):
