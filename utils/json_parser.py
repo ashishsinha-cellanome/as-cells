@@ -1293,6 +1293,9 @@ def crop_and_block(sample, crop_coords, labels_of_interest=None,
             blacked out in the train/test images later. 
     """
     
+    if keep_area_threshold < 0.33:
+        keep_area_threshold = 0.33
+    
     x1, y1, x2, y2 = crop_coords
     # make a copy of the input to make sure it is not modified
     name, image, df = sample['name'], sample['image'].copy(), sample['annotations'].copy()
@@ -1320,12 +1323,35 @@ def crop_and_block(sample, crop_coords, labels_of_interest=None,
                      max(0, min(row['ybr'] - yc1, crop_height) - max(row['ytl'] - yc1, 0)) > 0\
                      else False, axis = 1)]
     
-    # crop the masks if available, and only keep the ones inside the crop
-    # we further remove or block the partial objects
     if 'masks' in sample:
-        masks = []
+    
+        # identify the masks that would lie inside the newly cropped
+        # image by more than keep_area_threshold; these masks and boxes are kept 
+    
+        # also identify the masks that would lie inside the newly cropped
+        # image by less than keep_area_threshold and more than 30%; we are going 
+        # to black out the area of these bounding boxes (together with objects 
+        # identified with block_label in the annotations) in the image to prevent 
+        # the model from seeing thes partial objects
+    
+        # for any object with overlap less than 30% with the cropped
+        # sub-image, we only remove the annotation (mask and bounding box). We allow 
+        # the model to see the content of the partial object 
+    
+     
+        # list of df indices to keep 
         idxs_to_keep = []
+        # list of df indices to block
+        idxs_to_block = []
+        # list of masks to keep (should correspond to the same indices in the df to keep)
+        masks = []
+        
         for obj_id in df.index:
+        
+            # ignore the object if not in the labels_of_interest (if specified) or if it should not be blocked
+            if labels_of_interest is not None and df.loc[obj_id, 'label'] not in (labels_of_interest + [block_label]):
+                continue
+            
             # find the overlapping part between the object's bounding box (where the mask is defined within)
             # and the crop
             box_xtl, box_ytl, box_xbr, box_ybr = df.loc[obj_id, ['xtl', 'ytl', 'xbr', 'ybr']].values
@@ -1352,8 +1378,18 @@ def crop_and_block(sample, crop_coords, labels_of_interest=None,
             
             if delta_x1 >= delta_x2 or delta_y1 >= delta_y2:
                 continue
+                
+            cropped_mask_area = cropped_mask[delta_y1:delta_y2, delta_x1:delta_x2].sum()
+            mask_area = sample['masks'][obj_id].sum()
             
-            idxs_to_keep.append(obj_id)
+            if df.loc[obj_id, 'label'] == block_label or 0.3 * mask_area <= cropped_mask_area < keep_area_threshold * mask_area:
+                idxs_to_block.append(obj_id)
+            elif cropped_mask_area >= keep_area_threshold * mask_area:
+                idxs_to_keep.append(obj_id)
+                masks.append(cropped_mask[delta_y1:delta_y2, delta_x1:delta_x2].copy())
+            
+            # update the bounding box around the mask part that lies inside the crop (even for block_label objects, 
+            # we do not want to block more than needed)    
             new_box_xtl = box_xtl + xmin + delta_x1
             new_box_xbr = box_xtl + xmin + delta_x2
             new_box_ytl = box_ytl + ymin + delta_y1
@@ -1363,63 +1399,56 @@ def crop_and_block(sample, crop_coords, labels_of_interest=None,
             df.at[obj_id, 'ytl'] = new_box_ytl
             df.at[obj_id, 'xbr'] = new_box_xbr
             df.at[obj_id, 'ybr'] = new_box_ybr
-            masks.append(cropped_mask[delta_y1:delta_y2, delta_x1:delta_x2].copy())
-        df = df.loc[idxs_to_keep]    
-            
-    # transform the bounding boxes
-    df[['xtl', 'xbr']] = df[['xtl', 'xbr']] - xc1
-    df[['ytl', 'ybr']] = df[['ytl', 'ybr']] - yc1
-    # reset the index
-    df = df.reset_index(drop=True)
-
-    # identify bounding boxes that would lie inside the newly cropped
-    # image by more than keep_area_threshold; these boxes are kept 
-    
-    # also identify bounding boxes that would lie inside the newly cropped
-    # image by less than keep_area_threshold and more than 30%; we are going 
-    # to black out the area of these bounding boxes (together with objects 
-    # identified with block_label in the annotations) in the image to prevent 
-    # the model from seeing thes partial objects
-    
-    # for any object with overlap less than 30% with the cropped
-    # sub-image, we only remove the bounding box. We allow the model to see the 
-    # content of the partial object 
-    
-    if keep_area_threshold < 0.33:
-        keep_area_threshold = 0.33
-   
-    
-    if labels_of_interest is None:
-        # consider all objects
-        idxs_to_keep = df.apply(lambda row: True \
-                                if (min(row['xbr'], crop_width) - max(row['xtl'], 0)) * 
-                                (min(row['ybr'], crop_height) - max(row['ytl'], 0)) >= keep_area_threshold * 
-                                (row['xbr'] - row['xtl']) * (row['ybr'] - row['ytl']) else False, axis=1)
-        idxs_to_block = df.apply(lambda row: True \
-                                 if ((min(row['xbr'], crop_width) - max(row['xtl'], 0)) * 
-                                     (min(row['ybr'], crop_height) - max(row['ytl'], 0)) < keep_area_threshold * 
-                                     (row['xbr'] - row['xtl']) * (row['ybr'] - row['ytl']) and 
-                                     (min(row['xbr'], crop_width) - max(row['xtl'], 0)) * 
-                                     (min(row['ybr'], crop_height) - max(row['ytl'], 0)) >= 0.3 * 
-                                     (row['xbr'] - row['xtl']) * (row['ybr'] - row['ytl'])) or
-                                 row['label'] == block_label else False, axis=1)
-    else:
-        # if labels_of_interest is provided, use it to only keep the ones we need to keep 
-        idxs_to_keep = df.apply(lambda row: True \
-                                if (min(row['xbr'], crop_width) - max(row['xtl'], 0)) * 
-                                (min(row['ybr'], crop_height) - max(row['ytl'], 0)) >= keep_area_threshold * 
-                                (row['xbr'] - row['xtl']) * (row['ybr'] - row['ytl']) and 
-                                row['label'] in labels_of_interest else False, axis=1)
-        idxs_to_block = df.apply(lambda row: True \
-                                 if ((min(row['xbr'], crop_width) - max(row['xtl'], 0)) * 
-                                     (min(row['ybr'], crop_height) - max(row['ytl'], 0)) < keep_area_threshold * 
-                                     (row['xbr'] - row['xtl']) * (row['ybr'] - row['ytl']) and 
-                                     (min(row['xbr'], crop_width) - max(row['xtl'], 0)) * 
-                                     (min(row['ybr'], crop_height) - max(row['ytl'], 0)) >= 0.3 * 
-                                     (row['xbr'] - row['xtl']) * (row['ybr'] - row['ytl']) and 
-                                     row['label'] in labels_of_interest) or
-                                 row['label'] == block_label  else False, axis=1)
+                
         
+        # transform the bounding boxes (needed below)
+        df[['xtl', 'xbr']] = df[['xtl', 'xbr']] - xc1
+        df[['ytl', 'ybr']] = df[['ytl', 'ybr']] - yc1   
+    else: 
+        # only bounding boxes are included in the annotations
+        # use them to identify the objects that would lie in the cropped image       
+        # transform the bounding boxes
+        df[['xtl', 'xbr']] = df[['xtl', 'xbr']] - xc1
+        df[['ytl', 'ybr']] = df[['ytl', 'ybr']] - yc1
+
+        # identify bounding boxes that should be kept, left or blocked following 
+        # the same logic as masks
+    
+        if labels_of_interest is None:
+            # consider all objects
+            idxs_to_keep = df.apply(lambda row: True \
+                                    if (min(row['xbr'], crop_width) - max(row['xtl'], 0)) * 
+                                    (min(row['ybr'], crop_height) - max(row['ytl'], 0)) >= keep_area_threshold * 
+                                    (row['xbr'] - row['xtl']) * (row['ybr'] - row['ytl']) and 
+                                    row['label'] != block_label else False, axis=1)
+            idxs_to_block = df.apply(lambda row: True \
+                                     if ((min(row['xbr'], crop_width) - max(row['xtl'], 0)) * 
+                                         (min(row['ybr'], crop_height) - max(row['ytl'], 0)) < keep_area_threshold * 
+                                         (row['xbr'] - row['xtl']) * (row['ybr'] - row['ytl']) and 
+                                         (min(row['xbr'], crop_width) - max(row['xtl'], 0)) * 
+                                         (min(row['ybr'], crop_height) - max(row['ytl'], 0)) >= 0.3 * 
+                                         (row['xbr'] - row['xtl']) * (row['ybr'] - row['ytl'])) or
+                                     row['label'] == block_label else False, axis=1)
+        else:
+            # if labels_of_interest is provided, use it to only keep the ones we need to keep, IT SHOULD NOT INCLUDE block_label
+            idxs_to_keep = df.apply(lambda row: True \
+                                    if (min(row['xbr'], crop_width) - max(row['xtl'], 0)) * 
+                                    (min(row['ybr'], crop_height) - max(row['ytl'], 0)) >= keep_area_threshold * 
+                                    (row['xbr'] - row['xtl']) * (row['ybr'] - row['ytl']) and 
+                                    row['label'] in labels_of_interest else False, axis=1)
+            idxs_to_block = df.apply(lambda row: True \
+                                     if ((min(row['xbr'], crop_width) - max(row['xtl'], 0)) * 
+                                         (min(row['ybr'], crop_height) - max(row['ytl'], 0)) < keep_area_threshold * 
+                                         (row['xbr'] - row['xtl']) * (row['ybr'] - row['ytl']) and 
+                                         (min(row['xbr'], crop_width) - max(row['xtl'], 0)) * 
+                                         (min(row['ybr'], crop_height) - max(row['ytl'], 0)) >= 0.3 * 
+                                         (row['xbr'] - row['xtl']) * (row['ybr'] - row['ytl']) and 
+                                         row['label'] in labels_of_interest) or
+                                     row['label'] == block_label  else False, axis=1)
+        # convert to indices of df                             
+        idxs_to_keep = df[idxs_to_keep].index
+        idxs_to_block = df[idxs_to_block].index
+    
     # limit the bounding boxes to image coordinates
     df.loc[df['xtl'] < 0, 'xtl'] = 0
     df.loc[df['ytl'] < 0, 'ytl'] = 0
@@ -1431,26 +1460,23 @@ def crop_and_block(sample, crop_coords, labels_of_interest=None,
     
     # indicate the areas that should be blacked out from the bounding
     # boxes to be blocked
-    for _, row in df[idxs_to_block].iterrows():
+    for _, row in df.loc[idxs_to_block].iterrows():
         crop_mask[int(row['ytl']):int(row['ybr']), int(row['xtl']):int(row['xbr'])]  = 0
     
     # then overwrite them by the annotated objects that we are going to keep
     # we do this to make sure we are not blacking out anything from the objects
     # that are going to be used for training, and only black out objects that we 
     # are not going to use (not annotated anymore)
-    for _, row in df[idxs_to_keep].iterrows():
+    for _, row in df.loc[idxs_to_keep].iterrows():
         crop_mask[int(row['ytl']):int(row['ybr']), int(row['xtl']):int(row['xbr'])]  = 1
     
     if 'masks' in sample:
-        # keep the masks for the objects that we need to keep 
-        # (lie in the crop)
-        masks = [masks[i] for i in df[idxs_to_keep].index]
-        for i, obj_id in enumerate(df[idxs_to_keep].index):
+        for i, obj_id in enumerate(idxs_to_keep):
             box_xtl, box_ytl, box_xbr, box_ybr = df.loc[obj_id, ['xtl', 'ytl', 'xbr', 'ybr']].values
             masks[i] = (masks[i] * crop_mask[box_ytl:box_ybr, box_xtl:box_xbr]).astype(np.uint8)
     
     # reset the indexes in the annotations DataFrame
-    df = df[idxs_to_keep].reset_index(drop=True)
+    df = df.loc[idxs_to_keep].reset_index(drop=True)
     
     if len(image.shape) > 2:
         # 3 channel image
