@@ -1,12 +1,17 @@
 import math
 import sys
 import time
-
+import numpy as np
 import torch
 import torchvision.models.detection.mask_rcnn
 import utils
+
 from coco_eval import CocoEvaluator
 from coco_utils import get_coco_api_from_dataset
+import pycocotools.mask as mask_util
+from pycocotools.cocoeval import COCOeval
+from coco_eval import convert_to_xywh
+from tqdm import tqdm
 
 
 def train_one_epoch(model, optimizer, data_loader, device, epoch, print_freq, scaler=None):
@@ -153,7 +158,6 @@ def evaluate(model, data_loader, device, max_dets=100):
 
         outputs = [{k: v.to(cpu_device) for k, v in t.items()} for t in outputs]
         model_time = time.time() - model_time
-
         res = {target["image_id"].item(): output for target, output in zip(targets, outputs)}
         evaluator_time = time.time()
         coco_evaluator.update(res)
@@ -170,3 +174,101 @@ def evaluate(model, data_loader, device, max_dets=100):
     coco_evaluator.summarize()
     torch.set_num_threads(n_threads)
     return coco_evaluator
+    
+    
+@torch.inference_mode()
+def evaluate_coco_segm(model, data_loader, device, max_dets=100):
+    
+    if not isinstance(data_loader.dataset, torchvision.datasets.CocoDetection):
+        print(f"[ERROR]: evaluate_coco_segm only supports COCO dataset format (torchvision.datasets.CocoDetection)! \n"
+              f"The passed data_loader's dataset type is {type(data_loader.dataset)}. No evaluation is possible")
+        return COCOeval(), COCOeval()
+        
+    n_threads = torch.get_num_threads()
+    # FIXME remove this and make paste_masks_in_image run on the GPU
+    torch.set_num_threads(1)
+    cpu_device = torch.device("cpu")
+    model.eval()
+
+    
+    all_results = []
+    all_image_ids = []
+    model_time = 0
+    for images, targets in tqdm(data_loader):
+        images = list(img.to(device) for img in images)
+         
+        start_time = time.time()
+        outputs = model(images)
+        outputs = [{k: v.to(cpu_device) for k, v in t.items()} for t in outputs]
+        results = {target["image_id"]: output for target, output in zip(targets, outputs)}
+        results = convert_preds_to_coco(results)
+        all_results.extend(results)
+        all_image_ids += [target["image_id"] for target in targets]
+        model_time += time.time() - start_time
+        
+        
+    coco_gt = data_loader.dataset.coco   
+    coco_dt = coco_gt.loadRes(all_results)  # init predictions api
+    
+    evaluator_time = time.time()
+    
+    # bounding box evaluation
+    coco_evaluator_bbox = COCOeval(coco_gt, coco_dt, "bbox")
+    coco_evaluator_bbox.params.maxDets = [1, 10, max_dets]
+    coco_evaluator_bbox.params.imgIds = all_image_ids
+    coco_evaluator_bbox.evaluate()
+    coco_evaluator_bbox.accumulate()
+    coco_evaluator_bbox.summarize()
+    
+    # segmentation evaluation
+    coco_evaluator_segm = COCOeval(coco_gt, coco_dt, "segm")
+    coco_evaluator_segm.params.maxDets = [1, 10, max_dets]
+    coco_evaluator_segm.params.imgIds = all_image_ids
+    coco_evaluator_segm.evaluate()
+    coco_evaluator_segm.accumulate()
+    coco_evaluator_segm.summarize()
+    
+    
+    evaluator_time = time.time() - evaluator_time
+    
+    print("model_time:", model_time)
+    print("evaluator_time:", evaluator_time)
+
+    torch.set_num_threads(n_threads)
+    return coco_evaluator_bbox, coco_evaluator_segm
+    
+
+def convert_preds_to_coco(predictions):
+    coco_results = []
+    for original_id, prediction in predictions.items():
+        if len(prediction) == 0:
+            continue
+        
+        boxes = prediction["boxes"]
+        boxes = convert_to_xywh(boxes).tolist()
+        
+        scores = prediction["scores"].tolist()
+        labels = prediction["labels"].tolist()
+         
+        masks = prediction["masks"]
+        masks = masks > 0.5
+
+        rles = [
+            mask_util.encode(np.array(mask[0, :, :, np.newaxis], dtype=np.uint8, order="F"))[0] for mask in masks
+        ]
+        for rle in rles:
+            rle["counts"] = rle["counts"].decode("utf-8")
+
+        coco_results.extend(
+            [
+                {
+                    "image_id": original_id,
+                    "category_id": labels[k],
+                    "bbox": boxes[k],
+                    "segmentation": rle,
+                    "score": scores[k],
+                }
+                for k, rle in enumerate(rles)
+            ]
+        )
+    return coco_results
