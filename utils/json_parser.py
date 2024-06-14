@@ -461,7 +461,8 @@ def parse_json_annotations_2p0(
             polygon_points: np.ndarray = pd.DataFrame(polygon_points_list[main_index]).values.astype(np.int32)
             polygon_points = np.expand_dims(polygon_points, axis=1)
             cv2.drawContours(mask, [polygon_points - np.array([xmin, ymin])], 0, 1, -1)
-        
+            
+            # the rest of the polygons are the "holes" in the object, remove them from the main mask
             for i, poly in enumerate(polygon_points_list):
                 if i == main_index:
                     continue
@@ -475,7 +476,7 @@ def parse_json_annotations_2p0(
                 hole_mask: np.ndarray = np.zeros((ymax - ymin, xmax - xmin), np.uint8)
                 # create the mask for the object (the mask value is set to 1 for the object)
                 cv2.drawContours(hole_mask, [polygon_points - np.array([xmin, ymin])], 0, 1, -1)
-                # make sure the "hole" is a subset of the main mask before subtraction
+                # make sure the "hole" is a subset of the main mask before subtraction (should not be needed)
                 hole_mask = cv2.bitwise_and(mask, hole_mask)
                 mask = mask - hole_mask
             
@@ -494,7 +495,7 @@ def parse_json_annotations_2p0(
             obj_id += 1
         
         else:
-            # addressing the bug, multuple objects have been combined in the polygon
+            # addressing the bug in Darwin v2.0, multuple objects have been combined in the polygon
             # print(f"[WARNNING]: Multiple objects are combined in the {idx}th polygon in {filename_wo_path}! Darwin v2.0 bug. Addressing the issue")
             for i, poly in enumerate(polygon_points_list):
                 
