@@ -395,14 +395,14 @@ def parse_json_annotations_2p0(
             continue
         
         # in v2.0, an object can be represented with multiple polygons if it has "holes" in it
-        # the largest polygon (in terms of area) specifies the object's mask; the masks specified
+        # in this case, the largest polygon (in terms of area) specifies the object's mask; the masks specified
         # by the rest of polygons should be excluded from this main mask
+        # also, it seems there is a bug in Darwin v2.0 way of generating annotations that would combine multiple
+        # annotated objects into one polygon (we had seen this issue in v1.0 as well)
+        # so in the following, we try to differentiate these two scenarios 
         max_area: int = 0
         main_index: int = -1
-        main_mask_xmin: int = image_width
-        main_mask_ymin: int = image_height
-        main_mask_xmax: int = 0
-        main_mask_ymax: int = 0
+        coords: List[List[int]] = []
         
         for i, poly in enumerate(polygon_points_list):
             # pandas is just used for simplicity
@@ -415,74 +415,130 @@ def parse_json_annotations_2p0(
             ymin: int = max(0, np.min(polygon_points[:, 1]))
             ymax: int = min(image_height, np.max(polygon_points[:, 1]))
             
+            coords.append([xmin, ymin, xmax, ymax])
+            
             area: int = (xmax - xmin) * (ymax - ymin)
             
             if area > max_area:
                 max_area = area
                 main_index = i
-            
-            if xmin < main_mask_xmin:
-                main_mask_xmin = xmin
-            if ymin < main_mask_ymin:
-                main_mask_ymin = ymin
-            if xmax > main_mask_xmax:
-                main_mask_xmax = xmax
-            if ymax > main_mask_ymax:
-                main_mask_ymax = ymax
-                
-        # filter the small objects here before modifying the bounding boxes
-        if main_mask_xmin >= main_mask_xmax or main_mask_ymin >= main_mask_ymax or max(main_mask_xmax - main_mask_xmin, main_mask_ymax - main_mask_ymin) < min_diameter_in_pixels:
-            continue
-             
-        # expand the box boundaries by a few pixels as the masks may not be covering the boundaries
-        delta_x: int = int(percentage_to_expand_bbox_boundaries * (main_mask_xmax - main_mask_xmin) / 2)
-        delta_y: int = int(percentage_to_expand_bbox_boundaries * (main_mask_ymax - main_mask_ymin) / 2)
-            
-        delta_x = max(1, delta_x)
-        delta_y = max(1, delta_y)
-            
-        xmin = max(0, main_mask_xmin - delta_x)
-        ymin = max(0, main_mask_ymin - delta_y)
-        xmax = min(image_width, main_mask_xmax + delta_x)
-        ymax = min(image_height, main_mask_ymax + delta_y)
-        
-        # the object's mask
-        mask: np.ndarray = np.zeros((ymax - ymin, xmax - xmin), np.uint8)
-        # plot the main mask
-        polygon_points: np.ndarray = pd.DataFrame(polygon_points_list[main_index]).values.astype(np.int32)
-        polygon_points = np.expand_dims(polygon_points, axis=1)
-        cv2.drawContours(mask, [polygon_points - np.array([xmin, ymin])], 0, 1, -1)
-        
-        for i, poly in enumerate(polygon_points_list):
-            if i == main_index:
-                continue
-            # pandas is just used for simplicity
-            polygon_points: np.ndarray = pd.DataFrame(poly).values.astype(np.int32)    
        
-            # draw the polygon mask within the bounding box
-            # CV2 contours format
+        has_holes: bool = True
+        # check if the bounding boxes of all other polygons lines inside the bounding box of the main polygon (the largest area)
+        # if that is the case, the polygon has "holes", otherwise, they should be separate objects that have been incorrectly 
+        # combined
+        for i, (x1, y1, x2, y2) in enumerate(coords):
+            # allow 1 pixel offset
+            if x1 + 1 < coords[main_index][0] or y1 + 1 < coords[main_index][1] or x2 - 1 > coords[main_index][2] or y2 - 1 > coords[main_index][3]:
+                has_holes = False
+                break   
+       
+        if has_holes:   
+            main_mask_xmin: int = coords[main_index][0]
+            main_mask_ymin: int = coords[main_index][1]
+            main_mask_xmax: int = coords[main_index][2]
+            main_mask_ymax: int = coords[main_index][3]
+                
+            # filter the small objects here before modifying the bounding boxes
+            if main_mask_xmin >= main_mask_xmax or main_mask_ymin >= main_mask_ymax or max(main_mask_xmax - main_mask_xmin, main_mask_ymax - main_mask_ymin) < min_diameter_in_pixels:
+                continue
+             
+            # expand the box boundaries by a few pixels as the masks may not be covering the boundaries
+            delta_x: int = int(percentage_to_expand_bbox_boundaries * (main_mask_xmax - main_mask_xmin) / 2)
+            delta_y: int = int(percentage_to_expand_bbox_boundaries * (main_mask_ymax - main_mask_ymin) / 2)
+            
+            delta_x = max(1, delta_x)
+            delta_y = max(1, delta_y)
+            
+            xmin = max(0, main_mask_xmin - delta_x)
+            ymin = max(0, main_mask_ymin - delta_y)
+            xmax = min(image_width, main_mask_xmax + delta_x)
+            ymax = min(image_height, main_mask_ymax + delta_y)
+        
+            # the object's mask
+            mask: np.ndarray = np.zeros((ymax - ymin, xmax - xmin), np.uint8)
+            # plot the main mask
+            polygon_points: np.ndarray = pd.DataFrame(polygon_points_list[main_index]).values.astype(np.int32)
             polygon_points = np.expand_dims(polygon_points, axis=1)
+            cv2.drawContours(mask, [polygon_points - np.array([xmin, ymin])], 0, 1, -1)
+        
+            for i, poly in enumerate(polygon_points_list):
+                if i == main_index:
+                    continue
+                # pandas is just used for simplicity
+                polygon_points: np.ndarray = pd.DataFrame(poly).values.astype(np.int32)    
+       
+                # draw the polygon mask within the bounding box
+                # CV2 contours format
+                polygon_points = np.expand_dims(polygon_points, axis=1)
             
-            hole_mask: np.ndarray = np.zeros((ymax - ymin, xmax - xmin), np.uint8)
-            # create the mask for the object (the mask value is set to 1 for the object)
-            cv2.drawContours(hole_mask, [polygon_points - np.array([xmin, ymin])], 0, 1, -1)
-            # make sure the "hole" is a subset of the main mask before subtraction
-            hole_mask = cv2.bitwise_and(mask, hole_mask)
-            mask = mask - hole_mask
+                hole_mask: np.ndarray = np.zeros((ymax - ymin, xmax - xmin), np.uint8)
+                # create the mask for the object (the mask value is set to 1 for the object)
+                cv2.drawContours(hole_mask, [polygon_points - np.array([xmin, ymin])], 0, 1, -1)
+                # make sure the "hole" is a subset of the main mask before subtraction
+                hole_mask = cv2.bitwise_and(mask, hole_mask)
+                mask = mask - hole_mask
             
-        if return_masks_in_coco_rle_format:
-            encoded_mask: dict = coco_mask_util.encode(np.asarray(mask, order="F"))    
-            masks.append(encoded_mask)
-        else:
-            masks.append(mask)
-        annotations_df = pd.concat([annotations_df, pd.DataFrame(data = 
-                                                                [{'xtl': xmin, 
-                                                                  'ytl': ymin, 
-                                                                  'xbr': xmax, 
-                                                                  'ybr': ymax, 
-                                                                  'label': label}], index=[len(annotations_df)])])
+            if return_masks_in_coco_rle_format:
+                encoded_mask: dict = coco_mask_util.encode(np.asarray(mask, order="F"))    
+                masks.append(encoded_mask)
+            else:
+                masks.append(mask)
+            annotations_df = pd.concat([annotations_df, pd.DataFrame(data = 
+                                                                    [{'xtl': xmin, 
+                                                                      'ytl': ymin, 
+                                                                      'xbr': xmax, 
+                                                                      'ybr': ymax, 
+                                                                      'label': label}], index=[len(annotations_df)])])
 
-        obj_id += 1
+            obj_id += 1
+        
+        else:
+            # addressing the bug, multuple objects have been combined in the polygon
+            # print(f"[WARNNING]: Multiple objects are combined in the {idx}th polygon in {filename_wo_path}! Darwin v2.0 bug. Addressing the issue")
+            for i, poly in enumerate(polygon_points_list):
+                
+                main_mask_xmin: int = coords[i][0]
+                main_mask_ymin: int = coords[i][1]
+                main_mask_xmax: int = coords[i][2]
+                main_mask_ymax: int = coords[i][3]
+                
+                # filter the small objects here before modifying the bounding boxes
+                if main_mask_xmin >= main_mask_xmax or main_mask_ymin >= main_mask_ymax or max(main_mask_xmax - main_mask_xmin, main_mask_ymax - main_mask_ymin) < min_diameter_in_pixels:
+                    continue
+             
+                # expand the box boundaries by a few pixels as the masks may not be covering the boundaries
+                delta_x: int = int(percentage_to_expand_bbox_boundaries * (main_mask_xmax - main_mask_xmin) / 2)
+                delta_y: int = int(percentage_to_expand_bbox_boundaries * (main_mask_ymax - main_mask_ymin) / 2)
+            
+                delta_x = max(1, delta_x)
+                delta_y = max(1, delta_y)
+            
+                xmin = max(0, main_mask_xmin - delta_x)
+                ymin = max(0, main_mask_ymin - delta_y)
+                xmax = min(image_width, main_mask_xmax + delta_x)
+                ymax = min(image_height, main_mask_ymax + delta_y)
+        
+                # the object's mask
+                mask: np.ndarray = np.zeros((ymax - ymin, xmax - xmin), np.uint8)
+                # plot the mask
+                polygon_points: np.ndarray = pd.DataFrame(poly).values.astype(np.int32)
+                polygon_points = np.expand_dims(polygon_points, axis=1)
+                cv2.drawContours(mask, [polygon_points - np.array([xmin, ymin])], 0, 1, -1)
+         
+            
+                if return_masks_in_coco_rle_format:
+                    encoded_mask: dict = coco_mask_util.encode(np.asarray(mask, order="F"))    
+                    masks.append(encoded_mask)
+                else:
+                    masks.append(mask)
+                annotations_df = pd.concat([annotations_df, pd.DataFrame(data = 
+                                                                    [{'xtl': xmin, 
+                                                                      'ytl': ymin, 
+                                                                      'xbr': xmax, 
+                                                                      'ybr': ymax, 
+                                                                      'label': label}], index=[len(annotations_df)])])
+                obj_id += 1
         
     # remove duplicate objects (bounding boxes)
     # make sure the indexes are 0 1, ...
