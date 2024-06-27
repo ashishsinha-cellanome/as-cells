@@ -214,6 +214,68 @@ def evaluate_mask_rcnn_pr(predictions, dataset, class_ids_of_interest=None, min_
         
     return num_true_positives / (num_true_positives + num_false_positives + 1e-30), num_true_positives / (num_true_positives + num_false_negatives + 1e-30)    
 
+def calculate_confusion_matrix(predictions, dataset, use_mask=False, min_iou=0.5, child_parent_map=None):
+    """
+    Args:
+        predictions (List of dictionaries): The i-th dictionary in the list is the detection results for
+            the i-th image (dataset[i]) with keys as "boxes", "labels", "scores" and "masks" and values as
+            (num_detections, 4) numpy array for bounding boxes, (num_detections, ) numpy array for 
+            labels, (num_detections, ) numpy array for scores (not used) and a list of num_detections numpy
+            arrays for each mask. Each mask should be defined within the passed bounding boxes for the 
+            detected object, hence the masks are not of the same size. 
+        dataset: Custom dataset object. 
+        use_mask (bool): Use IoU between masks if set to True. In this case, predictions[idx] and dataset dictionaries
+            both should include a string "mask" key to report the mask. 
+        min_iou (float): Minimum IoU between the mask of a ground truth and that of a detection 
+            to declare a detection correct. 
+        child_parent_map (dictionary): A dictionary with integer keys and values specifying the one-to-one 
+            relationships between child class IDs and parent class IDs (to be enforced). 
+    Returns
+        confusion_matrix: A (num_classes + 1) x (num_classes + 1) matrix with (i, j)th element being the number
+            of objects from the jth class that are being detected by the model as being from the ith class. The
+            rightmost column is incorrect detections (FPs) by the model for the ith detection class, and the 
+            last row is the miss detections (FNs) by  the model with the jth object class. 
+    """
+
+    gt_class_ids: List[int] = list(set(dataset.class_names_to_ids_map.values()))
+    
+    confusion_matrix: np.ndarray = np.zeros((len(gt_class_ids) + 1, len(gt_class_ids) + 1), dtype=int)
+    matrix_idx_to_class_id_map: Dict[int, int] = {i: gt_class_ids[i] for i in range(len(gt_class_ids))}
+    class_id_to_matrix_idx_map: Dict[int, int] = {gt_class_ids[i]: i for i in range(len(gt_class_ids))}
+    
+    for idx in range(len(dataset)): 
+        annots = dataset[idx]
+        if child_parent_map is not None:
+            annots = enforce_one_to_one_mapping(data_sample=annots, child_parent_map=child_parent_map)
+        
+        det_boxes = predictions[idx]['boxes']
+        det_labels = predictions[idx]['labels']
+       
+        gt_boxes = annots['annotations'][['xtl', 'ytl', 'xbr', 'ybr']].values.astype(int)
+        gt_labels = annots['annotations']['label'].values.astype(int)
+            
+        if use_mask:
+
+            gt_masks = annots['masks']
+            det_masks = predictions[idx]['masks']
+            paired_idx, unpaired_dets, unpaired_gts = pair_gts_dets_mask(det_boxes, det_masks, gt_boxes, gt_masks, min_iou)
+        else:
+            paired_idx, unpaired_dets, unpaired_gts = pair_gts_dets_bbox(det_boxes, gt_boxes, min_iou)
+
+        for i in unpaired_gts:
+            confusion_matrix[len(gt_class_ids), class_id_to_matrix_idx_map[gt_labels[i]]] += 1
+
+        for i in unpaired_dets:
+            confusion_matrix[class_id_to_matrix_idx_map[det_labels[i]], len(gt_class_ids)] += 1
+            
+        for (i, j) in paired_idx:
+            confusion_matrix[class_id_to_matrix_idx_map[det_labels[i]], class_id_to_matrix_idx_map[gt_labels[j]]] += 1
+            
+        
+        if (idx + 1) % 100 == 0:
+            print(f"[INFO] Completed {idx+1} images out of {len(dataset)}")
+        
+    return confusion_matrix
 
 
 
