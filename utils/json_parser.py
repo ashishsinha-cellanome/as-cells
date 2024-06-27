@@ -22,6 +22,11 @@ OPTICAL_CHARACTERISTICS: Final[Dict[Tuple, Dict[str, float]]] = {(2000, 1600): {
 # an upper limit on the number of annotations to cache
 MAX_ANNOTATION_CACHE_LENGTH: Final[int] = 5
 
+# the folders for test images and annotations
+# they will be considered under the dataset folder specified by the class
+# the images and annotations will share the same name
+TEST_ANNOTATIONS_FOLDER = 'test_annotations'
+TEST_IMAGES_FOLDER = 'test_images'
 
 def parse_json_annotations(
     json_filename: str,
@@ -872,7 +877,152 @@ class CellMaskDataset:
             return True
         return False
 
+def get_name(filename_with_ext: str):
+    return ".".join(filename_with_ext.strip().split(".")[:-1])
 
+# a class to return test images/annotations for a list of folders containing test images/annotations
+class TestDataSet:
+    def __init__(self,
+                 dataset_paths: List[str],
+                 scale_factor_dict: Dict[Tuple[int, int], float],
+                 max_larger_side: int,
+                 max_smaller_side: int,
+                 class_names_to_ids_map: dict, 
+                 labels_of_interest: Union[List[str], None] = None,
+                 percentage_to_expand_bbox_boundaries: float = 0.0,
+                 min_object_diameter: float = 6.0,
+                 optical_characteristics: Dict[Tuple[int, int], Dict[str, float]] = OPTICAL_CHARACTERISTICS) -> None:
+        """
+        Args:
+            dataset_paths (List[str]): List of dataset paths to be used for testing.
+            scale_factor_dict (Dict[Tuple[int, int], float]):
+            max_larger_side (int, optional): _description_. Defaults to 2000.
+            max_smaller_side (int, optional): _description_. Defaults to 1600.
+            class_names_to_ids_map (dict, optional):
+            labels_of_interest (Union[List[str], None], optional): _description_. Defaults to None.
+            percentage_to_expand_bbox_boundaries (float, optional): _description_. Defaults to 0.2.
+            color_depth (int, optional): _description_. Defaults to 14.
+            min_object_diameter (float, optional): _description_. Defaults to 0.0.
+            optical_characteristics (Dict[Tuple[int, int], Dict[str, float]]): _description_. Defaults to
+                OPTICAL_CHARACTERISTICS.
+        """
+        self.images_path: List[str] = []
+        self.annotations_path: List[str] = []
+        self.dataset_paths: List[str] = dataset_paths
+        for test_folder in dataset_paths:
+            
+            annotations_files = os.listdir(os.path.join(test_folder, TEST_ANNOTATIONS_FOLDER))
+            image_files =  os.listdir(os.path.join(test_folder, TEST_IMAGES_FOLDER))
+            
+            annotations_files_no_ext =  [get_name(file) for file in annotations_files]
+            image_files_no_ext = [get_name(file) for file in image_files]
+            
+            annotations_files = [file for file in annotations_files if get_name(file) in image_files_no_ext]
+            image_files = [file for file in image_files if get_name(file) in annotations_files_no_ext]
+
+            if len(annotations_files) != len(annotations_files_no_ext) or len(image_files) != len(image_files_no_ext):
+                print(f"[WARN] Found some unmatched images and anotations for dataset {test_folder}")
+
+            self.annotations_path += [os.path.join(test_folder, TEST_ANNOTATIONS_FOLDER, file) for file in annotations_files]
+            # make the two lists in the same order, here we assume the image extensions are always '.jpg'
+            self.images_path += [os.path.join(test_folder, TEST_IMAGES_FOLDER, get_name(file) + '.jpg') for file in annotations_files]
+        
+        self.labels_of_interest = labels_of_interest
+        # in order to reduce the memory required for the masks (for instance segmentation models)
+        # the image and the annotations can be downsized by the passed scale_factor_dict
+        # this is a dictionary with keys as the image resolutions for which the scaling should be
+        # applied and values as the scaling factor
+        # (values >= 1 are expected to downsize the image by the factor)
+        self.scale_factor_dict = scale_factor_dict
+        # the image is further resized (after applying the passed scale_factor above) to have the
+        # larger side and the smaller side both smaller than these two maximum set values
+        self.max_larger_side = max_larger_side
+        self.max_smaller_side = max_smaller_side
+        self.class_names_to_ids_map = class_names_to_ids_map
+        self.percentage_to_expand_bbox_boundaries = percentage_to_expand_bbox_boundaries
+        # minimum diameter of objects to keep in micro meter, objects smaller than this
+        # minimum diameter are expected from the returned annotations
+        # only 2000x1600 and 4512x4512 image resolutions are supported as this
+        # diameter should be converted to a number of pixels based on magnification and sensor pixel size
+        self.min_object_diameter = min_object_diameter
+        # the optical characteristics of the device (used to convert the above min_object_diameter from um to pixels)
+        self.optical_characteristics = optical_characteristics      
+
+    def __getitem__(self, idx: int):
+        # load images and masks
+        annotation_path: str = self.annotations_path[idx]
+        img_path: str = self.images_path[idx]
+
+        if annotation_path[-4:] == 'json':
+            # parse the annotations file, this is the first time an image/annotation pair is called
+            annotations = parse_json_annotations(json_filename=annotation_path,
+                                                 labels_of_interest=self.labels_of_interest,
+                                                 download_image=False,
+                                                 percentage_to_expand_bbox_boundaries=self.percentage_to_expand_bbox_boundaries,
+                                                 min_object_diameter=self.min_object_diameter,
+                                                 optical_characteristics=self.optical_characteristics,
+                                                 return_masks_in_coco_rle_format=False)
+            if self.class_names_to_ids_map is not None:
+                annotations['annotations']['label'] = annotations['annotations']['label'].map(self.class_names_to_ids_map)
+        elif annotation_path[-3:] == 'npy':
+            # annotations in .npy format
+            # note: annotations['annotations']['label'] is already int and no need to convert to integers
+            annots = np.load(annotation_path, allow_pickle=True)
+            annotations = {"name": os.path.basename(img_path), 
+                           "annotations": annots.item().get("annotations"), 
+                           "masks": annots.item().get("masks")}
+            
+
+        img = cv2.imread(img_path, cv2.IMREAD_UNCHANGED)
+        
+        image_height, image_width = img.shape[:2]
+        # scale factor
+        if (image_width, image_height) in self.scale_factor_dict:
+            scale_factor: float = self.scale_factor_dict[(image_width, image_height)]
+        else:
+            scale_factor: float = 1.0
+
+        larger_side: int = max(int(image_width / scale_factor), int(image_height / scale_factor))
+        smaller_side: int = min(int(image_width / scale_factor), int(image_height / scale_factor))
+
+        if larger_side > self.max_larger_side or smaller_side > self.max_smaller_side:
+            scale_factor *= max(float(larger_side) / self.max_larger_side, float(smaller_side) / self.max_smaller_side)
+
+        if scale_factor != 1:
+            # for decimating an image, cv2.INTER_AREA is the preferred method (scale_factor is always > 1)
+            img = cv2.resize(img, (int(image_width / scale_factor), int(image_height / scale_factor)),
+                             interpolation=cv2.INTER_AREA)
+            # update all the masks and annotations
+            annotations['annotations'][['xtl', 'ytl', 'xbr', 'ybr']] = annotations['annotations'][
+                ['xtl', 'ytl', 'xbr', 'ybr']].div(scale_factor).astype(int)
+
+            # make sure no box width/height becomes zero after the resize
+            # only keep boxes with positive width and height
+            annotations['annotations'] = annotations['annotations'][
+                (annotations['annotations']['ybr'] - annotations['annotations']['ytl'] > 0) &
+                (annotations['annotations']['xbr'] - annotations['annotations']['xtl'] > 0)]
+
+            # keep the corresponding masks after resizing
+            annotations['masks'] = [annotations['masks'][i] for i in annotations['annotations'].index]
+            # reset the index
+            annotations['annotations'].reset_index(inplace=True, drop=True)
+
+            # now resize the masks (note that they are defined within the bounding boxes)
+            for idx in range(len(annotations['masks'])):
+                box_xtl, box_ytl, box_xbr, box_ybr = annotations['annotations'].loc[
+                    idx, ['xtl', 'ytl', 'xbr', 'ybr']].values
+                annotations['masks'][idx] = cv2.resize(annotations['masks'][idx],
+                                                       (box_xbr - box_xtl, box_ybr - box_ytl),
+                                                       interpolation=cv2.INTER_NEAREST)
+
+        annotations['image'] = img
+        # update the name of the image
+        annotations['name']: str = os.path.basename(img_path)
+
+        return annotations
+
+    def __len__(self):
+        return len(self.annotations_path)
 
 # a dataset classe to "parse" the masks and extract the bounding boxes from annotations
 # this function combines annotations provided in multiple files (assuming each annotation file set
