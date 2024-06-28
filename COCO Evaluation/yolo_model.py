@@ -4,14 +4,18 @@ import os
 import time
 import logging
 import onnxruntime
+import onnx
 from typing import Tuple, List, Final, Optional, Dict
 
 # MODEL_WEIGHTS_PATH: Final[str] = '/home/cellareye/Development/yolov5/runs/train/batch_1_batch_2_batch_3_images_20_epochs_m/weights/batch_1_batch_2_batch_3_images_20_epochs_m.onnx'
-MODEL_WEIGHTS_PATH: Final[str] = '/home/cellareye/Development/yolov5/runs/train/batch_1_batch_2_batch_3_images_20_epochs_m/weights/batch_1_4_oof_images_20_epochs_m.onnx'
+# MODEL_WEIGHTS_PATH: Final[str] = '/home/cellareye/Development/yolov5/runs/train/batch_1_batch_2_batch_3_images_20_epochs_m/weights/batch_1_4_oof_images_20_epochs_m.onnx'
+# MODEL_WEIGHTS_PATH: Final[str] = '/home/cellareye/Development/yolov5/runs/train/sets_1_2_3_8_to_26_10x_bf_10_epochs_m/weights/20240511_sets_1_2_3_8_to_26_10x_bf_10_epochs_m.onnx'
+MODEL_WEIGHTS_PATH: Final[str] = '/home/cellareye/Development/yolov5/runs/train/sets_1_2_3_8_to_27_10x_bf_10_epochs_m/weights/20240624_sets_1_2_3_8_to_27_10x_bf_10_epochs_m.onnx'
+# MODEL_WEIGHTS_PATH: Final[str] = '/home/cellareye/Development/yolov5/runs/train/sets_1_to_5_4x_bf_10_epochs_m/weights/20240611_sets_1_to_5_4x_bf_10_epochs_m.onnx'
 # MODEL_WEIGHTS_PATH: Final[str] = '/home/cellareye/Development/darknet/backup/nk92_cells_beads_10000_d.onnx'
 # MODEL_WEIGHTS_PATH: Final[str] = '/home/cellareye/Development/yolov5/runs/train/fluorescent_images_batch_1_20_epochs_m/weights/fluorescent_images_batch_1_20_epochs_m.onnx'
 # MODEL_WEIGHTS_PATH: Final[str] = '/home/cellareye/Development/yolov5/runs/train/nuclei_bf_25_epochs_m/weights/nuclei_bf_25_epochs_m.onnx'
-CLASS_NAMES_PATH: Final[str] = '/home/cellareye/Development/yolov5/runs/train/batch_1_and_batch_2_images_20_epochs/weights/caging_analysis_cells.names'
+DEFAULT_CLASS_NAMES_PATH: Final[str] = '/home/cellareye/Development/yolov5/runs/train/batch_1_and_batch_2_images_20_epochs/weights/caging_analysis_cells.names'
 # CLASS_NAMES_PATH: Final[str] = '/home/cellareye/Development/yolov5/runs/train/fluorescent_images_batch_1_20_epochs/weights/fluorescent_cells.names'
 # CLASS_NAMES_PATH: Final[str] = '/home/cellareye/Development/yolov5/runs/train/nuclei_bf_25_epochs_m/weights/nuclei.names'
 
@@ -159,13 +163,94 @@ def get_crop_corners(
 
     return crop_corners
 
+def load_onnx_model_and_metadata(weights_path: str, use_onnx_runtime: bool, classnames_path: str=None):
+    # loading the ONNX model
+    logging.info(
+        f"Loading YOLOv5 ONNX weights from {weights_path}."
+    )
+    try:
+        if use_onnx_runtime:
+            logging.info(
+                f"Using ONNX Runtime for running the model."
+            )
+
+            net = onnxruntime.InferenceSession(weights_path, providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
+                
+            if 'CUDAExecutionProvider' not in onnxruntime.get_available_providers():
+                logging.warning(
+                    f"CUDAExecutionProvider is not available in ONNX Runtime! The model will be run on CPU."
+                )
+        else:
+            logging.info(
+                f"Using OpenCV dnn for running the model. Setting dnn to use CUDA."
+            )
+            net = cv2.dnn.readNetFromONNX(weights_path)
+
+            try:
+                net.setPreferableBackend(cv2.dnn.DNN_BACKEND_CUDA)
+                net.setPreferableTarget(cv2.dnn.DNN_TARGET_CUDA_FP16)
+            except Exception:
+                logging.warning(
+                    "Failed to set dnn to use CUDA! Installed OpenCV is not compiled with CUDA support! "
+                    "The model will be run on CPU."
+                )
+
+    except Exception as ex:
+        logging.error(
+            f"Failed to initialize YOLOv5 model with CUDA. Likely the path to model ONNX weights "
+            f"{weights_path} is incorrect or ONNX Runtime is not installed: {repr(ex)}."
+        )
+        return None, None
+        
+    # read class names and other metadata from ONNX file and create the label map
+    try:
+        if use_onnx_runtime:
+            metadata: Dict[str, str] = net.get_modelmeta().custom_metadata_map
+            # convert string values to dicts, or integers or strings
+            metadata = {k: eval(v) for k, v in metadata.items()}
+            # metadata will be a dictionary with keys as 'resolution', 'release_date', 'model_type', 'model_name', 'model_extra_info', 'names', 'stride'
+            # example: {'resolution': 640,
+            #           'release_date': '20240415',
+            #           'model_type': 'YOLO Detector',
+            #           'model_name': 'YOLOv5m',
+            #           'model_extra_info': 'V5 Medium',
+            #           'names': {0: 'cell', 1: 'bead'},
+            #           'stride': 32}
+        else:
+            # reading the model with OpenCV dnn does not capture the metadata above, try onnx directly
+            onnx_model = onnx.load(weights_path)
+            metadata: Dict[str, str] = {}
+            for field in onnx_model.metadata_props:
+                metadata[field.key] = eval(field.value)
+            
+    except Exception as ex:
+        # try reading from a defualt location
+        try: 
+            # read class names and create the label map
+            with open(classnames_path, 'r') as f:  # if fails to read then blow with error
+                class_names: List[str] = [cname.strip() for cname in f.readlines()]
+
+            label_map: Dict[int, str] = {i: c for i, c in enumerate(class_names)}
+            metadata = {'names': label_map}
+
+        except Exception as ex:
+            logging.error(
+                "Failed to initialize YOLOv5 model with CUDA. The model does not include label map in its metadata and a valid path to classnames file "
+                    f"{classnames_path} is not provided: {repr(ex)}."
+                )
+            return net, None
+                
+
+    logging.info("Class names were successfully loaded")
+    
+    return net, metadata
+
 
 # YOLOv5 detector class
 class Yolov5ObjectDetector:
     def __init__(
             self,
             weights_path: Optional[str] = MODEL_WEIGHTS_PATH,
-            names_path: Optional[str] = CLASS_NAMES_PATH,
             model_input_size: Tuple[int, int] = INPUT_IMAGE_SIZE,
             confidence: float = DEFAULT_DETECTION_CONFIDENCE,
             nms_threshold: float = DEFAULT_NMS_THRESHOLD,
@@ -174,74 +259,24 @@ class Yolov5ObjectDetector:
 
         self._net = None
         self._weights_path: str = str(weights_path)
-        self._names_path: str = str(names_path)
         self._model_input_size: Tuple[int, int] = model_input_size
         self._confidence: float = confidence
         self._nms_threshold: float = nms_threshold
         self._use_onnx_runtime: bool = use_onnx_runtime
 
         logging.info(
-            f"Loading class names from {self._names_path} with confidence {self._confidence} and"
+            f"Loading the model with confidence {self._confidence} and"
             f" NMS threshold {self._nms_threshold} ..."
         )
-
-        # read class names and create the label map
-        try:
-            with open(
-                    self._names_path, "r"
-            ) as f:  # if fails to read then blow with error
-                class_names: List[str] = [cname.strip() for cname in f.readlines()]
-
-            self._label_map: Dict[int, str] = {i: c for i, c in enumerate(class_names)}
-            self._reverse_label_map: Dict[str, int] = {
-                value: key for key, value in self._label_map.items()
-            }
-        except Exception as ex:
-            logging.error(
-                f"Failed to initialize YOLOv5 model with CUDA. Likely the paths to model ONNX weights "
-                f"{self._names_path} is incorrect: {repr(ex)}."
-            )
+        
+        self._net, self._metadata = load_onnx_model_and_metadata(weights_path=self._weights_path, 
+                                                                 use_onnx_runtime=self._use_onnx_runtime, 
+                                                                 classnames_path=DEFAULT_CLASS_NAMES_PATH)
+        if self._net is None or self._metadata is None:
             return
-
-        logging.info("Class names were successfully loaded")
-
-        # loading the ONNX model
-        logging.info(
-            f"Loading YOLOv5 ONNX weights from {self._weights_path}."
-        )
-        try:
-            if self._use_onnx_runtime:
-                logging.info(
-                    f"Using ONNX Runtime for running the model."
-                )
-
-                self._net = onnxruntime.InferenceSession(self._weights_path,
-                                                         providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
-                
-                if 'CUDAExecutionProvider' not in onnxruntime.get_available_providers():
-                    logging.warning(
-                        f"CUDAExecutionProvider is not available in ONNX Runtime! The model will be run on CPU."
-                    )
-            else:
-                logging.info(
-                    f"Using OpenCV dnn for running the model. Setting dnn to use CUDA."
-                )
-                self._net = cv2.dnn.readNetFromONNX(self._weights_path)
-
-                try:
-                    self._net.setPreferableBackend(cv2.dnn.DNN_BACKEND_CUDA)
-                    self._net.setPreferableTarget(cv2.dnn.DNN_TARGET_CUDA_FP16)
-                except Exception:
-                    logging.warning(
-                        "Failed to set dnn to use CUDA! Installed OpenCV is not compiled with CUDA support! "
-                        "The model will be run on CPU."
-                    )
-
-        except Exception as ex:
-            logging.error(
-                f"Failed to initialize YOLOv5 model with CUDA. Likely the path to model ONNX weights "
-                f"{self._weights_path} is incorrect or ONNX Runtime is not installed: {repr(ex)}."
-            )
+        
+        self._label_map: Dict[int, str] = self._metadata['names']
+        self._reverse_label_map: Dict[str, int] = {v: k for k, v in self._label_map.items()}
 
     def detect(
             self, image: np.ndarray, log_time=False
@@ -323,7 +358,16 @@ class Yolov5ObjectDetector:
 
     def set_nms_threshold(self, threshold):
         self._nms_threshold = threshold
-
+        
+    def get_label_map(self):
+        return self._label_map
+        
+    def get_reverse_label_map(self):
+        return self._reverse_label_map
+    
+    def get_metadata(self):
+        return self._metadata
+        
     def _post_process(
         self, outputs: np.ndarray, org_image_shape: Tuple[int, int]
     ) -> Tuple[np.array, np.array, np.array]:
@@ -682,69 +726,24 @@ class Yolov5ObjectDetector:
     
 detector = Yolov5ObjectDetector(use_onnx_runtime=False)
 
-RESIZE: Final[Dict[Tuple[int, int], Tuple[int, int]]] = {
-    (640, 640): (640, 640), 
-    (2000, 1600): (1000, 800),
-    # (2000, 1600): (2000, 1600),
-    # (4512, 4512): (2880, 2880),
-    # (4512, 4512): (1504, 1504),
-    (4512, 4512): (2440, 2440),
-    # (4512, 4512): (4512, 4512)
+
+RESIZE: Final[Dict[Tuple[int, int, str], Tuple[int, int]]] = {
+    (2000, 1600, "10x"): (1000, 800),
+    (4512, 4512, "10x"): (2440, 2440),
+    (4512, 4512, "4x"): (4512, 4512),
 }
-# A dictionary with keys as the input (original) image size (width, height) tuple and
-# values as the list of coordinates (xtl, ytl, xbr, ybr) of sub-images/crops
+# A dictionary with keys as the input (original) image size (width, height, magnification)
+# tuple and values as the list of coordinates (xtl, ytl, xbr, ybr) of sub-images/crops
 # to run YOLOv5 on each
 # note that the crop coordinates are with respect to resized image dimensions specified above
-CROP_CORNERS: Final[Dict[Tuple[int, int], List[List[int]]]] = {
-    (640, 640): [[0, 0, 640, 640]], 
-    (2000, 1600): [
+CROP_CORNERS: Final[Dict[Tuple[int, int, str], List[List[int]]]] = {
+    (2000, 1600, "10x"): [
         [0, 0, 640, 640],
         [0, 160, 640, 800],
         [360, 0, 1000, 640],
         [360, 160, 1000, 800],
     ],
-    # (2000, 1600): [
-    #     [0, 0, 640, 640],
-    #     [0, 480, 640, 1120],
-    #     [0, 960, 640, 1600],
-    #     [454, 0, 1094, 640],
-    #     [454, 480, 1094, 1120],
-    #     [454, 960, 1094, 1600],
-    #     [908, 0, 1548, 640],
-    #     [908, 480, 1548, 1120],
-    #     [908, 960, 1548, 1600],
-    #     [1360, 0, 2000, 640],
-    #     [1360, 480, 2000, 1120],
-    #     [1360, 960, 2000, 1600]
-    # ],
-    # (4512, 4512): [
-    #     [0, 0, 640, 640],
-    #     [0, 560, 640, 1200],
-    #     [0, 1120, 640, 1760],
-    #     [0, 1680, 640, 2320],
-    #     [0, 2240, 640, 2880],
-    #     [560, 0, 1200, 640],
-    #     [560, 560, 1200, 1200],
-    #     [560, 1120, 1200, 1760],
-    #     [560, 1680, 1200, 2320],
-    #     [560, 2240, 1200, 2880],
-    #     [1120, 0, 1760, 640],
-    #     [1120, 560, 1760, 1200],
-    #     [1120, 1120, 1760, 1760],
-    #     [1120, 1680, 1760, 2320],
-    #     [1120, 2240, 1760, 2880],
-    #     [1680, 0, 2320, 640],
-    #     [1680, 560, 2320, 1200],
-    #     [1680, 1120, 2320, 1760],
-    #     [1680, 1680, 2320, 2320],
-    #     [1680, 2240, 2320, 2880],
-    #     [2240, 0, 2880, 640],
-    #     [2240, 560, 2880, 1200],
-    #     [2240, 1120, 2880, 1760],
-    #     [2240, 1680, 2880, 2320],
-    #     [2240, 2240, 2880, 2880],
-    # ],
-    (4512, 4512): [
+    (4512, 4512, "10x"): [
         [0, 0, 640, 640],
         [0, 600, 640, 1240],
         [0, 1200, 640, 1840],
@@ -760,11 +759,9 @@ CROP_CORNERS: Final[Dict[Tuple[int, int], List[List[int]]]] = {
         [1800, 0, 2440, 640],
         [1800, 600, 2440, 1240],
         [1800, 1200, 2440, 1840],
-        [1800, 1800, 2440, 2440]
+        [1800, 1800, 2440, 2440],
     ],
-}
-"""
-    (4512, 4512): [
+    (4512, 4512, "4x"): [
         [0, 0, 640, 640],
         [0, 560, 640, 1200],
         [0, 1120, 640, 1760],
@@ -828,12 +825,13 @@ CROP_CORNERS: Final[Dict[Tuple[int, int], List[List[int]]]] = {
         [3872, 2240, 4512, 2880],
         [3872, 2800, 4512, 3440],
         [3872, 3360, 4512, 4000],
-        [3872, 3872, 4512, 4512]
-    ]
-"""
+        [3872, 3872, 4512, 4512],
+    ],
+}
+
 
 def run_yolo_v5(
-    input_image: np.ndarray, normalize_image=False
+    input_image: np.ndarray, normalize_image: bool=False, is_4x: bool=False
 ) -> Tuple[np.array, np.array, np.array, float]:
     
     # make a copy to not modify the input image
@@ -849,13 +847,16 @@ def run_yolo_v5(
         img = cv2.normalize(img, img, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX)
 
     image_height, image_width = img.shape[:2]
-
-    if (image_width, image_height) not in RESIZE:
+    
+    if is_4x:
+        resize_dict_key: Tuple[int, int, str] = (image_width, image_height, "4x")
+    else:
+        resize_dict_key: Tuple[int, int, str] = (image_width, image_height, "10x")
+    
+    if resize_dict_key not in RESIZE:
         logging.error(
-            "The input image size {} is not supported! Returning no cells!".format(
-                image_width, image_height
+            f"The input image size {(image_width, image_height)} is not supported for {'4x' if is_4x else '10x'}! Returning no cells!"
             )
-        )
         return (
                 np.zeros((0, 4), dtype=int),
                 np.zeros((0,), dtype=int),
@@ -864,12 +865,13 @@ def run_yolo_v5(
             )
 
     # we keep the aspect ratio in RESIZE dictionary, scale_factor is the same for both dimensions
-    scale_factor: float = image_width / RESIZE[(image_width, image_height)][0]
+    
+    scale_factor: float = image_width / RESIZE[resize_dict_key][0]
     resized_img: np.ndarray = cv2.resize(
-        img, RESIZE[(image_width, image_height)], interpolation=cv2.INTER_AREA
+        img, RESIZE[resize_dict_key], interpolation=cv2.INTER_AREA
     )
 
-    crop_corners: List[List[int]] = CROP_CORNERS[(image_width, image_height)]
+    crop_corners: List[List[int]] = CROP_CORNERS[resize_dict_key]
 
 
     # only declarations
