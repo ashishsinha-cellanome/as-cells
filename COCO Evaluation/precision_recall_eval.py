@@ -248,32 +248,44 @@ def calculate_confusion_matrix(predictions, dataset, use_mask=False, min_iou=0.5
         if child_parent_map is not None:
             annots = enforce_one_to_one_mapping(data_sample=annots, child_parent_map=child_parent_map)
         
-        det_boxes = predictions[idx]['boxes']
-        det_labels = predictions[idx]['labels']
-       
-        gt_boxes = annots['annotations'][['xtl', 'ytl', 'xbr', 'ybr']].values.astype(int)
-        gt_labels = annots['annotations']['label'].values.astype(int)
-            
-        if use_mask:
-
-            gt_masks = annots['masks']
-            det_masks = predictions[idx]['masks']
-            paired_idx, unpaired_dets, unpaired_gts = pair_gts_dets_mask(det_boxes, det_masks, gt_boxes, gt_masks, min_iou)
-        else:
-            paired_idx, unpaired_dets, unpaired_gts = pair_gts_dets_bbox(det_boxes, gt_boxes, min_iou)
-
-        for i in unpaired_gts:
-            confusion_matrix[len(gt_class_ids), class_id_to_matrix_idx_map[gt_labels[i]]] += 1
-
-        for i in unpaired_dets:
-            confusion_matrix[class_id_to_matrix_idx_map[det_labels[i]], len(gt_class_ids)] += 1
-            
-        for (i, j) in paired_idx:
-            confusion_matrix[class_id_to_matrix_idx_map[det_labels[i]], class_id_to_matrix_idx_map[gt_labels[j]]] += 1
+        confusion_matrix += calculate_sample_confusion_matrix(annots, predictions[idx], gt_class_ids, use_mask, min_iou)
             
         
         if (idx + 1) % 100 == 0:
             print(f"[INFO] Completed {idx+1} images out of {len(dataset)}")
+        
+    return confusion_matrix
+    
+    
+def calculate_sample_confusion_matrix(data_sample, detections, gt_class_ids, use_mask=False, min_iou=0.5):
+ 
+    confusion_matrix: np.ndarray = np.zeros((len(gt_class_ids) + 1, len(gt_class_ids) + 1), dtype=int)
+    matrix_idx_to_class_id_map: Dict[int, int] = {i: gt_class_ids[i] for i in range(len(gt_class_ids))}
+    class_id_to_matrix_idx_map: Dict[int, int] = {gt_class_ids[i]: i for i in range(len(gt_class_ids))}
+    
+        
+    det_boxes = detections['boxes']
+    det_labels = detections['labels']
+       
+    gt_boxes = data_sample['annotations'][['xtl', 'ytl', 'xbr', 'ybr']].values.astype(int)
+    gt_labels = data_sample['annotations']['label'].values.astype(int)
+            
+    if use_mask:
+        gt_masks = data_sample['masks']
+        det_masks = detections['masks']
+        paired_idx, unpaired_dets, unpaired_gts = pair_gts_dets_mask(det_boxes, det_masks, gt_boxes, gt_masks, min_iou)
+    else:
+        paired_idx, unpaired_dets, unpaired_gts = pair_gts_dets_bbox(det_boxes, gt_boxes, min_iou)
+
+    for i in unpaired_gts:
+        confusion_matrix[len(gt_class_ids), class_id_to_matrix_idx_map[gt_labels[i]]] += 1
+
+    for i in unpaired_dets:
+        confusion_matrix[class_id_to_matrix_idx_map[det_labels[i]], len(gt_class_ids)] += 1
+            
+    for (i, j) in paired_idx:
+        confusion_matrix[class_id_to_matrix_idx_map[det_labels[i]], class_id_to_matrix_idx_map[gt_labels[j]]] += 1
+            
         
     return confusion_matrix
 
