@@ -1820,7 +1820,16 @@ def enforce_one_to_one_mapping(data_sample: dict, child_parent_map: Dict[int, in
     return out
 
 # a function to display the samples
-COLORS = [(0, 0, 255), (255, 0, 0), (0, 255, 0), (255, 255, 0), (255, 0, 255), (0, 255, 255)]
+# colors for displaying bounding boxes
+COLORS: List[Tuple[int, int, int]] = [
+        (0, 0, 255),
+        (255, 0, 0),
+        (0, 255, 0),
+        (255, 0, 255),
+        (0, 255, 255),
+        (255, 255, 0),
+        (0, 128, 128),
+    ]
 
 def show_sample(sample, class_id_to_name_mapping=None):
     """
