@@ -18,7 +18,7 @@ from torchvision.transforms import functional as F
 # MODEL_WEIGHTS_PATH: Final[str] = '/home/cellareye/Cellanome/dl-mehdi/Mask RCNN/checkpoints/cell_bead_cage_nucl_mix_crop_0p1_bbox_0p7_1_rs_0p25_blur_2_bs_8_epochs.pt'
 # MODEL_WEIGHTS_PATH: Final[str] = '/home/cellareye/Cellanome/dl-mehdi/Mask RCNN/checkpoints/cell_bead_cage_nucl_cyto_mix_crop_0p1_bbox_0p7_1_rs_0p25_blur_2_bs_8_epochs_2.pt'
 # MODEL_WEIGHTS_PATH: Final[str] = '/home/cellareye/Cellanome/dl-mehdi/Mask RCNN/checkpoints/cell_bead_cage_nucl_cyto_hela_mix_crop_0p1_bbox_0p7_1_rs_0p25_blur_2_bs_8_epochs_1cl_lrs.pt'
-MODEL_WEIGHTS_PATH: Final[str] = '/home/cellareye/Cellanome/dl-mehdi/Mask RCNN/checkpoints/20240611_sets_1_2_3_6_to_28_0p1_bbox_0p7_1_rs_0p25_blur_2_bs_8_epochs_1cl_lrs.pt'
+MODEL_WEIGHTS_PATH: Final[str] = '/home/cellareye/Cellanome/dl-mehdi/Mask RCNN/checkpoints/20240715_sets_1_2_3_6_to_31_0p1_bbox_0p7_1_rs_0p25_blur_2_bs_8_epochs_1cl_lrs.pt'
 # MODEL_WEIGHTS_PATH: Final[str] = '/home/cellareye/Cellanome/dl-mehdi/Mask RCNN/checkpoints/nuclei_bf_crop_2_0p1_bbox_0p8_1_rs_0p25_blur_2_bs_14_epochs.pt'
 # MODEL_WEIGHTS_PATH: Final[str] = '/home/cellareye/Cellanome/dl-mehdi/Mask RCNN/checkpoints/nucl_cage_bf_crop_3_0p1_bbox_0p6_1_rs_0p25_blur_2_bs_14_epochs.pt'
 
@@ -1244,9 +1244,14 @@ def run_mask_rcnn(
     return out, et - st
 
 # a more generic function to do post-processing
-# this function accepts a list of "object type" groups (defined as a list of classes) and applies post-processing on all objects belonging to the same type group
-# a type group should contains objects that the model may confuse but in practice, differentiating them is not important; clearly a type group can be defined as a single class
-def post_process_detections(detections: Dict[str, np.ndarray], post_process_type_groups: List[List[str]], label_map: Dict[int, str]):
+# this function accepts a list of "object type" groups (defined as a list of classnames) and applies post-processing on all 
+# objects belonging to the same type group
+# a type group should contains objects that the model may confuse but in practice, differentiating them is not important; 
+# clearly a type group can be defined as a single class
+def post_process_detections(detections: Dict[str, np.ndarray], 
+                            post_process_type_groups: List[List[str]], 
+                            min_diam_in_pixels_dict: Dict[str, int], 
+                            label_map: Dict[int, str]):
     # post-process the results
     # in the following, "larger" objects that consist of a number of already detected smaller objects from the same "type" group are 
     # invalidated
@@ -1255,7 +1260,18 @@ def post_process_detections(detections: Dict[str, np.ndarray], post_process_type
     post_process_class_idxs: Dict[str, List[int]] = {}
     # list of bounding boxes for each each object type group to be included in post processing
     post_process_class_boxes: Dict[str, List[np.ndarray]] = {}
+    # list of detection indexes to be excluded (this is with respect to all detected objects and not only the class under consideration)
+    obj_idxs_to_remove: List[int] = []
     for i, box in enumerate(detections['boxes']):
+        # filter small objects
+        class_id = detections['labels'][i]
+        if class_id not in label_map:
+            # this should never happen
+            obj_idxs_to_remove.append(i)
+            continue
+        if label_map[class_id] in min_diam_in_pixels_dict and max(box[3] - box[1], box[2] - box[0]) < min_diam_in_pixels_dict[label_map[class_id]]:
+            obj_idxs_to_remove.append(i)
+            continue
         for type_group_class_names in post_process_type_groups:
             # an identifier for the type group formed by concatenating all the class names in the group
             type_group_id: str = "_".join(type_group_class_names)
@@ -1268,14 +1284,14 @@ def post_process_detections(detections: Dict[str, np.ndarray], post_process_type
                         post_process_class_idxs[type_group_id] = [i]
                         post_process_class_boxes[type_group_id] = [box]
     
-    # list of detection indexes to be excluded (this is with respect to all detected objects and not only the class under consideration)
-    obj_idxs_to_remove: List[int] = []                
+                    
     for key in post_process_class_boxes:
-        # convert to a numpy array
-        post_process_class_boxes[key]: np.ndarray = np.array(post_process_class_boxes[key])
         
         if len(post_process_class_idxs[key]) == 0:
             continue
+        # convert to a numpy array
+        post_process_class_boxes[key]: np.ndarray = np.array(post_process_class_boxes[key])
+        
         
         overlap: np.ndarray = overlap_batch(post_process_class_boxes[key], post_process_class_boxes[key], True)
         # remove diagonal elements (as each box has a complete overlap with itself)
