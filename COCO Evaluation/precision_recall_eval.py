@@ -2,7 +2,35 @@ from typing import Dict, List, Tuple, Optional, Final, Union
 from pairing_utils import pair_gts_dets_bbox, pair_gts_dets_mask
 from json_parser import enforce_one_to_one_mapping
 import numpy as np
+import pandas as pd
+
+class AnnotationFilter:
+    def __init__(self, classnames_mapping_dict: Dict[str, str], class_ids_to_class_names_map: Dict[int, str]):
+        self.classnames_mapping_dict = classnames_mapping_dict
+        self.class_ids_to_class_names_map = class_ids_to_class_names_map
+        reverse_label_map = {v:k for k, v in self.class_ids_to_class_names_map.items()}
+        classnames_to_exclude: List[str] = [name for name, mapped_name in self.classnames_mapping_dict.items() if mapped_name == 'bg']
+        self.class_ids_to_exclude: List [int] = [reverse_label_map[name] for name in classnames_to_exclude] 
+        self.class_ids_mapping_dict = {reverse_label_map[name]: reverse_label_map[mapped_name] 
+                                       for name, mapped_name in classnames_mapping_dict.items() if mapped_name != 'bg'}
     
+    def apply(self, annots: dict) -> dict:
+        class_ids_mapping_dict = {k: v for k, v in  self.class_ids_mapping_dict.items()}
+        all_class_ids: List[int] = annots['annotations']['label'].unique()
+        for class_id in all_class_ids:
+            if class_id in class_ids_mapping_dict: 
+                continue
+            class_ids_mapping_dict[class_id] = class_id
+        annotations_df = annots['annotations'].copy()
+        annotations_df['label'] = annots['annotations']['label'].apply(lambda x: class_ids_mapping_dict[x])
+        annotations_df = annotations_df[annotations_df['label'].apply(lambda x: False if x in self.class_ids_to_exclude else True)]
+        idxs_to_keep = annotations_df.index.values
+        annotations_df = annotations_df.reset_index(drop=True)
+        if len(annotations_df) == 0:
+            annotations_df = pd.DataFrame(columns = ['xtl', 'ytl', 'xbr', 'ybr', 'label'])
+        masks: List[np.ndarray] = [mask.copy() for idx, mask in enumerate(annots['masks']) if idx in idxs_to_keep]
+        return {'name': annots['name'], 'image': annots['image'].copy(), 'annotations': annotations_df, 'masks': masks}
+
 def get_bboxes_from_cellpose_mask(in_mask: Union[str, np.ndarray]) -> dict:
     """
     A helper function to take CellPose instance segmentation results and return bounding boxes 
@@ -150,7 +178,7 @@ def evaluate_yolo_pr(predictions, dataset, class_ids_of_interest=None, min_iou=0
     return num_true_positives / (num_true_positives + num_false_positives + 1e-30), num_true_positives / (num_true_positives + num_false_negatives + 1e-30)
     
     
-def evaluate_mask_rcnn_pr(predictions, dataset, class_ids_of_interest=None, min_iou=0.5, child_parent_map=None):
+def evaluate_mask_rcnn_pr(predictions, dataset, class_ids_of_interest=None, min_iou=0.5, child_parent_map=None, annotation_filter=None):
     """
     Args:
         predictions (List of dictionaries): The i-th dictionary in the list is the detection results for
@@ -166,6 +194,7 @@ def evaluate_mask_rcnn_pr(predictions, dataset, class_ids_of_interest=None, min_
             to declare a detection correct. 
         child_parent_map (dictionary): A dictionary with integer keys and values specifying the one-to-one 
             relationships between child class IDs and parent class IDs (to be enforced). 
+        annotation_filter (AnnotationFilter class): A class to post process the datasample and exclude or merge some classes.
     Returns
         Precision
         Recall
@@ -180,6 +209,9 @@ def evaluate_mask_rcnn_pr(predictions, dataset, class_ids_of_interest=None, min_
         annots = dataset[idx]
         if child_parent_map is not None:
             annots = enforce_one_to_one_mapping(data_sample=annots, child_parent_map=child_parent_map)
+
+        if annotation_filter is not None:
+            annots = annotation_filter.apply(annots)
         
         boxes = predictions[idx]['boxes']
         labels = predictions[idx]['labels']
