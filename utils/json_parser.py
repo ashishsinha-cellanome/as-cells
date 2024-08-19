@@ -1578,10 +1578,35 @@ def crop_and_block(sample, crop_coords, labels_of_interest=None,
             pos = np.where(cropped_mask)
             if len(pos[0]) == 0 or len(pos[1]) == 0:
                 continue
-            delta_x1 = np.min(pos[1])
-            delta_x2 = np.max(pos[1])
-            delta_y1 = np.min(pos[0])
-            delta_y2 = np.max(pos[0])
+            
+            # Note that the configuration percentage_to_expand_bbox_boundaries might have been applied
+            # to the bounding boxes of the original annotations (with respect to the mask) in parse_json_annotations
+            # function
+            # the if conditions are included below to only update the bounding box if it crosses the crop boundary
+            # we only include +1 pixel expansion that is always applied by default
+            if xmin > 0:
+                # the left side of the bounding box crosses the crop boundary, expand by -1 as we always do by default
+                delta_x1 = max(0, np.min(pos[1]) - 1)
+            else:
+                delta_x1 = xmin
+
+            if xmax < box_xbr - box_xtl:
+                # the right side of the bounding box crosses the crop boundary, expand by +1 as we always do by default
+                delta_x2 = min(np.max(pos[1]) + 1 + 1, box_xbr - box_xtl)  # the first +1 is included as we need to include this point
+            else:
+                delta_x2 = xmax
+
+            if ymin > 0:
+                # the top side of the bounding box crosses the crop boundary, expand by -1 as we always do by default
+                delta_y1 = max(0, np.min(pos[0]) - 1)
+            else:
+                delta_y1 = ymin
+
+            if ymax < box_ybr - box_ytl:
+                # the bottom side of the bounding box crosses the crop boundary, expand by +1 as we always do by default
+                delta_y2 = min(np.max(pos[0]) + 1 + 1, box_ybr - box_ytl)  # the first +1 is included as we need to include this point
+            else:
+                delta_y2 = ymax
             
             if delta_x1 >= delta_x2 or delta_y1 >= delta_y2:
                 continue
