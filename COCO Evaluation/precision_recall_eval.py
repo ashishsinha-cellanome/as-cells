@@ -1,6 +1,6 @@
 from typing import Dict, List, Tuple, Optional, Final, Union
 from pairing_utils import pair_gts_dets_bbox, pair_gts_dets_mask
-from json_parser import enforce_one_to_one_mapping
+from json_parser import enforce_one_to_one_mapping, TestDataSet
 import numpy as np
 import pandas as pd
 
@@ -322,5 +322,86 @@ def calculate_sample_confusion_matrix(data_sample, detections, gt_class_ids, use
     return confusion_matrix
 
 
+def p_r_based_on_c_m(predictions: List[dict], 
+                     dataset: TestDataSet, 
+                     class_ids_to_classnames_map: Dict[int, str], 
+                     model_label_map: Dict[int, str], 
+                     annotation_filter: AnnotationFilter = None,
+                     use_masks: bool = True, 
+                     min_iou: float = 0.5):
+    
+    dataset_class_ids: List[int] = list(set(dataset.class_names_to_ids_map.values()))
+    dataset_class_names: List[str] = []
+    ids_predicted_by_model: List[int] = []
+    for class_id in dataset_class_ids:
+        dataset_class_names.append(class_ids_to_classnames_map[class_id])
+        if class_id in model_label_map:
+            ids_predicted_by_model.append(class_id)
 
+    c_m: np.ndarray = calculate_confusion_matrix(predictions, dataset, use_masks, min_iou)
+    # confusion matrix is calculated for all the class IDs present in the dataset (dataset_class_ids above)
+    # keep rows of the confusion matrix that are included in the model's label_map and remove the rest
+    row_idxs_to_keep: List[int] = [i for i, c_id in enumerate(dataset_class_ids) if c_id in ids_predicted_by_model]
+    model_classnames_to_keep : List[str] = [class_ids_to_classnames_map[c_id] for c_id in dataset_class_ids 
+                                            if c_id in ids_predicted_by_model]
+    # include the last row, which is the FNs, and the last column, which is the FPs
+    c_m = c_m[np.array(row_idxs_to_keep + [c_m.shape[0] - 1]), :]
+    # put the confusion matrix in a Pandas DataFrame
+    c_m_df = pd.DataFrame(index = model_classnames_to_keep + ['FN'], 
+                          columns = dataset_class_names + ['FP'], data=c_m)
+
+    # in the following, if the model uses one consolidated class for mutiple class IDs in the dataset (multiple dataset class IDs are 
+    # mapped to one model class ID specified in the annotation_filter), we identify them before calculating precision and recall correctly
+    model_class_id_to_dataset_classnames_map: Dict[int, List[str]] = {}
+    for class_id in model_label_map:
+        if class_id in dataset_class_ids:
+            mapped_ids: List[int] = [class_id]
+        else:
+            continue
+        if annotation_filter is not None:
+            # annotation_filter.class_ids_mapping_dict is a dictionary specifying the mapping between dataset class IDs
+            # to model class IDs
+            for k, v in annotation_filter.class_ids_mapping_dict.items():
+                if v == class_id:
+                    mapped_ids.append(dataset.class_names_to_ids_map[class_ids_to_classnames_map[k]])
+        mapped_ids = list(set(mapped_ids))
+        model_class_id_to_dataset_classnames_map[class_id] = [class_ids_to_classnames_map[k] for k in mapped_ids]   
+
+    precision: Dict[str, float] = {}
+    recall: Dict[str, float] = {}
+    recall_w_break_down: Dict[str, float] = {}
+    
+    for class_id in model_label_map:
+        if class_id not in dataset_class_ids:
+            continue
+        # precision
+        fp_col_names: List[str] = [col for col in c_m_df.columns.tolist() if col not in model_class_id_to_dataset_classnames_map[class_id]]
+        row = c_m_df.loc[class_ids_to_classnames_map[class_id], model_class_id_to_dataset_classnames_map[class_id] + fp_col_names].values
+        tp = np.sum(row[:len(model_class_id_to_dataset_classnames_map[class_id])])
+        if np.sum(row) > 0:
+            precision[class_ids_to_classnames_map[class_id]] = np.round(tp / np.sum(row), 3)
+        # recall
+        fn_row_names: List[str] = [ro for ro in c_m_df.index.tolist() if ro != class_ids_to_classnames_map[class_id]]
+        fn = c_m_df.loc[fn_row_names, model_class_id_to_dataset_classnames_map[class_id]].values.sum()
+        if tp + fn > 0:
+            recall[class_ids_to_classnames_map[class_id]] = np.round(tp / (tp + fn), 3)
+        
+    
+    for class_id in dataset_class_ids:
+        if annotation_filter is not None and class_id in annotation_filter.class_ids_mapping_dict:
+            model_class_id: int = annotation_filter.class_ids_mapping_dict[class_id]
+        else:
+            model_class_id: int = class_id
+        tp = c_m_df.loc[class_ids_to_classnames_map[model_class_id],  class_ids_to_classnames_map[class_id]]
+        fn_row_names: List[str] = [ro for ro in c_m_df.index.tolist() if ro != class_ids_to_classnames_map[model_class_id]]
+        fn = c_m_df.loc[fn_row_names,  class_ids_to_classnames_map[class_id]].sum()
+        if tp + fn > 0:
+            recall_w_break_down[class_ids_to_classnames_map[class_id]] = np.round(tp / (tp + fn), 3)
+        else:
+            recall_w_break_down[class_ids_to_classnames_map[class_id]] = 0
+
+    p_r_df = pd.DataFrame(data=[precision, recall], index = ['Precision', 'Recall']).transpose()
+    p_r_with_break_down_df = pd.DataFrame(data=[precision, recall_w_break_down], index = ['Precision', 'Recall']).transpose()
+    
+    return c_m_df, p_r_df, p_r_with_break_down_df
 
