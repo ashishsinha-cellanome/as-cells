@@ -1592,9 +1592,9 @@ def crop_and_block(sample, crop_coords, labels_of_interest=None,
 
             if xmax < box_xbr - box_xtl:
                 # the right side of the bounding box crosses the crop boundary, expand by +1 as we always do by default
-                delta_x2 = min(np.max(pos[1]) + 1 + 1, box_xbr - box_xtl)  # the first +1 is included as we need to include this point
+                delta_x2 = min(np.max(pos[1]) + 1 + 1, cropped_mask.shape[1])  # the first +1 is included as we need to include this point
             else:
-                delta_x2 = xmax
+                delta_x2 = cropped_mask.shape[1]
 
             if ymin > 0:
                 # the top side of the bounding box crosses the crop boundary, expand by -1 as we always do by default
@@ -1604,13 +1604,13 @@ def crop_and_block(sample, crop_coords, labels_of_interest=None,
 
             if ymax < box_ybr - box_ytl:
                 # the bottom side of the bounding box crosses the crop boundary, expand by +1 as we always do by default
-                delta_y2 = min(np.max(pos[0]) + 1 + 1, box_ybr - box_ytl)  # the first +1 is included as we need to include this point
+                delta_y2 = min(np.max(pos[0]) + 1 + 1, cropped_mask.shape[0])  # the first +1 is included as we need to include this point
             else:
-                delta_y2 = ymax
+                delta_y2 = cropped_mask.shape[0]
             
             if delta_x1 >= delta_x2 or delta_y1 >= delta_y2:
                 continue
-                
+
             cropped_mask_area = cropped_mask[delta_y1:delta_y2, delta_x1:delta_x2].sum()
             mask_area = sample['masks'][obj_id].sum()
             
@@ -1626,7 +1626,7 @@ def crop_and_block(sample, crop_coords, labels_of_interest=None,
             new_box_xbr = box_xtl + xmin + delta_x2
             new_box_ytl = box_ytl + ymin + delta_y1
             new_box_ybr = box_ytl + ymin + delta_y2
-            
+
             df.at[obj_id, 'xtl'] = new_box_xtl
             df.at[obj_id, 'ytl'] = new_box_ytl
             df.at[obj_id, 'xbr'] = new_box_xbr
