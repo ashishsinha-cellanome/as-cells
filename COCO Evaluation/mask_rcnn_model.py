@@ -18,7 +18,7 @@ from torchvision.transforms import functional as F
 # MODEL_WEIGHTS_PATH: Final[str] = '/home/cellareye/Cellanome/dl-mehdi/Mask RCNN/checkpoints/cell_bead_cage_nucl_mix_crop_0p1_bbox_0p7_1_rs_0p25_blur_2_bs_8_epochs.pt'
 # MODEL_WEIGHTS_PATH: Final[str] = '/home/cellareye/Cellanome/dl-mehdi/Mask RCNN/checkpoints/cell_bead_cage_nucl_cyto_mix_crop_0p1_bbox_0p7_1_rs_0p25_blur_2_bs_8_epochs_2.pt'
 # MODEL_WEIGHTS_PATH: Final[str] = '/home/cellareye/Cellanome/dl-mehdi/Mask RCNN/checkpoints/cell_bead_cage_nucl_cyto_hela_mix_crop_0p1_bbox_0p7_1_rs_0p25_blur_2_bs_8_epochs_1cl_lrs.pt'
-MODEL_WEIGHTS_PATH: Final[str] = '/home/cellareye/Cellanome/dl-mehdi/Mask RCNN/checkpoints/20240715_sets_1_2_3_6_to_31_0p1_bbox_0p7_1_rs_0p25_blur_2_bs_8_epochs_1cl_lrs.pt'
+MODEL_WEIGHTS_PATH: Final[str] = '/home/cellareye/Cellanome/dl-mehdi/Mask RCNN/checkpoints/20240923_sets_1_2_3_6_to_38_0p1_bbox_0p7_1_rs_0p25_blur_2_bs_8_epochs_1cl_lrs.pt'
 # MODEL_WEIGHTS_PATH: Final[str] = '/home/cellareye/Cellanome/dl-mehdi/Mask RCNN/checkpoints/nuclei_bf_crop_2_0p1_bbox_0p8_1_rs_0p25_blur_2_bs_14_epochs.pt'
 # MODEL_WEIGHTS_PATH: Final[str] = '/home/cellareye/Cellanome/dl-mehdi/Mask RCNN/checkpoints/nucl_cage_bf_crop_3_0p1_bbox_0p6_1_rs_0p25_blur_2_bs_14_epochs.pt'
 
@@ -359,6 +359,9 @@ class MaskRCNNInstanceSegmentation:
         loaded_label_map: Dict[int, str] = None   
         
         anchor_sizes: Tuple[Tuple[int]] =  DEFAULT_ANCHOR_SIZES
+        self._resize_dict: Union[Dict[Tuple[int, int], Tuple[int, int]], None] = None
+        self._crop_corners_dict: Union[Dict[Tuple[int, int], List[List[int]]], None] = None
+        
         # loading the PyTorch weights and the label map
         try:
             logging.info(
@@ -379,6 +382,12 @@ class MaskRCNNInstanceSegmentation:
                     # anchor sizes is also provided
                     logging.info(f"The model anchor sizes is provided in the weights file.") 
                     anchor_sizes = saved_model_param[2]
+                
+                if len(saved_model_param) >= 5:
+                    # resize and crop corners are also provided in the weights file
+                    logging.info(f"The resize and crop_corners dictionary are also provided in the weights file.")
+                    self._resize_dict = saved_model_param[3]
+                    self._crop_corners_dict = saved_model_param[4]
             else:
                 model_state_dict = saved_model_param
                 loaded_label_map = None
@@ -669,7 +678,9 @@ class MaskRCNNInstanceSegmentation:
     def set_confidence(self, confidence):
         self._confidence = confidence
 
-    
+    def get_cropping_info(self):
+        return self._resize_dict, self._crop_corners_dict
+
     def detect_by_cropping(
             self,
             img: Union[Image.Image, np.ndarray],
@@ -1067,7 +1078,10 @@ MASK_THRESHOLD: Final[float] = 0.1
 OVER_LAP_THRESHOLD: Final[float] = 0.75
 
 def run_mask_rcnn(
-        input_image: np.ndarray, normalize_image: bool = False, bit_depth: int = 8, crop: bool = True, classnames_mapping_dict = None, post_process_class_names: List[str] = list(detector.get_label_map().values()), return_features: bool = False, plot_results: bool = False, 
+    input_image: np.ndarray, normalize_image: bool = False, bit_depth: int = 8, crop: bool = True, classnames_mapping_dict = None,
+    post_process_class_names: List[str] = list(detector.get_label_map().values()), return_features: bool = False, 
+    plot_results: bool = False, 
+    detector: MaskRCNNInstanceSegmentation=detector,
 ) -> Tuple[Dict[str, list], float, Optional[np.ndarray]]:
     # make a copy to not modify the input image
     img = input_image.copy()
@@ -1085,7 +1099,24 @@ def run_mask_rcnn(
 
     image_height, image_width = img.shape[:2]
 
-    if crop and (image_width, image_height) not in RESIZE:
+    # check if the model includes the resize and crop_corners dictionaries
+    resize_dict: Union[Dict[Tuple[int, int], Tuple[int, int]], None] = None
+    crop_corners_dict: Union[Dict[Tuple[int, int], List[List[int]]], None] = None
+    try:
+        resize_dict, crop_corners_dict = detector.get_cropping_info()
+    except Exception as ex:
+        # the model class is old and not supporting the get_cropping_info()
+        logging.warning(
+            f"Warning Mask R-CNN class does not implement get_cropping_info(): {repr(ex)}"
+        )
+
+    if resize_dict is None or crop_corners_dict is None:
+        # use the default values set if not provided in the model
+        resize_dict = RESIZE
+        crop_corners_dict = CROP_CORNERS
+
+
+    if crop and (image_width, image_height) not in resize_dict:
         logging.error(
             "The input image size {} is not supported! Returning no cells!".format(
                 image_width, image_height
@@ -1103,8 +1134,8 @@ def run_mask_rcnn(
 
     if crop:
         # we keep the aspect ratio in RESIZE dictionary, scale_factor is the same for both dimensions
-        scale_factor: float = image_width / RESIZE[(image_width, image_height)][0]
-        resized_width, resized_height = RESIZE[(image_width, image_height)]
+        scale_factor: float = image_width / resize_dict[(image_width, image_height)][0]
+        resized_width, resized_height = resize_dict[(image_width, image_height)]
     else:
         larger_side_size: int = max(image_width, image_height)
         smaller_side_size: int = min(image_width, image_height)
@@ -1123,7 +1154,7 @@ def run_mask_rcnn(
     st = time.time()
 
     if crop:
-        crop_corners: List[List[int]] = CROP_CORNERS[(image_width, image_height)]
+        crop_corners: List[List[int]] = crop_corners_dict[(image_width, image_height)]
         out: Dict[str, list] = detector.detect_by_cropping(
             img=resized_img, crop_corners=crop_corners, return_features=return_features
         )
