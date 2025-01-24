@@ -82,10 +82,9 @@ def pixel_accuracy(output: torch.Tensor, mask: torch.Tensor) -> float:
         Accuracy
     """
     with torch.no_grad():
-        output: torch.Tensor = torch.argmax(torch.nn.functional.softmax(output, dim=1), dim=1)
-        correct: torch.Tensor = torch.eq(output, mask).int()
-        accuracy = float(correct.sum()) / float(correct.numel())
-    return accuracy
+        predicted_masks: torch.Tensor = torch.argmax(torch.nn.functional.softmax(output, dim=1), dim=1)
+    
+    return pixel_accuracy_masks(predicted_masks, mask)
 
 def mIoU(output: torch.Tensor, 
          mask: torch.Tensor, 
@@ -97,8 +96,47 @@ def mIoU(output: torch.Tensor,
     Mean IoU (among different classes)
     
     Args:
-        output: BATCH_SIZE * NUM_CLASSES * H * W tensor of class predictions for each pixel
+        output: BATCH_SIZE * NUM_CLASSES * H * W tensor of class logits for each pixel and class (including bg)
         mask: BATCH_SIZE * H * W tensor of semantic mask
+        num_classes: Number of class IDs (including index 0 for bg)
+        smooth: A small float to avoid divide by zero
+        ignore_index_zero: A flag to exclude class ID 0 (bg)
+    Returns:
+        Average IoU over all classes
+    """
+
+    with torch.no_grad():
+        predicted_masks: torch.tensor = torch.argmax(torch.nn.functional.softmax(output, dim=1), dim=1)
+        
+    return mIoU_masks(predicted_masks, mask, num_classes, smooth, ignore_index_zero)
+        
+def pixel_accuracy_masks(predicted_masks: torch.Tensor, gt_masks: torch.Tensor) -> float:
+    """
+    Pixel-wise accuracy given ground-truth and predicted masks for a batch
+    
+    Args:
+        predicted_masks: BATCH_SIZE * H * W tensor of class predictions for each pixel
+        gt_masks: BATCH_SIZE * H * W tensor of ground-truth semantic masks
+    Returns:
+        Accuracy over the batch
+    """
+    with torch.no_grad():
+        correct: torch.Tensor = torch.eq(predicted_masks, gt_masks).int()
+        accuracy = float(correct.sum()) / float(correct.numel())
+    return accuracy
+
+def mIoU_masks(predicted_masks: torch.Tensor, 
+               gt_masks: torch.Tensor, 
+               num_classes: int,
+               smooth: float = 1e-10, 
+               ignore_index_zero: bool = False
+               ) -> float:
+    """
+    Mean IoU (among different classes) given ground-truth and predicted masks for a batch
+    
+    Args:
+        predicted_masks: BATCH_SIZE * H * W tensor of class predictions for each pixel
+        gt_masks: BATCH_SIZE * H * W tensor of ground-truth semantic masks
         num_classes: Number of class IDs (including index 0 for bg)
         smooth: A small float to avoid divide by zero
         ignore_index_zero: A flag to exclude class ID 0 (bg)
@@ -112,17 +150,13 @@ def mIoU(output: torch.Tensor,
         if ignore_index_zero:
             start_idx: int = 1
         
-
-        pred_mask = torch.nn.functional.softmax(output, dim=1)
-        pred_mask = torch.argmax(pred_mask, dim=1)
-        
-        pred_mask = pred_mask.contiguous().view(-1)
-        mask = mask.contiguous().view(-1)
+        predicted_masks = predicted_masks.contiguous().view(-1)
+        gt_masks = gt_masks.contiguous().view(-1)
 
         iou_per_class = []
         for class_id in range(start_idx, num_classes): #loop per pixel class
-            true_class: torch.Tensor = pred_mask == class_id
-            true_label: torch.Tensor = mask == class_id
+            true_class: torch.Tensor = predicted_masks == class_id
+            true_label: torch.Tensor = gt_masks == class_id
 
             if true_label.long().sum().item() == 0:
                 # the class does not exist in this mask
