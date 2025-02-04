@@ -65,7 +65,7 @@ class Normalize(nn.Module):
     def forward(
         self, image: Tensor, target: Optional[Dict[str, Tensor]] = None
     ) -> Tuple[Tensor, Optional[Dict[str, Tensor]]]:
-        image = F.normalize(img, mean=self.mean, std=self.std)
+        image = F.normalize(image, mean=self.mean, std=self.std)
         return image, target
 
 class ConvertImageDtype(nn.Module):
