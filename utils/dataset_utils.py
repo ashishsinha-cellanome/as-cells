@@ -219,10 +219,27 @@ class CellMaskDataset(torch.utils.data.Dataset):
     def __init__(self, 
                  dataset_coco: CocoDetection, 
                  processor, 
+                 classnames_to_class_ids_map: Dict[str, int] = None,
                  instance_segmentation: bool = True,
                  transforms: A.core.composition.Compose = None):
         self.dataset_coco = dataset_coco
+        self.class_id_remap: Dict[int, int] = None
+        if classnames_to_class_ids_map is not None:
+            self.class_id_remap = {}
+            for coco_class_id_to_classname_map in dataset_coco.coco.cats.values():
+                coco_class_id: int = coco_class_id_to_classname_map['id']
+                coco_classname: str = coco_class_id_to_classname_map['name']
+                if coco_classname in classnames_to_class_ids_map:
+                    # add the class ID to be remapped to the new class ID
+                    # note that any object with a class ID different that what is listed in the values of classnames_to_class_ids_map
+                    # or any class name in COCO not listed in classnames_to_class_ids_map keys will be ignored
+                    self.class_id_remap[coco_class_id] = classnames_to_class_ids_map[coco_classname]
+                else:
+                    print(f"[WARN] Class ID: {coco_class_id} used in COCO datast with name: {coco_classname} is not included in the passed "
+                          f"classnames_to_class_ids_map and objects of this class will be excluded from annotations!")
+            print(f"[INFO] The class IDs in COCO will be remapped according to this mapping: {self.class_id_remap}")  
         self.processor = processor
+        self.classnames_to_class_ids_map = classnames_to_class_ids_map
         self.instance_segmentation = instance_segmentation
         self.transforms = transforms
 
@@ -242,8 +259,21 @@ class CellMaskDataset(torch.utils.data.Dataset):
             image_id: int = annotations[0]['image_id']
         else:
             image_id: int = idx + 1
-        boxes: np.ndarray = np.array([record['bbox'] for record in annotations])
-        labels: List[int] = [record['category_id'] for record in annotations]
+
+        
+        annotations_to_keep: List[dict] = []
+        if self.class_id_remap is not None:
+            labels: List[int] = []
+            for record in annotations:
+                if record['category_id'] in self.class_id_remap:
+                    annotations_to_keep.append(record)
+                    labels.append(self.class_id_remap[record['category_id']])
+        else:
+            annotations_to_keep = annotations
+            labels: List[int] = [record['category_id'] for record in annotations_to_keep]
+        
+        boxes: np.ndarray = np.array([record['bbox'] for record in annotations_to_keep])
+        
         
         # NOTE: the following implementation for image augmentation, and then adjusting them for a specific model with the passed processor
         # is not efficient because we decode and then encode the masks from and to COCO RLE format multiple times
@@ -252,7 +282,7 @@ class CellMaskDataset(torch.utils.data.Dataset):
         # but this allows us to use the same CellMaskDataset and albumentations transforms for all different models, and only have the
         # processor as a model specific function
         if self.instance_segmentation:
-            masks: List[np.ndarray] = [coco_mask_util.decode(record['segmentation']) for record in annotations]
+            masks: List[np.ndarray] = [coco_mask_util.decode(record['segmentation']) for record in annotations_to_keep]
         
         # apply augmentations, the second condition should not happen (all preprocessed images should at least have one object)
         if self.transforms and len(boxes) > 0:
