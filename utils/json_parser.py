@@ -816,7 +816,7 @@ class CellMaskDataset:
             # read the image, do not change the format
             # depending on the set color_depth, the values will be in [0, 2^color_depth - 1]
             # img = cv2.imread(img_path, cv2.IMREAD_UNCHANGED)
-            img = np.array(Image.open(img_path).convert("RGB"))
+            img = np.array(Image.open(img_path))
             download_image: bool = False
             # check for the overlays
             if self.overlay_fl_images_per_annotation is not None and annotation_path in self.overlay_fl_images_per_annotation:
@@ -1082,7 +1082,8 @@ class TestDataSet:
                            "masks": annots.item().get("masks")}
             
 
-        img = cv2.imread(img_path, cv2.IMREAD_UNCHANGED)
+        # img = cv2.imread(img_path, cv2.IMREAD_UNCHANGED)
+        img = np.array(Image.open(img_path))
         
         image_height, image_width = img.shape[:2]
         # scale factor
