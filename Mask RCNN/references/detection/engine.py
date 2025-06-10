@@ -218,8 +218,11 @@ def evaluate_coco_segm(model, data_loader, device, max_dets=100):
         model_time += time.time() - start_time
 
     if new_test_dataset_format:
-        # image IDs in CocoDetection are integers, while in the target are tensors, comvert them
+        # image IDs in torchvision.dataset.CocoDetection class are integers, while are tensors in the targets
+        # on the extended CocoDetection from references.detection.utils, this works fine, but not in torchvision.dataset.CocoDetection
         # this is needed only for the new format
+        for results in all_results:
+            results['image_id'] = int(results['image_id'].item())
         all_image_ids = [int(image_id.item()) for image_id in all_image_ids]
     
         
