@@ -27,6 +27,7 @@ MAX_ANNOTATION_CACHE_LENGTH: Final[int] = 5
 # the images and annotations will share the same name
 TEST_ANNOTATIONS_FOLDER = 'test_annotations'
 TEST_IMAGES_FOLDER = 'test_images'
+OVERLAID_TEST_IMAGES_FOLDER = 'test_images_overlaid'
 
 def parse_json_annotations(
     json_filename: str,
@@ -815,7 +816,7 @@ class CellMaskDataset:
             # read the image, do not change the format
             # depending on the set color_depth, the values will be in [0, 2^color_depth - 1]
             # img = cv2.imread(img_path, cv2.IMREAD_UNCHANGED)
-            img = np.array(Image.open(img_path))
+            img = np.array(Image.open(img_path).convert("RGB"))
             download_image: bool = False
             # check for the overlays
             if self.overlay_fl_images_per_annotation is not None and annotation_path in self.overlay_fl_images_per_annotation:
@@ -992,7 +993,8 @@ class TestDataSet:
                  labels_of_interest: Union[List[str], None] = None,
                  percentage_to_expand_bbox_boundaries: float = 0.0,
                  min_object_diameter: float = 6.0,
-                 optical_characteristics: Dict[Tuple[int, int], Dict[str, float]] = OPTICAL_CHARACTERISTICS) -> None:
+                 optical_characteristics: Dict[Tuple[int, int], Dict[str, float]] = OPTICAL_CHARACTERISTICS, 
+                 use_overlaid_imgs: bool = False) -> None:
         """
         Args:
             dataset_paths (List[str]): List of dataset paths to be used for testing.
@@ -1013,7 +1015,10 @@ class TestDataSet:
         for test_folder in dataset_paths:
             
             annotations_files = os.listdir(os.path.join(test_folder, TEST_ANNOTATIONS_FOLDER))
-            image_files =  os.listdir(os.path.join(test_folder, TEST_IMAGES_FOLDER))
+            if use_overlaid_imgs:
+                image_files =  os.listdir(os.path.join(test_folder, OVERLAID_TEST_IMAGES_FOLDER))
+            else:
+                image_files =  os.listdir(os.path.join(test_folder, TEST_IMAGES_FOLDER))
             
             annotations_files_no_ext =  [get_name(file) for file in annotations_files]
             image_files_no_ext = [get_name(file) for file in image_files]
@@ -1026,7 +1031,10 @@ class TestDataSet:
 
             self.annotations_path += [os.path.join(test_folder, TEST_ANNOTATIONS_FOLDER, file) for file in annotations_files]
             # make the two lists in the same order, here we assume the image extensions are always '.jpg'
-            self.images_path += [os.path.join(test_folder, TEST_IMAGES_FOLDER, get_name(file) + '.jpg') for file in annotations_files]
+            if use_overlaid_imgs:
+                self.images_path += [os.path.join(test_folder, OVERLAID_TEST_IMAGES_FOLDER, get_name(file) + '.jpg') for file in annotations_files]
+            else:
+                self.images_path += [os.path.join(test_folder, TEST_IMAGES_FOLDER, get_name(file) + '.jpg') for file in annotations_files]
         
         self.labels_of_interest = labels_of_interest
         # in order to reduce the memory required for the masks (for instance segmentation models)
