@@ -178,15 +178,20 @@ def evaluate(model, data_loader, device, max_dets=100):
     
 @torch.inference_mode()
 def evaluate_coco_segm(model, data_loader, device, max_dets=100):
-    
+
+    new_test_dataset_format: bool = False
     if not isinstance(data_loader.dataset, torchvision.datasets.CocoDetection):
         if hasattr(data_loader.dataset, 'dataset_coco'):
             # CellMaskDataset class, we can add a specific check for the type instead if import the class here (not done for simplicity)
-            coco_dataset = data_loader.dataset.dataset_coco.coco
+            new_test_dataset_format = True
+            
         else:
             print(f"[ERROR]: evaluate_coco_segm only supports COCO dataset format (torchvision.datasets.CocoDetection)! \n"
                   f"The passed data_loader's dataset type is {type(data_loader.dataset)}. No evaluation is possible")
             return COCOeval(), COCOeval()
+    
+    if new_test_dataset_format:
+        coco_dataset = data_loader.dataset.dataset_coco.coco
     else:
         coco_dataset = data_loader.dataset.coco
         
@@ -211,7 +216,12 @@ def evaluate_coco_segm(model, data_loader, device, max_dets=100):
         all_results.extend(results)
         all_image_ids += [target["image_id"] for target in targets]
         model_time += time.time() - start_time
-        
+
+    if new_test_dataset_format:
+        # image IDs in CocoDetection are integers, while in the target are tensors, comvert them
+        # this is needed only for the new format
+        all_image_ids = [int(image_id.item()) for image_id in all_image_ids]
+    
         
     coco_gt = coco_dataset
     coco_dt = coco_gt.loadRes(all_results)  # init predictions api
