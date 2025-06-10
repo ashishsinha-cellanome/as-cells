@@ -180,9 +180,15 @@ def evaluate(model, data_loader, device, max_dets=100):
 def evaluate_coco_segm(model, data_loader, device, max_dets=100):
     
     if not isinstance(data_loader.dataset, torchvision.datasets.CocoDetection):
-        print(f"[ERROR]: evaluate_coco_segm only supports COCO dataset format (torchvision.datasets.CocoDetection)! \n"
-              f"The passed data_loader's dataset type is {type(data_loader.dataset)}. No evaluation is possible")
-        return COCOeval(), COCOeval()
+        if hasattr(data_loader.dataset, 'dataset_coco'):
+            # CellMaskDataset class, we can add a specific check for the type instead if import the class here (not done for simplicity)
+            coco_dataset = data_loader.dataset.dataset_coco.coco
+        else:
+            print(f"[ERROR]: evaluate_coco_segm only supports COCO dataset format (torchvision.datasets.CocoDetection)! \n"
+                  f"The passed data_loader's dataset type is {type(data_loader.dataset)}. No evaluation is possible")
+            return COCOeval(), COCOeval()
+    else:
+        coco_dataset = data_loader.dataset.coco
         
     n_threads = torch.get_num_threads()
     # FIXME remove this and make paste_masks_in_image run on the GPU
@@ -207,7 +213,7 @@ def evaluate_coco_segm(model, data_loader, device, max_dets=100):
         model_time += time.time() - start_time
         
         
-    coco_gt = data_loader.dataset.coco   
+    coco_gt = coco_dataset
     coco_dt = coco_gt.loadRes(all_results)  # init predictions api
     
     evaluator_time = time.time()
