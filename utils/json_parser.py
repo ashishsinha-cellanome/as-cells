@@ -29,6 +29,8 @@ TEST_ANNOTATIONS_FOLDER = 'test_annotations'
 TEST_IMAGES_FOLDER = 'test_images'
 OVERLAID_TEST_IMAGES_FOLDER = 'test_images_overlaid'
 
+MAX_NUM_INTESITY_OUTLIER_PIXELS: Final[int] = 16
+
 def parse_json_annotations(
     json_filename: str,
     labels_of_interest: Union[List[str], None] = None,
@@ -615,6 +617,32 @@ def create_overlaid_img(bf_image: np.ndarray, fl_images_dict: Dict[str, np.ndarr
         overlaid_image = np.clip(0.6 * bf_image + 0.4 * overlaid_image, 0, 255).astype(np.uint8)
     return overlaid_image
 
+
+def normalize_min_max_ignore_extremes(image: np.ndarray, scale: int):
+    # we convert the image bit depth to 8 before calculating the histogram of pixel intensities
+    # for efficiency (running faster), this comes at a price of lowering the resolution
+    img = (255.0 * image.astype(float) / scale).astype(np.uint8)
+    count, intensities = np.histogram(img, bins=255, range=(0, 255))
+    idxs_to_keep: np.ndarray = np.where(
+        count >= MAX_NUM_INTESITY_OUTLIER_PIXELS
+    )[0]
+    if len(idxs_to_keep) > 0:
+        # intensity values are with respect to the original image without converting the bit-depth
+        min_intensity: float = intensities[idxs_to_keep.min()] * scale / 255.0
+        max_intensity: float = intensities[idxs_to_keep.max()] * scale / 255.0
+    else:
+        # revert back to 'min-max'
+        min_intensity: float = float(image.min())
+        max_intensity: float = float(image.max())
+    
+    if min_intensity < max_intensity:
+        img = np.clip(image.astype(float), min_intensity, max_intensity)
+        img = (255 * (img - min_intensity) / (max_intensity - min_intensity)).astype(np.uint8)
+    # else, return the image above after changing the bit-depth without any normalization; should only happen with 
+    # images with constant intensity after bit-depth conversion
+    
+    return img
+
 # a dataset classe to "parse" the masks and extract the bounding boxes from annotations
 class CellMaskDataset:
     def __init__(self,
@@ -811,12 +839,14 @@ class CellMaskDataset:
         # load images and masks
         annotation_path: str = self.annotations_images_map[idx][0]
         img_path: str = self.annotations_images_map[idx][1]
-
+        # by default, no images to create an overlaid image
+        overlay_imgs: Dict[str, np.ndarray] = None
+        
         if img_path is not None:
             # read the image, do not change the format
             # depending on the set color_depth, the values will be in [0, 2^color_depth - 1]
-            # img = cv2.imread(img_path, cv2.IMREAD_UNCHANGED)
-            img = np.array(Image.open(img_path))
+            img = cv2.imread(img_path, cv2.IMREAD_UNCHANGED) # all are gray scale images, so no difference in using cv2.imread or Image.open
+            # img = np.array(Image.open(img_path))
             download_image: bool = False
             # check for the overlays
             if self.overlay_fl_images_per_annotation is not None and annotation_path in self.overlay_fl_images_per_annotation:
@@ -826,7 +856,7 @@ class CellMaskDataset:
                 }
                 # remove invalid paths
                 overlay_imgs = {k: v for k, v in overlay_imgs.items() if v is not None}
-                img = create_overlaid_img(bf_image=img, fl_images_dict=overlay_imgs, normalize_fl_image_hist=True) 
+                # normalize the images below before generating an overlaid image
         else:
             # download the image as well, this can only happen when the annotation and the images use the same name
             annots_name: str = os.path.basename(annotation_path)
@@ -872,7 +902,7 @@ class CellMaskDataset:
             # from disk and will not download it
             img: np.ndarray = annotations['image']
             img_path: str = os.path.join(self.images_base_path, image_name_without_ext + '.jpg')
-            # save the image using PIL.Image
+            # save the image using PIL.Image as parse_json_annotations reads it with Image.open 
             Image.fromarray(img).save(img_path)
             # update the map so next time we do not download and read from the file
             self.annotations_images_map[idx] = (annotation_path, img_path)
@@ -906,10 +936,22 @@ class CellMaskDataset:
             # is mapped to zero, and the maximum is mapped to one
             # convert the image to a numpy array
             img = cv2.normalize(img, img, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX).astype(np.uint8)
+            if overlay_imgs is not None:
+                # normalize the FL channels, we use min-max-ignore-extremes
+                for k in overlay_imgs:
+                    overlay_imgs[k] = normalize_min_max_ignore_extremes(overlay_imgs[k], self.channel_scale)
         else:
             # the intensity of the images is color_depth bits, so we need to divide by 2^color_depth - 1
             img = (255 * img.astype(float) / self.channel_scale).astype(np.uint8)
+            if overlay_imgs is not None:
+                # scale the FL channel intensities as well
+                for k in overlay_imgs:
+                    overlay_imgs[k] = (255 * overlay_imgs[k].astype(float) / self.channel_scale).astype(np.uint8)
 
+        if overlay_imgs is not None:
+            # create an overlaid image
+            img = create_overlaid_img(bf_image=img, fl_images_dict=overlay_imgs, normalize_fl_image_hist=True) 
+        
         image_height, image_width = img.shape[:2]
         # scale factor
         if (image_width, image_height) in self.scale_factor_dict:
@@ -1083,6 +1125,7 @@ class TestDataSet:
             
 
         # img = cv2.imread(img_path, cv2.IMREAD_UNCHANGED)
+        # use Image.open to read overlaid images in RGB format
         img = np.array(Image.open(img_path))
         
         image_height, image_width = img.shape[:2]
