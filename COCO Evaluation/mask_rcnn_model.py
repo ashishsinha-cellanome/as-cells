@@ -18,7 +18,9 @@ from torchvision.transforms import functional as F
 # MODEL_WEIGHTS_PATH: Final[str] = '/home/cellareye/Cellanome/dl-mehdi/Mask RCNN/checkpoints/cell_bead_cage_nucl_mix_crop_0p1_bbox_0p7_1_rs_0p25_blur_2_bs_8_epochs.pt'
 # MODEL_WEIGHTS_PATH: Final[str] = '/home/cellareye/Cellanome/dl-mehdi/Mask RCNN/checkpoints/cell_bead_cage_nucl_cyto_mix_crop_0p1_bbox_0p7_1_rs_0p25_blur_2_bs_8_epochs_2.pt'
 # MODEL_WEIGHTS_PATH: Final[str] = '/home/cellareye/Cellanome/dl-mehdi/Mask RCNN/checkpoints/cell_bead_cage_nucl_cyto_hela_mix_crop_0p1_bbox_0p7_1_rs_0p25_blur_2_bs_8_epochs_1cl_lrs.pt'
-MODEL_WEIGHTS_PATH: Final[str] = '/home/cellareye/Cellanome/dl-mehdi/Mask RCNN/checkpoints/20240923_sets_1_2_3_6_to_38_0p1_bbox_0p7_1_rs_0p25_blur_2_bs_8_epochs_1cl_lrs.pt'
+# MODEL_WEIGHTS_PATH: Final[str] = '/home/cellareye/Cellanome/dl-mehdi/Mask RCNN/checkpoints/20240923_sets_1_2_3_6_to_38_0p1_bbox_0p7_1_rs_0p25_blur_2_bs_8_epochs_1cl_lrs.pt'
+MODEL_WEIGHTS_PATH: Final[str] = '/home/cellareye/Cellanome/dl-mehdi/Mask RCNN/checkpoints/preadipocytes_overlaid_with_nucleus_large.pt'
+# MODEL_WEIGHTS_PATH: Final[str] = '/home/cellareye/Cellanome/dl-mehdi/Mask RCNN/checkpoints/20250109_sets_1_2_3_6_to_41_0p1_bbox_0p7_1_rs_0p25_blur_2_bs_8_epochs_1cl_lrs.pt'
 # MODEL_WEIGHTS_PATH: Final[str] = '/home/cellareye/Cellanome/dl-mehdi/Mask RCNN/checkpoints/nuclei_bf_crop_2_0p1_bbox_0p8_1_rs_0p25_blur_2_bs_14_epochs.pt'
 # MODEL_WEIGHTS_PATH: Final[str] = '/home/cellareye/Cellanome/dl-mehdi/Mask RCNN/checkpoints/nucl_cage_bf_crop_3_0p1_bbox_0p6_1_rs_0p25_blur_2_bs_14_epochs.pt'
 
@@ -335,7 +337,7 @@ def get_instance_segmentation_model(
 class MaskRCNNInstanceSegmentation:
     def __init__(
         self,
-        weights_path: Optional[str],
+        weights_path: Optional[str] = MODEL_WEIGHTS_PATH,
         label_map: Optional[Dict[int, str]] = None,
         confidence: float = DEFAULT_DETECTION_CONFIDENCE,
         mask_threshold_for_bbox_expansion: float = DEFAULT_MASK_THRESHOLD_FOR_BBOX_EXPANSION,
@@ -358,39 +360,104 @@ class MaskRCNNInstanceSegmentation:
         # the model's label map if available in the weight file
         loaded_label_map: Dict[int, str] = None   
         
-        anchor_sizes: Tuple[Tuple[int]] =  DEFAULT_ANCHOR_SIZES
+        anchor_sizes: Tuple[
+            Tuple[int], Tuple[int], Tuple[int], Tuple[int], Tuple[int]
+        ] = DEFAULT_ANCHOR_SIZES
         self._resize_dict: Union[Dict[Tuple[int, int], Tuple[int, int]], None] = None
-        self._crop_corners_dict: Union[Dict[Tuple[int, int], List[List[int]]], None] = None
-        
+        self._crop_corners_dict: Union[Dict[Tuple[int, int], List[List[int]]], None] = (
+            None
+        )
+        self._detected_class_ids_remap: Union[Dict[int, int], None] = None
+        self._detected_class_names_remap: Union[Dict[str, str], None] = None
+        self._class_ids_to_exclude_from_dets: List[int] = []
+
         # loading the PyTorch weights and the label map
         try:
             logging.info(
                 f"Loading PyTorch Mask RCNN model from from {self._weights_path}. Setting to run on {self.device.type}."
             )
-            
-            saved_model_param: Union[OrderedDict, list] = torch.load(self._weights_path)
+
+            saved_model_param: Union[OrderedDict, list] = torch.load(
+                self._weights_path, map_location=self.device
+            )
             if isinstance(saved_model_param, list):
-                # label map and potentially other model related configs are also provided in the weights file, 
-                # use them
-                # in case a list is provided, the order of elemets is as following:
+                # label map and potentially other model related configs are also provided in the weights file,
+                # NOTE: this format is deprecated and will be replaced with the dictionary format below moving forward
+                # in case a list is provided, the order of elements is as following:
                 # - model state dictionary (mandatory)
                 # - label map (mandatory)
                 # - anchor sizes (optional)
+                # - resize dictionary (optional, for resizing and cropping images during inference)
+                # - crop corners dictionary (optional, for resizing and cropping images during inference)
                 # ... other optional fields to be added in future
                 model_state_dict, loaded_label_map = saved_model_param[:2]
                 if len(saved_model_param) >= 3:
                     # anchor sizes is also provided
-                    logging.info(f"The model anchor sizes is provided in the weights file.") 
+                    logging.info(
+                        f"The model anchor sizes is provided in the weights file."
+                    )
                     anchor_sizes = saved_model_param[2]
-                
                 if len(saved_model_param) >= 5:
                     # resize and crop corners are also provided in the weights file
-                    logging.info(f"The resize and crop_corners dictionary are also provided in the weights file.")
+                    logging.info(
+                        f"The resize and crop_corners dictionary are also provided in the weights file."
+                    )
                     self._resize_dict = saved_model_param[3]
                     self._crop_corners_dict = saved_model_param[4]
             else:
-                model_state_dict = saved_model_param
-                loaded_label_map = None
+                if (
+                    isinstance(saved_model_param, dict)
+                    and "model_state_dict" in saved_model_param
+                ):
+                    # the weights file contains the model state dictionary (the weights) and the label map (both are
+                    # mandatory) and potentially other model related configs
+                    # in case a dictionary is provided, the keys and values are as following:
+                    # - 'model_state_dict': model state dictionary (mandatory)
+                    # - 'label_map': label map (mandatory)
+                    # - 'anchor_sizes': anchor sizes (optional)
+                    # - 'resize_dict': resize dictionary (optional, for resizing and cropping images during inference)
+                    # - 'crop_corners_dict': crop corners dictionary (optional, for cropping images during inference)
+                    # ... other optional fields to be added in future
+                    model_state_dict = saved_model_param["model_state_dict"]
+                    if "label_map" in saved_model_param:
+                        loaded_label_map = saved_model_param["label_map"]
+                    else:
+                        logging.warning(
+                            f"The weights file should contain the label map but it missing. "
+                            f"This should never happen..."
+                        )
+                        loaded_label_map = None
+
+                    if "anchor_sizes" in saved_model_param:
+                        # anchor sizes is also provided
+                        logging.info(
+                            f"The model anchor sizes is provided in the weights file."
+                        )
+                        anchor_sizes = saved_model_param["anchor_sizes"]
+                    if (
+                        "resize_dict" in saved_model_param
+                        and "crop_corners_dict" in saved_model_param
+                    ):
+                        # resize and crop corners are also provided in the weights file
+                        logging.info(
+                            f"The resize and crop_corners dictionary are also provided in the weights file."
+                        )
+                        self._resize_dict = saved_model_param["resize_dict"]
+                        self._crop_corners_dict = saved_model_param["crop_corners_dict"]
+
+                    if "detected_class_names_remap" in saved_model_param:
+                        self._detected_class_names_remap = saved_model_param[
+                            "detected_class_names_remap"
+                        ]
+                        logging.info(
+                            f"The class names detected by the model will be re-mapped following this mapping: "
+                            f"{self._detected_class_names_remap}."
+                        )
+
+                else:
+                    # the file only contains the model state dictionary
+                    model_state_dict = saved_model_param
+                    loaded_label_map = None
 
         except Exception as ex:
             logging.error(
@@ -419,6 +486,29 @@ class MaskRCNNInstanceSegmentation:
             value: key for key, value in self._label_map.items()
         }
         
+        if self._detected_class_names_remap is not None:
+            # extract the classes that will be mapped to 'bg' and should be excluded from the detections
+            class_names_to_exclude_from_dets = [k for k, v in self._detected_class_names_remap.items() if v == 'bg']
+            # update the passed mapping and removed the ones that are going to be mapped to 'bg' (should be excluded)
+            self._detected_class_names_remap = {k: v for k, v in self._detected_class_names_remap.items() if v != 'bg'}
+            self._detected_class_ids_remap: Dict[int, int] = {}
+            for k, v in self._detected_class_names_remap.items():
+                if k in self._reverse_label_map and v in self._reverse_label_map:
+                    self._detected_class_ids_remap[self._reverse_label_map[k]] = (
+                        self._reverse_label_map[v]
+                    )
+            self._class_ids_to_exclude_from_dets: List[int] = [
+                self._reverse_label_map[k] for k in class_names_to_exclude_from_dets
+            ]
+            logging.info(
+                f"Mapping between class IDs and class names will be updated according to the following "
+                f"mapping: {self._detected_class_names_remap}"
+            )
+            logging.info(
+                f"The following class names will be excluded from detections (mapped to 'bg' in the passed mapping): "
+                f"{class_names_to_exclude_from_dets}"
+            )
+
         # Mask RCNN model
         self.model = get_instance_segmentation_model(
             num_classes=len(self._label_map) + 1, 
@@ -576,7 +666,7 @@ class MaskRCNNInstanceSegmentation:
         # (is np.uint8 if numpy array)
         img_tensor_list: List[torch.tensor] = [F.to_tensor(im).unsqueeze(0).to(self.device) for im in img_list]
         img_tensors: torch.tensor = torch.cat(img_tensor_list, dim=0)
-        with torch.no_grad(), torch.cuda.amp.autocast():
+        with torch.no_grad(), torch.amp.autocast('cuda'):
             if return_features:
                 predictions, features, img_sizes = self.model_and_features(img_tensors)
                 # list of predicted boxes
@@ -592,6 +682,18 @@ class MaskRCNNInstanceSegmentation:
         out: Dict[str, np.ndarray] = {"boxes": to_numpy(predictions[0]["boxes"]).astype(int),
                                       "labels": to_numpy(predictions[0]["labels"]),
                                       "scores": to_numpy(predictions[0]["scores"])}
+
+        # remap the output class IDs if needed
+        if self._detected_class_ids_remap is not None and len(out["labels"]):
+            out["labels"] = np.vectorize(
+                lambda x: (
+                    self._detected_class_ids_remap[x]
+                    if x in self._detected_class_ids_remap
+                    else x
+                )
+            )(out["labels"])
+        # Clear the CUDA cache
+        torch.cuda.empty_cache()
         # before moving the results to CPU for the masks, crop the masks within the detection boxes
         # to significantly reduce their sizes
         # for a large number of detected cells, 2/3 of the model runtime is
@@ -619,12 +721,18 @@ class MaskRCNNInstanceSegmentation:
             (xtl, ytl, xbr, ybr) = out["boxes"][i]
             if out["scores"][i] < self._confidence or ytl >= ybr or xtl >= xbr:
                 continue
+            if out["labels"][i] in self._class_ids_to_exclude_from_dets:
+                continue
             if self._mask_threshold_for_bbox_expansion > 0:
                 # threshold the mask to keep only the values more than the passed threshold
                 # then update the bounding box according to the remaining values
                 pos = torch.where(
                     all_mask_tensors[i, 0] >= self._mask_threshold_for_bbox_expansion
                 )
+                # TODO: Add this to the Mask R-CNN code when adding support for overlaid images
+                if pos[0].numel() == 0:
+                    continue
+                    
                 xmin: int = pos[1].min().item()
                 xmax: int = pos[1].max().item()
                 ymin: int = pos[0].min().item()
@@ -669,14 +777,35 @@ class MaskRCNNInstanceSegmentation:
         return out
 
     
-    def get_label_map(self):
+    def _update_label_map_if_needed(self):
+        if self._detected_class_names_remap is not None:
+            # self._detected_class_ids_remap will also be not None
+            updated_label_map: Dict[int, str] = {}
+            for k, v in self._label_map.items():
+                if k in self._class_ids_to_exclude_from_dets:
+                    continue
+                if k in self._detected_class_ids_remap:
+                    if self._detected_class_ids_remap[k] in updated_label_map:
+                        continue
+                    else:
+                        updated_label_map[self._detected_class_ids_remap[k]] = (
+                            self._label_map[self._detected_class_ids_remap[k]]
+                        )
+                elif k not in updated_label_map:
+                    updated_label_map[k] = v
+            return updated_label_map
+
         return self._label_map
-    
+
+    def get_label_map(self):
+        return self._update_label_map_if_needed()
+
     def get_reverse_label_map(self):
-        return self._reverse_label_map
-    
-    def set_confidence(self, confidence):
-        self._confidence = confidence
+        label_map: Dict[int, str] = self._update_label_map_if_needed()
+        return {v: k for k, v in label_map.items()}
+
+    def get_class_names(self):
+        return list(self.get_reverse_label_map().keys())
 
     def get_cropping_info(self):
         return self._resize_dict, self._crop_corners_dict
@@ -1078,25 +1207,36 @@ MASK_THRESHOLD: Final[float] = 0.1
 OVER_LAP_THRESHOLD: Final[float] = 0.75
 
 def run_mask_rcnn(
-    input_image: np.ndarray, normalize_image: bool = False, bit_depth: int = 8, crop: bool = True, classnames_mapping_dict = None,
-    post_process_class_names: List[str] = list(detector.get_label_map().values()), return_features: bool = False, 
+    input_image: np.ndarray, 
+    overlaid_image: bool = False, 
+    normalize_image: bool = False, 
+    bit_depth: int = 8, 
+    crop: bool = True, 
+    classnames_mapping_dict = None,
+    post_process_class_names: List[str] = list(detector.get_label_map().values()), 
+    return_features: bool = False, 
     plot_results: bool = False, 
     detector: MaskRCNNInstanceSegmentation=detector,
 ) -> Tuple[Dict[str, list], float, Optional[np.ndarray]]:
     # make a copy to not modify the input image
     img = input_image.copy()
 
-    if len(img.shape) > 2:
+    if not overlaid_image:
+        if len(img.shape) > 2:
+            logging.warning(
+                "Warning Mask R-CNN model may suffer loss in precision due to conversion from RGB to grayscale"
+            )
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+        img = (255 * img.astype(float) / (2 ** bit_depth - 1)).astype(np.uint8)
+
+        if normalize_image:
+            img = cv2.normalize(img, img, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX)
+    else:
         logging.warning(
-            "Warning Mask R-CNN model may suffer loss in precision due to conversion from RGB to grayscale"
-        )
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-
-    img = (255 * img.astype(float) / (2 ** bit_depth - 1)).astype(np.uint8)
-
-    if normalize_image:
-        img = cv2.normalize(img, img, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX)
-
+                "The model is run on an overlaid image! Make sure the image is already normalized. bit_depth and normalize_image flag will be ignored!"
+            )
+    
     image_height, image_width = img.shape[:2]
 
     # check if the model includes the resize and crop_corners dictionaries

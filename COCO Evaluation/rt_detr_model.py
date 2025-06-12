@@ -13,7 +13,7 @@ from torchvision.transforms import functional as F
 from transformers import RTDetrForObjectDetection, RTDetrImageProcessor
 
 BASE_PATH: Final[str] = '/home/cellareye/Cellanome/dl-mehdi/Mask RCNN/checkpoints'
-MODEL_WEIGHTS_PATH: Final[str] = '/home/cellareye/Cellanome/dl-mehdi/Mask RCNN/checkpoints/20250321_sets_1_2_3_6_to_41_rt_detr_16_bs_5_epochs.pt'
+MODEL_WEIGHTS_PATH: Final[str] = '/home/cellareye/Cellanome/dl-mehdi/Mask RCNN/checkpoints/20250331_sets_1_2_3_6_to_41_rt_detr_16_bs_10_epochs.pt'
 DEFAULT_DETECTION_CONFIDENCE: Final[float] = 0.4
 MODEL_INPUT_SIZE: Final[int] = 640 
 # TRANSFORM_MEAN: Final[List[float]] = [0.485, 0.456, 0.406] 
