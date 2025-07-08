@@ -582,12 +582,6 @@ def create_overlaid_img(bf_image: np.ndarray, fl_images_dict: Dict[str, np.ndarr
         "blue": np.array([0, 0, 1.0])
         
     }
-    if len(bf_image.shape) > 2 and bf_image.shape[2] > 1:
-        print("[WARN] create_overlaid_img expects a 2D image, but a 3D image was passed for the brightfield channel! ") 
-        print("RGB image will be converted to gray scale before overlaying")
-        bf_image = cv2.cvtColor(bf_image, cv2.COLOR_BGR2GRAY)
-
-    bf_image = cv2.cvtColor(bf_image, cv2.COLOR_GRAY2RGB)
 
     for k, v in fl_images_dict.items():
         # copy to make sure we are not modifying the input image arrays
@@ -610,6 +604,16 @@ def create_overlaid_img(bf_image: np.ndarray, fl_images_dict: Dict[str, np.ndarr
         else:
             # clipping not not needed as we map the images to different channels
             overlaid_image = np.clip(overlaid_image + fl_image, 0, 255)
+
+    if bf_image is None:
+        return overlaid_image
+    
+    if len(bf_image.shape) > 2 and bf_image.shape[2] > 1:
+        print("[WARN] create_overlaid_img expects a 2D image, but a 3D image was passed for the brightfield channel! ") 
+        print("RGB image will be converted to gray scale before overlaying")
+        bf_image = cv2.cvtColor(bf_image, cv2.COLOR_BGR2GRAY)
+
+    bf_image = cv2.cvtColor(bf_image, cv2.COLOR_GRAY2RGB)
     
     if overlaid_image is None:
         overlaid_image = bf_image
@@ -660,7 +664,6 @@ class CellMaskDataset:
                  max_larger_side: int = 2000,
                  max_smaller_side: int = 1600,
                  normalize: bool = False,
-                 ignore_extremes_for_fl_normalization: bool = True,
                  class_names_to_ids_map: dict = DEFAULT_CLASS_NAMES_TO_IDS_MAP) -> None:
         """_summary_
 
@@ -706,9 +709,11 @@ class CellMaskDataset:
                 overlaid image. 
             max_images_to_consider_for_each_annotation (int): This input is only applicable in case each annotation file
                 is applicable to multiple images (scenario 3 above). Otherwise, it does not have any effect. In case
-                it is set to special value -1 (or any value <= 0), all possible combinations of the annotations and the
+                it is set to special value -1 (or any value < 0), all possible combinations of the annotations and the
                 corresponding images will be considered and returned in the dataset class. Otherwise, the specified
-                number of images are randomly selected to be is used with the annotation and are returned.
+                number of images are randomly selected to be is used with the annotation and are returned. Special value of 0
+                when overlay_fl_images_per_annotation is passed (overlaid images should be created), indicates that the overlaid
+                image should only use FL channel images (no BF image) with equal weights for each FL channel in the overlaid image. 
             labels_of_interest (Union[List[str], None], optional): _description_. Defaults to None.
             percentage_to_expand_bbox_boundaries (float, optional): _description_. Defaults to 0.2.
             color_depth (int, optional): _description_. Defaults to 14.
@@ -719,9 +724,6 @@ class CellMaskDataset:
             max_larger_side (int, optional): _description_. Defaults to 2000.
             max_smaller_side (int, optional): _description_. Defaults to 1600.
             normalize (bool, optional): _description_. Defaults to False.
-            ignore_extremes_for_fl_normalization (bool, optional): This flag is only applicable if overlay_fl_images_per_annotation 
-               is passed to create overlaid images. If overlay_fl_images_per_annotation is passed to create overlaid images, and this 
-               flag is set to True, and normalize is set to True, min-max-ignore-extreme normalization will be used for FL channels. 
             class_names_to_ids_map (dict, optional): _description_. Defaults to DEFAULT_CLASS_NAMES_TO_IDS_MAP.
         """
         self.images_base_path = images_path
@@ -730,6 +732,8 @@ class CellMaskDataset:
         self.annotations_images_map: List[Tuple[str, str]] = []
         # set it to None, and only set it for format option 2 and 3 for annotations
         self.overlay_fl_images_per_annotation: Dict[str, Dict[str, str]] = None
+        # a flag to indicate whether the overlaid image should be purely generated based on the FL images
+        self.only_consider_fl_images_for_overlay: bool = False
         if isinstance(annotations, list):
             for annotation_file in annotations:
                 annotation_path: str = os.path.join(self.annotations_base_path, f"{annotation_file}.json")
@@ -754,6 +758,16 @@ class CellMaskDataset:
                         # random.seed(7)
                         random.shuffle(image_paths)
                         image_paths = image_paths[:max_images_to_consider_for_each_annotation]
+                    elif max_images_to_consider_for_each_annotation == 0 and overlay_fl_images_per_annotation is not None:
+                        # keep only one (to have self.annotations_images_map pointing to an existing image)
+                        # note that this one will also be ignores 
+                        # NOTE: currently this single BF image is read and processes (e.g., normalized) and is only
+                        # ignore when the overlaid image is generated, it is better to avoid reading and processing this image 
+                        # all together, but requires more code changes in this already convoluted function
+                        image_paths = image_paths[:1]
+                        #  FL channel images are provided, and max_images_to_consider_for_each_annotation is set to zero indicating that
+                        # only FL images should be considered for generating an overlaid image
+                        self.only_consider_fl_images_for_overlay: bool = True
                 else:
                     # value is a string specifying the image name (with the extension)
                     image_paths: List[str] = [os.path.join(self.images_base_path, value)]
@@ -943,13 +957,16 @@ class CellMaskDataset:
             if overlay_imgs is not None:
                 # normalize the FL channels, we use min-max-ignore-extremes
                 for k in overlay_imgs:
-                    if ignore_extremes_for_fl_normalization:
-                        overlay_imgs[k] = normalize_min_max_ignore_extremes(overlay_imgs[k], self.channel_scale)
-                    else:
+                    if self.only_consider_fl_images_for_overlay:
+                        # we use this option for z-stack overlaid images of all BF images with different z (pretending they
+                        # are FL channels), so use the same min-max normalization as for BF images
                         overlay_imgs[k] = cv2.normalize(overlay_imgs[k], 
                                                         overlay_imgs[k], 
                                                         alpha=0, beta=255, 
                                                         norm_type=cv2.NORM_MINMAX).astype(np.uint8)
+                    else:
+                        overlay_imgs[k] = normalize_min_max_ignore_extremes(overlay_imgs[k], self.channel_scale)
+                        
                         
         else:
             # the intensity of the images is color_depth bits, so we need to divide by 2^color_depth - 1
@@ -960,8 +977,13 @@ class CellMaskDataset:
                     overlay_imgs[k] = (255 * overlay_imgs[k].astype(float) / self.channel_scale).astype(np.uint8)
 
         if overlay_imgs is not None:
-            # create an overlaid image
-            img = create_overlaid_img(bf_image=img, fl_images_dict=overlay_imgs, normalize_fl_image_hist=True) 
+            if self.only_consider_fl_images_for_overlay:
+                # we use this option for z-stack overlaid images of all BF images with different z (pretending they
+                # are FL channels), so skip histogram equalization
+                img = create_overlaid_img(bf_image=None, fl_images_dict=overlay_imgs, normalize_fl_image_hist=False) 
+            else:
+                # create an overlaid image
+                img = create_overlaid_img(bf_image=img, fl_images_dict=overlay_imgs, normalize_fl_image_hist=True) 
         
         image_height, image_width = img.shape[:2]
         # scale factor
