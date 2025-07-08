@@ -660,6 +660,7 @@ class CellMaskDataset:
                  max_larger_side: int = 2000,
                  max_smaller_side: int = 1600,
                  normalize: bool = False,
+                 ignore_extremes_for_fl_normalization: bool = True,
                  class_names_to_ids_map: dict = DEFAULT_CLASS_NAMES_TO_IDS_MAP) -> None:
         """_summary_
 
@@ -718,6 +719,9 @@ class CellMaskDataset:
             max_larger_side (int, optional): _description_. Defaults to 2000.
             max_smaller_side (int, optional): _description_. Defaults to 1600.
             normalize (bool, optional): _description_. Defaults to False.
+            ignore_extremes_for_fl_normalization (bool, optional): This flag is only applicable if overlay_fl_images_per_annotation 
+               is passed to create overlaid images. If overlay_fl_images_per_annotation is passed to create overlaid images, and this 
+               flag is set to True, and normalize is set to True, min-max-ignore-extreme normalization will be used for FL channels. 
             class_names_to_ids_map (dict, optional): _description_. Defaults to DEFAULT_CLASS_NAMES_TO_IDS_MAP.
         """
         self.images_base_path = images_path
@@ -939,7 +943,14 @@ class CellMaskDataset:
             if overlay_imgs is not None:
                 # normalize the FL channels, we use min-max-ignore-extremes
                 for k in overlay_imgs:
-                    overlay_imgs[k] = normalize_min_max_ignore_extremes(overlay_imgs[k], self.channel_scale)
+                    if ignore_extremes_for_fl_normalization:
+                        overlay_imgs[k] = normalize_min_max_ignore_extremes(overlay_imgs[k], self.channel_scale)
+                    else:
+                        overlay_imgs[k] = cv2.normalize(overlay_imgs[k], 
+                                                        overlay_imgs[k], 
+                                                        alpha=0, beta=255, 
+                                                        norm_type=cv2.NORM_MINMAX).astype(np.uint8)
+                        
         else:
             # the intensity of the images is color_depth bits, so we need to divide by 2^color_depth - 1
             img = (255 * img.astype(float) / self.channel_scale).astype(np.uint8)
