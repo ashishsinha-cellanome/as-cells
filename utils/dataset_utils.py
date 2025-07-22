@@ -76,8 +76,8 @@ def expand_bbox(
 ) -> List[int]:
     
     xtl, ytl, xbr, ybr = bbox
-    delta_x: int = int(percentage_to_expand_bbox_boundaries * (xbr - xtl) / 2)
-    delta_y: int = int(percentage_to_expand_bbox_boundaries * (ybr - ytl) / 2)
+    delta_x: int = int(percentage_to_expand_bbox_boundaries * (xbr - xtl) / 2.0)
+    delta_y: int = int(percentage_to_expand_bbox_boundaries * (ybr - ytl) / 2.0)
     # expand by one pixel on each side at least to cover boundaries            
     delta_x = max(1, delta_x)
     delta_y = max(1, delta_y)
