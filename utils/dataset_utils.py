@@ -302,6 +302,10 @@ class CellMaskDataset(torch.utils.data.Dataset):
         # reformat annotations
         annotations: List[dict] = []
         for i, bbox in enumerate(boxes):
+            if bbox[2] * bbox[3] == 0:
+                # skip zero area invalid annotations post augmentation
+                # NOTE: this may lead to having no annotated object in the image
+                continue
             record = {
                 "image_id": image_id,
                 "category_id": int(labels[i]),
