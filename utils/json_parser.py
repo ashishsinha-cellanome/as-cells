@@ -27,7 +27,6 @@ MAX_ANNOTATION_CACHE_LENGTH: Final[int] = 5
 # the images and annotations will share the same name
 TEST_ANNOTATIONS_FOLDER = 'test_annotations'
 TEST_IMAGES_FOLDER = 'test_images'
-OVERLAID_TEST_IMAGES_FOLDER = 'test_images_overlaid'
 
 MAX_NUM_INTESITY_OUTLIER_PIXELS: Final[int] = 16
 
@@ -1069,7 +1068,8 @@ class TestDataSet:
                  percentage_to_expand_bbox_boundaries: float = 0.0,
                  min_object_diameter: float = 6.0,
                  optical_characteristics: Dict[Tuple[int, int], Dict[str, float]] = OPTICAL_CHARACTERISTICS, 
-                 use_overlaid_imgs: bool = False) -> None:
+                 test_annotations_folder: str = TEST_ANNOTATIONS_FOLDER
+                 test_images_folder: str = TEST_IMAGES_FOLDER) -> None:
         """
         Args:
             dataset_paths (List[str]): List of dataset paths to be used for testing.
@@ -1089,11 +1089,8 @@ class TestDataSet:
         self.dataset_paths: List[str] = dataset_paths
         for test_folder in dataset_paths:
             
-            annotations_files = os.listdir(os.path.join(test_folder, TEST_ANNOTATIONS_FOLDER))
-            if use_overlaid_imgs:
-                image_files =  os.listdir(os.path.join(test_folder, OVERLAID_TEST_IMAGES_FOLDER))
-            else:
-                image_files =  os.listdir(os.path.join(test_folder, TEST_IMAGES_FOLDER))
+            annotations_files = os.listdir(os.path.join(test_folder, test_annotations_folder))
+            image_files =  os.listdir(os.path.join(test_folder, test_images_folder))
             
             annotations_files_no_ext =  [get_name(file) for file in annotations_files]
             image_files_no_ext = [get_name(file) for file in image_files]
@@ -1104,12 +1101,9 @@ class TestDataSet:
             if len(annotations_files) != len(annotations_files_no_ext) or len(image_files) != len(image_files_no_ext):
                 print(f"[WARN] Found some unmatched images and anotations for dataset {test_folder}")
 
-            self.annotations_path += [os.path.join(test_folder, TEST_ANNOTATIONS_FOLDER, file) for file in annotations_files]
+            self.annotations_path += [os.path.join(test_folder, test_annotations_folder, file) for file in annotations_files]
             # make the two lists in the same order, here we assume the image extensions are always '.jpg'
-            if use_overlaid_imgs:
-                self.images_path += [os.path.join(test_folder, OVERLAID_TEST_IMAGES_FOLDER, get_name(file) + '.jpg') for file in annotations_files]
-            else:
-                self.images_path += [os.path.join(test_folder, TEST_IMAGES_FOLDER, get_name(file) + '.jpg') for file in annotations_files]
+            self.images_path += [os.path.join(test_folder, test_images_folder, get_name(file) + '.jpg') for file in annotations_files]
         
         self.labels_of_interest = labels_of_interest
         # in order to reduce the memory required for the masks (for instance segmentation models)
