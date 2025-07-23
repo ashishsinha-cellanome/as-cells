@@ -1068,7 +1068,7 @@ class TestDataSet:
                  percentage_to_expand_bbox_boundaries: float = 0.0,
                  min_object_diameter: float = 6.0,
                  optical_characteristics: Dict[Tuple[int, int], Dict[str, float]] = OPTICAL_CHARACTERISTICS, 
-                 test_annotations_folder: str = TEST_ANNOTATIONS_FOLDER
+                 test_annotations_folder: str = TEST_ANNOTATIONS_FOLDER,
                  test_images_folder: str = TEST_IMAGES_FOLDER) -> None:
         """
         Args:
