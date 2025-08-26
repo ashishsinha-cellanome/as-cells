@@ -4,8 +4,11 @@ import os
 import numpy as np
 import cv2
 from PIL import Image
+from tqdm.auto import tqdm
 
 import torch
+import torch.nn as nn
+import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms as T
 
@@ -71,27 +74,33 @@ def show_sample(idx: int, dataset):
     
     return image.astype(np.uint8)
     
-def pixel_accuracy(output: torch.Tensor, mask: torch.Tensor) -> float:
+def pixel_accuracy(
+    output: torch.Tensor, 
+    mask: torch.Tensor, 
+    ignore_index_zero: bool = False
+) -> float:
     """
     Pixel-wise accuracy
     
     Args:
         output: BATCH_SIZE * NUM_CLASSES * H * W tensor of class predictions (logits) for each pixel
         mask: BATCH_SIZE * H * W tensor of semantic mask
+        ignore_index_zero: A flag to exclude class ID 0 (bg)
     Returns:
         Accuracy
     """
     with torch.no_grad():
         predicted_masks: torch.Tensor = torch.argmax(torch.nn.functional.softmax(output, dim=1), dim=1)
     
-    return pixel_accuracy_masks(predicted_masks, mask)
+    return pixel_accuracy_masks(predicted_masks, mask, ignore_index_zero)
 
-def mIoU(output: torch.Tensor, 
-         mask: torch.Tensor, 
-         num_classes: int,
-         smooth: float = 1e-10, 
-         ignore_index_zero: bool = False
-        ) -> float:
+def mIoU(
+    output: torch.Tensor, 
+    mask: torch.Tensor, 
+    num_classes: int,
+    smooth: float = 1e-10, 
+    ignore_index_zero: bool = False
+) -> float:
     """
     Mean IoU (among different classes)
     
@@ -110,27 +119,37 @@ def mIoU(output: torch.Tensor,
         
     return mIoU_masks(predicted_masks, mask, num_classes, smooth, ignore_index_zero)
         
-def pixel_accuracy_masks(predicted_masks: torch.Tensor, gt_masks: torch.Tensor) -> float:
+def pixel_accuracy_masks(
+    predicted_masks: torch.Tensor, 
+    gt_masks: torch.Tensor, 
+    ignore_index_zero: bool = False
+) -> float:
     """
     Pixel-wise accuracy given ground-truth and predicted masks for a batch
     
     Args:
         predicted_masks: BATCH_SIZE * H * W tensor of class predictions for each pixel
         gt_masks: BATCH_SIZE * H * W tensor of ground-truth semantic masks
+        ignore_index_zero: A flag to exclude class ID 0 (bg)
     Returns:
         Accuracy over the batch
     """
     with torch.no_grad():
         correct: torch.Tensor = torch.eq(predicted_masks, gt_masks).int()
-        accuracy = float(correct.sum()) / float(correct.numel())
+        if ignore_index_zero:
+            non_zero_idxs: torch.Tensor = torch.where(gt_masks != 0)
+            accuracy = float(correct[non_zero_idxs].sum()) / float(correct[non_zero_idxs].numel())
+        else:
+            accuracy = float(correct.sum()) / float(correct.numel())
     return accuracy
 
-def mIoU_masks(predicted_masks: torch.Tensor, 
-               gt_masks: torch.Tensor, 
-               num_classes: int,
-               smooth: float = 1e-10, 
-               ignore_index_zero: bool = False
-               ) -> float:
+def mIoU_masks(
+    predicted_masks: torch.Tensor, 
+    gt_masks: torch.Tensor, 
+    num_classes: int,
+    smooth: float = 1e-10, 
+    ignore_index_zero: bool = False
+) -> float:
     """
     Mean IoU (among different classes) given ground-truth and predicted masks for a batch
     
@@ -247,16 +266,93 @@ class SemanticMaskDataset(Dataset):
         
         return image_tensor, mask_tensor
         
+
+class DiceCrossEntropyLoss(nn.Module):
+    def __init__(self, 
+                 num_classes, 
+                 ce_classes_weights=None, 
+                 dice_loss_weight=1.0, 
+                 ce_loss_weight=1.0, 
+                 smooth=1e-10, 
+                 ignore_bg_for_dice_loss=True
+                ):
+        """
+        Args:
+            num_classes (int): Number of segmentation classes (C) including the background index 0 
+            ce_classes_weights (Tensor, optional): class weights for CrossEntropyLoss
+            dice_loss_weight (float): scaling factor for Dice loss
+            ce_loss_weight (float): scaling factor for CrossEntropy loss
+            smooth (float): smoothing constant to avoid division by zero
+            ignore_bg_for_dice_loss (bool, optional): Ignoring index 0 (background) in Dice loss
+        """
+        super(DiceCrossEntropyLoss, self).__init__()
+        self.num_classes = num_classes
+        self.ce_loss = nn.CrossEntropyLoss(weight=ce_classes_weights) # we use ce_classes_weights to give lower weights to bg is needed for CE loss
+        self.dice_weight = dice_loss_weight
+        self.ce_weight = ce_loss_weight
+        self.smooth = smooth
+        self.ignore_index_zero = ignore_bg_for_dice_loss
+
+    def forward(self, preds, targets):
+        """
+        Args:
+            preds: (N, C, H, W) — raw logits
+            targets: (N, H, W) — class indices [0, 1, ..., C - 1]
+        """
+        # Compute CE loss, we consider index 0 (background) for CE loss
+        ce = self.ce_loss(preds, targets)
+
+        # Softmax over channel dimension
+        preds_softmax = torch.softmax(preds, dim=1)
+
+        # Mask out ignore_index from both prediction and target
+        if self.ignore_index_zero:
+            mask = targets != 0  # (N, H, W)
+        else:
+            mask = torch.ones_like(targets, dtype=torch.bool)
+
+        targets_masked = targets.clone()
+        targets_masked[~mask] = 0  # needed for one-hot conversion (doesn't matter, will be masked out)
+
+        # One-hot encode targets
+        targets_one_hot = F.one_hot(targets_masked, num_classes=self.num_classes)  # (N, H, W, C)
+        targets_one_hot = targets_one_hot.permute(0, 3, 1, 2).float()  # (N, C, H, W)
+
+        # Apply the same mask to predictions and one-hot targets
+        mask = mask.unsqueeze(1)  # (N, 1, H, W)
+        preds_softmax = preds_softmax * mask
+        targets_one_hot = targets_one_hot * mask
+
+        # Dice loss per class
+        dice_loss = 0.0
+        for c in range(1 if self.ignore_index_zero else 0, self.num_classes):
+            pred_c = preds_softmax[:, c]
+            target_c = targets_one_hot[:, c]
+            intersection = (pred_c * target_c).sum(dim=(1, 2))
+            union = pred_c.sum(dim=(1, 2)) + target_c.sum(dim=(1, 2))
+            dice_score = (2. * intersection + self.smooth) / (union + self.smooth)
+            dice_loss += 1.0 - dice_score
+
         
+        dice_loss = dice_loss.mean() / (self.num_classes - (1.0 if self.ignore_index_zero else 0.0))
+
+        # Combined loss
+        total_loss = self.dice_weight * dice_loss + self.ce_weight * ce
+        return total_loss
+
+
 def train(model, 
           num_classes,
           train_loader, 
-          test_loader, 
-          ignore_index_zero, # set to true if the model should not be trained on the background pixels 
-          optimizer,         # (e.g., the background is not annotated properly)
+          test_loader,
+          dice_loss_weight,
+          ce_loss_weight,
+          optimizer,        
           lr_scheduler,
           num_epochs,
-          device):
+          device, 
+          model_path,
+          ce_k_factor=5):
     
     torch.cuda.empty_cache()
     
@@ -272,11 +368,17 @@ def train(model,
     lrs: List[float] = []
     min_loss: float = np.inf
 
-   
-    if ignore_index_zero:
-        criterion = torch.nn.CrossEntropyLoss(ignore_index=0)
-    else:
-        criterion = torch.nn.CrossEntropyLoss()
+    # we assign [w_0, w_1, ..., w_{c-1}] for class weights in CE loss where w_1, w_2, ... w_{c-1} = w = K * w_0 and \sum_{i=0}^{c-1} w_i = 1
+    # hence K * (c-1) * w_0 + w_0 = 1 or w_0 = 1.0 / (K * c - K + 1)
+    K: float = ce_k_factor
+    criterion = DiceCrossEntropyLoss(
+        num_classes, 
+        ce_classes_weights=torch.Tensor([1.0 / (K * num_classes - K + 1)] + [K * 1.0 / (K * num_classes - K + 1)] * (num_classes - 1)).to(device),
+        ce_loss_weight=ce_loss_weight,
+        dice_loss_weight=dice_loss_weight,
+        ignore_bg_for_dice_loss=False
+    )
+    
     
     model = model.to(device)
     
@@ -300,17 +402,6 @@ def train(model,
             images_batch = images_batch.to(device) 
             masks_batch = masks_batch.to(device)
 
-            if ignore_index_zero:
-                unique_mask_values_tensor = masks_batch.unique()
-                if len(unique_mask_values_tensor) == 1 and unique_mask_values_tensor[0].item() == 0:
-                    # the cross entropy loss ignores index 0 and if the mask does not have any non-zero (non-background) pixels, 
-                    # the loss will be nan, so we skip this batch
-                    # the training dataset is prepared to only contain images with some non-bg pixels, but this step is included 
-                    # for sanity
-                    # no need to reset the gradients (yet) as we have not taken any forward step
-                    continue
-                
-            
             # forward
             output = model(images_batch)['out']
             loss = criterion(output, masks_batch)
@@ -319,8 +410,8 @@ def train(model,
             # mean IoU can only be np.nan if the mask only include background (index 0) pixles and the mIoU function is called
             # to ignore this index (default) 
             # this should never happen, 
-            iou_score += mIoU(output, masks_batch, num_classes=num_classes, ignore_index_zero=ignore_index_zero)
-            accuracy += pixel_accuracy(output, masks_batch)
+            iou_score += mIoU(output, masks_batch, num_classes=num_classes, ignore_index_zero=True) # ignore the bg in calculating mIoU
+            accuracy += pixel_accuracy(output, masks_batch, ignore_index_zero=True) # ignore the bg in calculating accuracy
             num_valid_train_batches += 1
                 
             # backward
@@ -348,11 +439,11 @@ def train(model,
         # run the validation after each training epoch
         test_iou_score, test_accuracy, test_running_loss = evaluate(
             model, 
-            num_classes, 
+            num_classes,
+            criterion,
             test_loader, 
             device, 
             return_loss=True, 
-            ignore_index_zero=ignore_index_zero
         )
                        
         # save the results
@@ -365,7 +456,7 @@ def train(model,
         test_accs.append(test_accuracy)
         
         print('saving the model ...')
-        torch.save(model.state_dict(), os.path.join(MODEL_PATH, 'checkpoint_' + str(epoch) +'.pt'))
+        torch.save(model.state_dict(), os.path.join(model_path, 'checkpoint_' + str(epoch) +'.pt'))
                     
         
         print("Epoch:{}/{} ... \n".format(epoch + 1, num_epochs),
@@ -386,11 +477,12 @@ def train(model,
     
     
 def evaluate(model, 
-             num_classes, 
+             num_classes,
+             criterion, 
              data_loader, 
              device, 
              return_loss=False, 
-             ignore_index_zero=True):
+             ):
     
     # run the validation
     model.eval()
@@ -400,12 +492,6 @@ def evaluate(model,
     accuracy: float = 0
     loss: float = 0
     num_valid_batches: int = 0
-
-    if return_loss:
-        if ignore_index_zero:
-            criterion = torch.nn.CrossEntropyLoss(ignore_index=0)
-        else:
-            criterion = torch.nn.CrossEntropyLoss()
     
     # validation loop
     with torch.no_grad():
@@ -414,22 +500,17 @@ def evaluate(model,
             images_batch, masks_batch = data    
             images_batch = images_batch.to(device) 
             masks_batch = masks_batch.to(device)
-
-            if ignore_index_zero:
-                unique_mask_values_tensor = masks_batch.unique()
-                if len(unique_mask_values_tensor) == 1 and unique_mask_values_tensor[0].item() == 0:
-                    continue
                 
             output = model(images_batch)['out']
                 
             # evaluation metrics
-            iou_score += mIoU(output, masks_batch, num_classes=num_classes, ignore_index_zero=ignore_index_zero)
-            accuracy += pixel_accuracy(output, masks_batch)
+            iou_score += mIoU(output, masks_batch, num_classes=num_classes, ignore_index_zero=True)  # ignore the bg in calculating mIoU
+            accuracy += pixel_accuracy(output, masks_batch, ignore_index_zero=True) # ignore the bg in calculating accuracy
                 
             # loss 
             if return_loss:
-                running_loss += criterion(output, masks_batch).item()                                 
-            
+                loss += criterion(output, masks_batch).item()
+                
             # increament the number of valid batches
             num_valid_batches += 1
     
