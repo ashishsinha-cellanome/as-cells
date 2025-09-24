@@ -618,90 +618,91 @@ class VisionModel(ABC):
 
         return out
 
-    @staticmethod
-    def post_process_detections(
-        detections: List[str, list], 
-        post_process_class_names: List[str], 
-        classnames_to_class_ids_map: Dict[str, int], 
-        overlap_threshold: float=OVER_LAP_THRESHOLD
-    ):
-        """
-        in this function, "smaller" detections that are part of larger objects of the same type are detected, and invalidated
-        this can happen mainly for 'cell', 'nucleus' and 'cell-adhered'/'cytoplasm' classes
-        """
-        # list of indexes of objects for each class name to be included in post processing
-        post_process_class_idxs: Dict[str, List[int]] = {}
-        # list of bounding boxes for each class name to be included in post processing
-        post_process_class_boxes: Dict[str, List[np.ndarray]] = {}
-        for i, box in enumerate(detections['boxes']):
-            for class_name in post_process_class_names:
-                if class_name in classnames_to_class_ids_map and detections['labels'][i] == classnames_to_class_ids_map[class_name]:
-                    if class_name in post_process_class_idxs:
-                        post_process_class_idxs[class_name].append(i)
-                        post_process_class_boxes[class_name].append(box)
-                    else:
-                        post_process_class_idxs[class_name] = [i]
-                        post_process_class_boxes[class_name] = [box]
-    
-        # list of detection indexes to be excluded (this is with respect to all detected objects and not only the class under consideration)
-        obj_idxs_to_remove: List[int] = []                
-        for key in post_process_class_boxes:
-            # convert to a numpy array
-            post_process_class_boxes[key]: np.ndarray = np.array(post_process_class_boxes[key])
-        
-            if len(post_process_class_idxs[key]) == 0:
-                continue
-
-            # find the overlap between the detections, overlap[i, j] is defined below as the area of the intersection between
-            # the boxes of the detected object i and j divided by the area of the box of object j (column index)
-            # note that this matrix is not symmetric:
-            # - a large overlap[i, j] but small overlap[j, i] indicate that object i is larger than object j and is mostly covering it
-            # - large overlap[i, j] and overlap[j, i] indicates both objects have high IoU (for an overlap threshold of 0.75, the IoU will be
-            #   at least 0.6)
-            overlap: np.ndarray = overlap_batch(post_process_class_boxes[key], post_process_class_boxes[key], True)
-            # remove diagonal elements (as each box has a complete overlap with itself)
-            overlap = overlap - np.eye(len(post_process_class_boxes[key]))
-        
-            # index of larger objects (row indexes) covering some smaller already detected cells (column index)
-            # by more than OVER_LAP_THRESHOLD
-            # these smaller objects are most probably redundant objects
-            covering_obj_idxs, covered_obj_idxs = np.where(overlap > overlap_threshold)
-            # now double-check the coverage using the masks
-            for (i, j) in zip(covering_obj_idxs, covered_obj_idxs):
-                # index with respect to all detected and not object of class key
-                large_obj_index: int = post_process_class_idxs[key][i]
-                small_obj_index: int = post_process_class_idxs[key][j]
-                # larger box coordinates
-                xl1, yl1, xl2, yl2 = detections['boxes'][large_obj_index] # the same as post_process_class_boxes[key][i]
-                # smaller box coordinates
-                xs1, ys1, xs2, ys2 = detections['boxes'][small_obj_index] # the same as post_process_class_boxes[key][j]
-                # union of the two boxes, needed to compute the masks intersection efficiently within this union
-                # as the masks are defined within the boxes
-                x1: int = min(xl1, xs1)
-                y1: int = min(yl1, ys1)
-                x2: int = max(xl2, xs2)
-                y2: int = max(yl2, ys2)
-                large_obj_mask: np.ndarray = np.zeros((y2 - y1, x2 - x1), np.uint8)
-                large_obj_mask[(yl1 - y1):(yl2 - y1), (xl1 - x1):(xl2 - x1)] = detections['masks'][large_obj_index]
-                small_obj_mask: np.ndarray = np.zeros((y2 - y1, x2 - x1), np.uint8)
-                small_obj_mask[(ys1 - y1):(ys2 - y1), (xs1 - x1):(xs2 - x1)] = detections['masks'][small_obj_index]
-
-                # check if the intersection of the masks are larger than the threshold, the box check and mask check allows us 
-                # to run this code more efficiently 
-                if np.sum(small_obj_mask * large_obj_mask) > overlap_threshold * np.sum(small_obj_mask):
-                    # add column index j to the list of object indexes to be removed
-                    if small_obj_index not in obj_idxs_to_remove:
-                        obj_idxs_to_remove.append(small_obj_index)
-   
-        if len(obj_idxs_to_remove) > 0:
-            detections['boxes'] = [box for i, box in enumerate(detections['boxes']) if i not in obj_idxs_to_remove]
-            detections['labels'] = [label for i, label in enumerate(detections['labels']) if i not in obj_idxs_to_remove]
-            detections['scores'] = [score for i, score in enumerate(detections['scores']) if i not in obj_idxs_to_remove]
-            detections['masks'] = [mask for i, mask in enumerate(detections['masks']) if i not in obj_idxs_to_remove] 
-
-        return detections
-
 # end of class definition
+
+   
+def post_process_detections(
+    detections: List[str, list], 
+    post_process_class_names: List[str], 
+    classnames_to_class_ids_map: Dict[str, int], 
+    overlap_threshold: float,
+):
+    """
+    in this function, "smaller" detections that are part of larger objects of the same type are detected, and invalidated
+    this can happen mainly for 'cell', 'nucleus' and 'cell-adhered'/'cytoplasm' classes
+    """
+    # list of indexes of objects for each class name to be included in post processing
+    post_process_class_idxs: Dict[str, List[int]] = {}
+    # list of bounding boxes for each class name to be included in post processing
+    post_process_class_boxes: Dict[str, List[np.ndarray]] = {}
+    for i, box in enumerate(detections['boxes']):
+        for class_name in post_process_class_names:
+            if class_name in classnames_to_class_ids_map and detections['labels'][i] == classnames_to_class_ids_map[class_name]:
+                if class_name in post_process_class_idxs:
+                    post_process_class_idxs[class_name].append(i)
+                    post_process_class_boxes[class_name].append(box)
+                else:
+                    post_process_class_idxs[class_name] = [i]
+                    post_process_class_boxes[class_name] = [box]
+    
+    # list of detection indexes to be excluded (this is with respect to all detected objects and not only the class under consideration)
+    obj_idxs_to_remove: List[int] = []                
+    for key in post_process_class_boxes:
+        # convert to a numpy array
+        post_process_class_boxes[key]: np.ndarray = np.array(post_process_class_boxes[key])
+        
+        if len(post_process_class_idxs[key]) == 0:
+            continue
+
+        # find the overlap between the detections, overlap[i, j] is defined below as the area of the intersection between
+        # the boxes of the detected object i and j divided by the area of the box of object j (column index)
+        # note that this matrix is not symmetric:
+        # - a large overlap[i, j] but small overlap[j, i] indicate that object i is larger than object j and is mostly covering it
+        # - large overlap[i, j] and overlap[j, i] indicates both objects have high IoU (for an overlap threshold of 0.75, the IoU will be
+        #   at least 0.6)
+        overlap: np.ndarray = overlap_batch(post_process_class_boxes[key], post_process_class_boxes[key], True)
+        # remove diagonal elements (as each box has a complete overlap with itself)
+        overlap = overlap - np.eye(len(post_process_class_boxes[key]))
+        
+        # index of larger objects (row indexes) covering some smaller already detected cells (column index)
+        # by more than OVER_LAP_THRESHOLD
+        # these smaller objects are most probably redundant objects
+        covering_obj_idxs, covered_obj_idxs = np.where(overlap > overlap_threshold)
+        # now double-check the coverage using the masks
+        for (i, j) in zip(covering_obj_idxs, covered_obj_idxs):
+            # index with respect to all detected and not object of class key
+            large_obj_index: int = post_process_class_idxs[key][i]
+            small_obj_index: int = post_process_class_idxs[key][j]
+            # larger box coordinates
+            xl1, yl1, xl2, yl2 = detections['boxes'][large_obj_index] # the same as post_process_class_boxes[key][i]
+            # smaller box coordinates
+            xs1, ys1, xs2, ys2 = detections['boxes'][small_obj_index] # the same as post_process_class_boxes[key][j]
+            # union of the two boxes, needed to compute the masks intersection efficiently within this union
+            # as the masks are defined within the boxes
+            x1: int = min(xl1, xs1)
+            y1: int = min(yl1, ys1)
+            x2: int = max(xl2, xs2)
+            y2: int = max(yl2, ys2)
+            large_obj_mask: np.ndarray = np.zeros((y2 - y1, x2 - x1), np.uint8)
+            large_obj_mask[(yl1 - y1):(yl2 - y1), (xl1 - x1):(xl2 - x1)] = detections['masks'][large_obj_index]
+            small_obj_mask: np.ndarray = np.zeros((y2 - y1, x2 - x1), np.uint8)
+            small_obj_mask[(ys1 - y1):(ys2 - y1), (xs1 - x1):(xs2 - x1)] = detections['masks'][small_obj_index]
+
+            # check if the intersection of the masks are larger than the threshold, the box check and mask check allows us 
+            # to run this code more efficiently 
+            if np.sum(small_obj_mask * large_obj_mask) > overlap_threshold * np.sum(small_obj_mask):
+                # add column index j to the list of object indexes to be removed
+                if small_obj_index not in obj_idxs_to_remove:
+                    obj_idxs_to_remove.append(small_obj_index)
+   
+    if len(obj_idxs_to_remove) > 0:
+        detections['boxes'] = [box for i, box in enumerate(detections['boxes']) if i not in obj_idxs_to_remove]
+        detections['labels'] = [label for i, label in enumerate(detections['labels']) if i not in obj_idxs_to_remove]
+        detections['scores'] = [score for i, score in enumerate(detections['scores']) if i not in obj_idxs_to_remove]
+        detections['masks'] = [mask for i, mask in enumerate(detections['masks']) if i not in obj_idxs_to_remove] 
+
+    return detections
+
 
 def run_model(
     detector: VisionModel,
@@ -712,6 +713,7 @@ def run_model(
     bit_depth: int = 8, 
     crop: bool = True, 
     post_process_class_names: List[str] | None = None, 
+    overlap_threshold: float = OVER_LAP_THRESHOLD,
     plot_results: bool = False, 
 ) -> Tuple[Dict[str, list], float, Optional[np.ndarray]]:
 
@@ -814,11 +816,11 @@ def run_model(
         out: Dict[str, list] = detector.detect(img=resized_img)
 
     # post-process the results in the resized resolution
-    out = detector.post_process_detections(
+    out = post_process_detections(
         detections=out,  
         post_process_class_names=post_process_class_names,
         classnames_to_class_ids_map=detector.get_reverse_label_map(),
-        overlap_threshold=OVER_LAP_THRESHOLD
+        overlap_threshold=overlap_threshold,
     )
 
     # resize back the detections

@@ -1,23 +1,27 @@
 from AbstractVisionModel import VisionModel
 from model_utils import to_numpy
 
-import os
-import time
-import logging
-from typing import Tuple, List, Final, Optional, Dict, Union
-from collections import OrderedDict
-
 import numpy as np
 import cv2
 from PIL import Image
 import torch
 from transformers import Dinov2Config, Dinov2Model, Mask2FormerConfig, Mask2FormerForUniversalSegmentation, Mask2FormerImageProcessor
 
+import os
+import time
+import logging
+from typing import Tuple, List, Final, Optional, Dict, Union
+from collections import OrderedDict
+
+
+# constants and default values
 TRANSFORM_MEAN: Final[List[float]] = [0.485, 0.456, 0.406] 
 TRANSFORM_STD: Final[List[float]] = [0.229, 0.224, 0.225]
 
-BASE_PATH: Final[str] = '/home/cellareye/Cellanome/dl-mehdi/Mask RCNN/checkpoints'
-MODEL_WEIGHTS_PATH: Final[str] = '/home/cellareye/Cellanome/dl-mehdi/Mask RCNN/checkpoints/20250312_mask2former_sets_1_2_3_6_to_41_0p1_bbox_0p7_1_rs_0p25_blur_2_bs_8_epochs_1cl_lrs.pt'
+MODEL_REPO_PATH: Final[str] = '/home/cellareye/Cellanome/dl-mehdi/Mask RCNN/checkpoints'
+
+# default model parameters
+# in case the weights file does not include them, they can be used
 DEFAULT_MODEL_INPUT_SIZE: Final[Tuple[int, int]] = (1022, 798) 
 
 # A dictionary with keys as the input (original) image size (width, height) tuple and
@@ -82,9 +86,9 @@ def get_mask2former_instance_segmentation_model_with_dinov2_backbone(
         
 
     # store Dinov2 weights locally to reload them again, only do it if already not loaded locally
-    if not os.path.exists(os.path.join(BASE_PATH, dinov2_checkpoint_str + ".pth")):
+    if not os.path.exists(os.path.join(MODEL_REPO_PATH, dinov2_checkpoint_str + ".pth")):
         dinov2_model = Dinov2Model.from_pretrained("facebook/" + dinov2_checkpoint_str, out_indices=output_indices)
-        torch.save(dinov2_model.state_dict(), os.path.join(BASE_PATH, dinov2_checkpoint_str + ".pth"))
+        torch.save(dinov2_model.state_dict(), os.path.join(MODEL_REPO_PATH, dinov2_checkpoint_str + ".pth"))
 
     # create Mask2Former config for semantic segmentation with Dinov2 backbone
     
@@ -105,7 +109,7 @@ def get_mask2former_instance_segmentation_model_with_dinov2_backbone(
 
     # load Dinov2 weights into Mask2Former backbone
     dinov2_backbone = model.model.pixel_level_module.encoder
-    dinov2_backbone.load_state_dict(torch.load(os.path.join(BASE_PATH, dinov2_checkpoint_str + ".pth")))
+    dinov2_backbone.load_state_dict(torch.load(os.path.join(MODEL_REPO_PATH, dinov2_checkpoint_str + ".pth")))
 
     # freeze all the weights in Dinov2 backbone
     # for param in dinov2_backbone.parameters():
