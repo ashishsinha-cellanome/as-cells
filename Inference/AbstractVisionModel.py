@@ -81,7 +81,7 @@ class VisionModel(ABC):
         # loading the PyTorch weights and the label map
         try:
             logging.info(
-                f"Loading Hugging Face Mask2Former model from from {self._weights_path}. Setting to run on {self._device.type}."
+                f"Loading {self._model_name} model from {self._weights_path}. Setting to run on {self._device.type}."
             )
 
             saved_model_param: Union[OrderedDict, dict] = torch.load(
@@ -139,7 +139,7 @@ class VisionModel(ABC):
         except Exception as ex:
             logging.error(
                 f"Failed to load {self._model_name} model. Likely the paths to model .pt weights "
-                f"{self._weights_path} is incorrect: {repr(ex)}."
+                f"{self._weights_path} is incorrect or the model is not in the expected format! This may work though : {repr(ex)}."
             )
 
         if model_input_size is not None:
@@ -168,7 +168,7 @@ class VisionModel(ABC):
             self._label_map: Dict[int, str] = label_map
 
         # load the model
-        if self._label_map is not None and self._model_state_dict is not None:
+        if self._label_map is not None: # no need to check for self._model_state_dict as if None, self.load() below returns self._loaded False
             # load the model, we need the label map to define/load the model, if self._load() succeeds, it sets self._loaded to True 
             self.load()
         
@@ -789,8 +789,8 @@ def run_model(
         logging.info(
             f"{detector.__class__.__name__} class does not implement get_cropping_info(): {repr(ex)}"
         )
-    
-    if input_resize is not None and input_crop_corners is None:
+        
+    if input_resize is not None and input_crop_corners is not None:
         # use the passed values is provided (they will overwrite if the model class also includes them), first warn the user
         if resize_dict is not None and crop_corners_dict is not None:
             logging.warning(
