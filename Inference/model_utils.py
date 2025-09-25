@@ -121,9 +121,10 @@ def show_detections(input_image, predictions, label_map):
     
     boxes = predictions['boxes']
     labels = predictions['labels']
-    masks = predictions['masks']
+    if 'masks' in predictions:
+        masks = predictions['masks']
 
-    for i in range(len(masks)):
+    for i in range(len(boxes)):
         # the bounding box
         (xtl, ytl, xbr, ybr) = boxes[i]
         if labels[i] not in class_ids:
@@ -133,16 +134,18 @@ def show_detections(input_image, predictions, label_map):
         else:
             color = COLORS[labels[i] % len(COLORS)]
             text = label_map[labels[i]]
-        
-        color_mask = color * np.repeat(np.expand_dims(masks[i], axis=2), 3, axis=2)
-        blended = 0.4 * color_mask
-        blended[color_mask == 0] = image[ytl:ybr, xtl:xbr][color_mask == 0]
-        blended[color_mask > 0] += 0.6 * image[ytl:ybr, xtl:xbr][color_mask > 0]
+        if 'masks' in predictions:
+            color_mask = color * np.repeat(np.expand_dims(masks[i], axis=2), 3, axis=2)
+            blended = 0.4 * color_mask
+            blended[color_mask == 0] = image[ytl:ybr, xtl:xbr][color_mask == 0]
+            blended[color_mask > 0] += 0.6 * image[ytl:ybr, xtl:xbr][color_mask > 0]
 
-        # store the blended ROI in the original image
-        image[ytl:ybr, xtl:xbr] = blended.astype(np.uint8)
-        # add the bounding box with yellow color
-        color = (255, 255, 0)
+            # store the blended ROI in the original image
+            image[ytl:ybr, xtl:xbr] = blended.astype(np.uint8)
+        
+            # add the bounding box with yellow color
+            color = (255, 255, 0)
+        
         cv2.rectangle(image, (xtl, ytl), (xbr, ybr), color, 1)
         cv2.putText(
             image, text, (xtl, ytl + 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1

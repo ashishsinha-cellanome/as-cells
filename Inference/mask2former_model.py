@@ -18,11 +18,12 @@ from collections import OrderedDict
 TRANSFORM_MEAN: Final[List[float]] = [0.485, 0.456, 0.406] 
 TRANSFORM_STD: Final[List[float]] = [0.229, 0.224, 0.225]
 
-MODEL_REPO_PATH: Final[str] = '/home/cellareye/Cellanome/dl-mehdi/Mask RCNN/checkpoints'
+MODEL_REPO_PATH: Final[str] = '/home/cellareye/Cellanome/dl-mehdi/Mask RCNN/checkpoints/mask2former_checkpoints'
 
 # default model parameters
 # in case the weights file does not include them, they can be used
 DEFAULT_MODEL_INPUT_SIZE: Final[Tuple[int, int]] = (1022, 798) 
+DEFAULT_DETECTION_CONFIDENCE: Final[float] = 0.5
 
 # A dictionary with keys as the input (original) image size (width, height) tuple and
 # values as the list of coordinates (xtl, ytl, xbr, ybr) of sub-images/crops
@@ -133,13 +134,64 @@ def get_mask2former_processor(model_input_size: Tuple[int, int]) -> Mask2FormerI
                                      image_std=TRANSFORM_STD,
                                      do_normalize=True)
 
+def largest_blob_by_area(mask: np.ndarray):
+    """
+    This function finds the largest blob (by area) in the passed binary mask and keeps the 
+    largest blob by area (if more than 1 was found)
+    Args: 
+        mask (np.ndarray): Binary image (H,W) dtype uint8 with values 0 and 1.
+    returns: 
+        The the binary mask for the largest block, the bounding box for the blob (xtl, ytl, xbr, ybr).
+        
+    """
+    
+    m = (mask > 0).astype(np.uint8) * 255
+
+    # find only outer contours (ignore holes)
+    contours, _ = cv2.findContours(m, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        h, w = mask.shape[:, 2]
+        return mask, (0, 0, w, h)
+
+    largest_contour = max(contours, key=cv2.contourArea)
+    x, y, w, h = cv2.boundingRect(largest_contour)
+
+    # mask of the largest blob
+    largest_mask = np.zeros_like(mask)
+    cv2.drawContours(largest_mask, [largest_contour], contourIdx=-1, color=1, thickness=cv2.FILLED)
+
+    return largest_mask * mask, (x, y, x + w, y + h)
 
 # Mask2Former instance segmentation class
 class Mask2FormerInstanceSegmentation(VisionModel):
+    def __init__(
+        self,
+        weights_path: str,
+        model_name: str = 'Mask2Former', 
+        label_map: Optional[Dict[int, str]] = None, # to be read from the weights file
+        model_input_size: Optional[Tuple[int, int]] = None, # to be read from the weights file
+        confidence: float = DEFAULT_DETECTION_CONFIDENCE,
+        device: torch.device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu"),
+        adjust_masks: bool = True
+    ): 
+        self._adjust_masks = adjust_masks
+        super().__init__(
+            weights_path,
+            model_name, 
+            label_map,
+            model_input_size, 
+            confidence,
+            device, 
+        )
+        
     def load(self) -> None:
-
+        
         if self._model_input_size is None:
             # we need a valid model input size for Mask2Former model
+            logging.error(
+                f"Missing model input size! It was neither included in the weights file nor passed during instantiation! "
+                f"Failed to instantiate {self._model_name} class."
+            )
             return 
         
         # Mask2Former model
@@ -157,12 +209,25 @@ class Mask2FormerInstanceSegmentation(VisionModel):
 
         except Exception as ex:
             logging.error(
-                f"Failed to load Mask2Former model: {repr(ex)}."
+                f"Failed to load {self._model_name} model from the weights file: {repr(ex)}."
             )
             return 
        
         self._hg_preprocessor = get_mask2former_processor(self._model_input_size) 
+        
+        self._metadata = {
+            'predict_masks': True,
+            'resolution': self._model_input_size,
+            'release_date': os.path.basename(self._weights_path).split('_')[0], # the model name starts with the release date
+            'model_type': 'Instance Segmentation',
+            'model_name': self._model_name,
+            'model_extra_info': 'DINOv2 backbone',
+            'names': self._label_map,
+            'magnification': '4x' if '4x' in os.path.basename(self._weights_path) else '10x' # 4x should be specified in the name
+        }
+        
         self._loaded = True
+        
     
     def detect_batch(self,
                      input_images_list: List[Union[Image.Image, np.ndarray]],
@@ -170,7 +235,7 @@ class Mask2FormerInstanceSegmentation(VisionModel):
 
         if not self._loaded:
             logging.error(
-                "Mask2Former model has not been initialized. Please initialize the class before detect()."
+                f"{self._model_name} model has not been initialized. Please initialize the class before detect()."
             )
             
             out: List[Dict[str, list]] = [{"boxes": [], "scores": [], "labels": [], "masks": []}] * len(input_images_list)
@@ -208,9 +273,10 @@ class Mask2FormerInstanceSegmentation(VisionModel):
         
         processed_outputs = self._hg_preprocessor.post_process_instance_segmentation(
             outputs, 
+            threshold=self._confidence, 
             target_sizes=org_img_dims, 
             return_binary_maps=True
-        )
+        )        
    
         if len(processed_outputs) == 0:
             # this should not happen and is not expected, return as if the model has not detected anything (for the whole list of images)
@@ -245,13 +311,21 @@ class Mask2FormerInstanceSegmentation(VisionModel):
                 boxes = []
                 masks = [] # masks after restricting them to the size of the bounding box
                 for i in range(sample_dict['masks'].shape[0]):
-                    pos = np.where(sample_dict['masks'][i])
-                    xtl = pos[1].min()
-                    xbr = pos[1].max()
-                    ytl = pos[0].min()
-                    ybr = pos[0].max()
+                    instance_mask: np.ndarray = sample_dict['masks'][i]
+                    if self._adjust_masks:
+                        # post processing the mask for this instance, for this model, we have seen masks as disjoints blobs, 
+                        # check if there are more than one blob in the reported mask and keep the largest one
+                        largest_mask, (xtl, ytl, xbr, ybr) = largest_blob_by_area(instance_mask)
+                    else:
+                        largest_mask = instance_mask
+                        pos = np.where(largest_mask)
+                        xtl = pos[1].min()
+                        xbr = pos[1].max()
+                        ytl = pos[0].min()
+                        ybr = pos[0].max()
+                    
                     boxes.append([xtl, ytl, xbr, ybr])
-                    masks.append(sample_dict['masks'][i, ytl:ybr, xtl:xbr].astype(float))
+                    masks.append(largest_mask[ytl:ybr, xtl:xbr].astype(float))
             
                 sample_dict['boxes'] =  boxes
                 sample_dict['masks'] =  masks
