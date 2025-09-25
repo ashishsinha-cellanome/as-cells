@@ -96,13 +96,8 @@ class DeformableDetrObjectDetector(VisionModel):
                 id2label=self._label_map,
                 label2id=self._reverse_label_map
             )
-    model = DeformableDetrForObjectDetection(model_config)
-    # this is for freezing the backbone
-    for param in model.model.backbone.parameters():
-        param.requires_grad_(False)
+            self._model = DeformableDetrForObjectDetection(model_config)
 
-    return model
-        
         
         # loading the PyTorch model
         try:
