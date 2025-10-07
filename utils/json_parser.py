@@ -1,5 +1,4 @@
 # load required libraries
-from cv_utils import iou_batch, iou_mask_pair
 import os
 from PIL import Image
 import numpy as np
@@ -10,6 +9,7 @@ import requests
 import random
 from pycocotools import mask as coco_mask_util
 from typing import List, Final, Dict, Union, Tuple
+from .cv_utils import iou_batch, iou_mask_pair
 
 # a mapping between the class names and class IDs
 # this dictionary should have identical string keys as the class names used in annotations
