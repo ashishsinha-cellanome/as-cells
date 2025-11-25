@@ -1,3 +1,5 @@
+from models.AbstractVisionModel import VisionModel
+from utils.model_utils import to_numpy
 
 import numpy as np
 import cv2
@@ -11,14 +13,14 @@ import logging
 from typing import Tuple, List, Final, Optional, Dict, Union
 from collections import OrderedDict
 
-from .AbstractVisionModel import VisionModel
-from .model_utils import to_numpy
+
 # constants and default values
 TRANSFORM_MEAN: Final[List[float]] = [0.485, 0.456, 0.406] 
 TRANSFORM_STD: Final[List[float]] = [0.229, 0.224, 0.225]
 
 # MODEL_REPO_PATH: Final[str] = '/home/cellareye/Cellanome/dl-mehdi/Mask RCNN/checkpoints/mask2former_checkpoints'
-MODEL_REPO_PATH: Final[str] = '/global/home/ashish.sinha/cellanome/models'
+MODEL_REPO_PATH: Final[str] = '/global/home/ashish.sinha/cellanome/models/mask2former_checkpoints/'
+
 # default model parameters
 # in case the weights file does not include them, they can be used
 DEFAULT_MODEL_INPUT_SIZE: Final[Tuple[int, int]] = (1022, 798) 
@@ -330,15 +332,14 @@ class Mask2FormerInstanceSegmentation(VisionModel):
                 sample_dict['masks'] =  masks
 
                 # remap the output class IDs if needed
-                if self._detected_class_ids_remap is not None and len(out["labels"]):
+                if self._detected_class_ids_remap is not None and len(sample_dict["labels"]):
                     sample_dict["labels"] = np.vectorize(
                         lambda x: (
                             self._detected_class_ids_remap[x] 
                             if x in self._detected_class_ids_remap 
                             else x
                         )
-                    )(sample_dict["labels"])
-            
+                    )(sample_dict["labels"]).tolist()
             else:
                 sample_dict = {'boxes': [],
                                'labels': [],

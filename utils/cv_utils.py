@@ -2,7 +2,8 @@ import cv2
 import numpy as np
 from PIL import Image
 from typing import Tuple, List, Final, Optional, Dict, Union
-
+# from .precision_recall_eval import AnnotationFilter
+# from .pairing_utils import pair_gts_dets_bbox, pair_gts_dets_mask
 
 # Utility functions
 # very efficient batch IoU calculation
@@ -297,3 +298,213 @@ def show_detections(input_image: Union[Image.Image, np.array], predictions: Dict
             image, text, (xtl, ytl + 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1
         )
     return image
+
+def show_detections_with_gt(
+    input_image: Union[Image.Image, np.array],
+    detections: Dict[str, Union[list, np.array]],
+    label_map: Dict[int, str],
+    pred: bool = False
+):
+    """
+    Displays detections on an image with a single color.
+
+    Uses GREEN for Ground Truth (pred=False) and RED for Predictions (pred=True).
+
+    Args:
+        input_image: The image to draw on.
+        detections: A dictionary containing 'boxes', 'labels', and optionally 'masks'.
+        label_map: A dictionary mapping class IDs to class names.
+        pred (bool): If True, detections are drawn in red. If False (default), 
+                     they are drawn in green.
+    """
+    # Define colors in BGR format for OpenCV
+    GREEN = (0, 255, 0)
+    RED = (0, 0, 255)
+
+    # Select the color based on the 'pred' flag
+    color = RED if pred else GREEN
+    if isinstance(input_image, np.ndarray):
+        image = input_image.copy()
+    else:
+        # Convert PIL Image to a numpy array
+        image = np.array(input_image)
+
+    # Convert to 3-channels if the image is grayscale
+    if len(image.shape) < 3:
+        image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
+    
+    # Ensure image is in BGR format if it's from PIL (which loads as RGB)
+    if isinstance(input_image, Image.Image):
+        image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+
+    boxes = detections['boxes']
+    labels = detections['labels']
+
+    for i in range(len(labels)):
+        # Get integer coordinates for the bounding box
+        xtl, ytl, xbr, ybr = map(int, boxes[i])
+        
+        # Get the class name for the label text, with a fallback for unknown IDs
+        text = label_map.get(labels[i], f"Unknown ID: {labels[i]}")
+
+        # Handle masks if they exist
+        if 'masks' in detections:
+            mask = detections['masks'][i]
+            # Ensure mask is a boolean array for indexing
+            bool_mask = mask.astype(bool)
+            
+            # Create a solid color overlay
+            color_overlay = np.zeros_like(image[ytl:ybr, xtl:xbr])
+            color_overlay[bool_mask, :] = color
+            
+            # Blend the overlay with the image region
+            roi = image[ytl:ybr, xtl:xbr]
+            blended_roi = cv2.addWeighted(roi, 0.6, color_overlay, 0.4, 0)
+            
+            # Apply the blended result only where the mask is active
+            roi[bool_mask] = blended_roi[bool_mask]
+
+        # Draw the bounding box and the label text
+        line_thickness = 1 if pred==False else 2
+        cv2.rectangle(image, (xtl, ytl), (xbr, ybr), color, line_thickness)
+        cv2.putText(
+            image, text, (xtl, ytl - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, line_thickness
+        )
+        
+    return image
+
+# Helper function to draw a dashed rectangle (no changes needed)
+def _draw_dashed_rectangle(img, pt1, pt2, color, thickness=2, dash_length=10):
+    """Draws a dashed rectangle on an image."""
+    x1, y1 = pt1
+    x2, y2 = pt2
+    # Top and bottom lines
+    for i in range(x1, x2, dash_length * 2):
+        cv2.line(img, (i, y1), (min(i + dash_length, x2), y1), color, thickness)
+        cv2.line(img, (i, y2), (min(i + dash_length, x2), y2), color, thickness)
+    # Left and right lines
+    for i in range(y1, y2, dash_length * 2):
+        cv2.line(img, (x1, i), (x1, min(i + dash_length, y2)), color, thickness)
+        cv2.line(img, (x2, i), (x2, min(i + dash_length, y2)), color, thickness)
+
+def visualize_model_errors_with_official_pairing(
+    image: Union[Image.Image, np.ndarray],
+    ground_truth_original: Dict,
+    predictions: Dict,
+    label_map: Dict[int, str],
+    min_iou: float = 0.5,
+    use_mask: bool = False,
+    annotation_filter = None,
+    show_original_labels: bool = False
+) -> np.ndarray:
+    """
+    visualization function to pair bboxes (masks if available) and plt TP, FP, FN
+
+    Usage:
+    datasample = test_dataset[idx]
+    prediction = model(datasample['image']))
+
+    err_img = visualize_model_errors_with_official_pairing(
+        datasample['image'], # image
+        datasample, # gt sampled from CellMaskDataset
+        prediction, # prediction from the model
+        label_map = model.get_label_map(),
+        min_iou=0.5,
+        annotation_filter=None, # optional AnnotationFilter object to filter ground truth annotations 
+        show_original_labels=False
+    )
+    Image.fromarray(err_img) to view the image
+    """
+    COLORS: List[Tuple[int, int, int]] = [
+        (0, 0, 255), (255, 0, 0), (0, 255, 0),
+        (255, 0, 255), (0, 255, 255), (255, 255, 0), (128, 0, 128)
+    ]
+    vis_image = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR) if isinstance(image, Image.Image) else image.copy()
+    if len(vis_image.shape) < 3:
+        vis_image = cv2.cvtColor(vis_image, cv2.COLOR_GRAY2BGR)
+
+    ground_truth_eval = annotation_filter.apply(ground_truth_original) if annotation_filter else ground_truth_original
+
+    gt_boxes_eval = ground_truth_eval['annotations'][['xtl', 'ytl', 'xbr', 'ybr']].values.astype(int)
+    gt_labels_eval = ground_truth_eval['annotations']['label'].values
+    gt_masks_eval = ground_truth_eval.get('masks')
+    
+    original_indices = ground_truth_eval['annotations'].index
+    original_labels_for_eval_set = ground_truth_original['annotations'].loc[original_indices, 'label'].values
+
+    pred_boxes = np.array(predictions['boxes']).astype(int) if 'boxes' in predictions and len(predictions['boxes']) > 0 else np.zeros((0, 4), dtype=int)
+    pred_labels = np.array(predictions['labels']) if 'labels' in predictions and len(predictions['labels']) > 0 else np.zeros((0,), dtype=int)
+    pred_scores = np.array(predictions['scores']) if 'scores' in predictions and len(predictions['scores']) > 0 else np.zeros((0,), dtype=float)
+    pred_masks = predictions.get('masks')
+
+    class_ids_to_filter = list(label_map.keys())
+    
+    all_paired_gt_indices = set()
+    all_paired_det_indices = set()
+    all_unpaired_gt_indices = set(range(len(gt_labels_eval)))
+    all_unpaired_det_indices = set(range(len(pred_labels)))
+
+    for class_id in class_ids_to_filter:
+        if class_id == label_map.get('bg', -1): continue # Skip bg class
+
+        gt_class_indices = np.where(gt_labels_eval == class_id)[0]
+        det_class_indices = np.where(pred_labels == class_id)[0]
+
+        if len(gt_class_indices) == 0 and len(det_class_indices) == 0:
+            continue
+            
+        gt_boxes_class = gt_boxes_eval[gt_class_indices]
+        det_boxes_class = pred_boxes[det_class_indices]
+
+        if use_mask and gt_masks_eval and pred_masks:
+            gt_masks_class = [gt_masks_eval[i] for i in gt_class_indices]
+            det_masks_class = [pred_masks[i] for i in det_class_indices]
+            paired, unpaired_gts, unpaired_dets = pair_gts_dets_mask(
+                gt_boxes_class, gt_masks_class, det_boxes_class, det_masks_class, min_iou
+            )
+        else:
+            paired, unpaired_gts, unpaired_dets = pair_gts_dets_bbox(
+                gt_boxes_class, det_boxes_class, min_iou
+            )
+
+        for gt_local_idx, det_local_idx in paired:
+            global_gt_idx = gt_class_indices[gt_local_idx]
+            global_det_idx = det_class_indices[det_local_idx]
+            
+            all_paired_gt_indices.add(global_gt_idx)
+            all_paired_det_indices.add(global_det_idx)
+            
+            if global_gt_idx in all_unpaired_gt_indices:
+                all_unpaired_gt_indices.remove(global_gt_idx)
+            if global_det_idx in all_unpaired_det_indices:
+                all_unpaired_det_indices.remove(global_det_idx)
+
+    # Draw True Positives (Green)
+    for det_idx in all_paired_det_indices:
+        box = pred_boxes[det_idx]
+        score = pred_scores[det_idx]
+        label_text = f"TP: {label_map.get(pred_labels[det_idx], 'N/A')} ({score:.2f})"
+        cv2.rectangle(vis_image, (box[0], box[1]), (box[2], box[3]), (0, 255, 0), 2)
+        cv2.putText(vis_image, label_text, (box[0], box[1] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+
+    # Draw False Negatives (Red Dashed)
+    for gt_idx in all_unpaired_gt_indices:
+        box = gt_boxes_eval[gt_idx]
+        display_label_id = original_labels_for_eval_set[gt_idx] if show_original_labels else gt_labels_eval[gt_idx]
+        if display_label_id not in label_map or label_map[display_label_id] == 'bg':
+            continue # Don't draw FNs for 'bg' or excluded classes
+        label_text = f"FN: {label_map.get(display_label_id, 'N/A')}"
+        _draw_dashed_rectangle(vis_image, (box[0], box[1]), (box[2], box[3]), (0, 0, 255), 2)
+        cv2.putText(vis_image, label_text, (box[0], box[1] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+
+    # Draw False Positives (Yellow)
+    for det_idx in all_unpaired_det_indices:
+        box = pred_boxes[det_idx]
+        score = pred_scores[det_idx]
+        if pred_labels[det_idx] not in label_map or label_map[pred_labels[det_idx]] == 'bg':
+            continue # Don't draw FPs for 'bg'
+        label_text = f"FP: {label_map.get(pred_labels[det_idx], 'N/A')} ({score:.2f})"
+        cv2.rectangle(vis_image, (box[0], box[1]), (box[2], box[3]), (0, 255, 255), 2)
+        cv2.putText(vis_image, label_text, (box[0], box[1] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+
+    return vis_image

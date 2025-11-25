@@ -8,20 +8,57 @@ RATIO_OF_IMAGES_TO_USE_FOR_SUSPENSION_CAGED_DATASETS = 0.25   ###### was 0.2
 RATIO_OF_IMAGES_TO_USE_FOR_SUSPENSION_UNCAGED_DATASETS = 0.05 ###### was 0.02
 RATIO_OF_IMAGES_TO_USE_FOR_ADHERED_DATASETS = 1.0
 
-CLASS_NAMES_TO_CLASS_IDS_MAP =  {'nucleus': 6,
-                                 'soma': 5,
-                                 'cytoplasm': 4,  'cell-adhered': 4,
-                                 'cage': 3, 'cages': 3, 
-                                 'bead': 2, 'Bead': 2,
-                                 'cell': 1, 'Cell': 1, 'dead-cell': 1, 'dying/dead cells': 1}
+CLASS_NAMES_TO_CLASS_IDS_MAP =  {
+    # 'nucleus': 5,
+    'soma': 4,
+    'cytoplasm': 3,  'cell-adhered': 3,
+    'cage': 2, 'cages': 2, 
+    'bead': 1, 'Bead': 1,
+    'cell': 0, 'Cell': 0, 'dead-cell': 0, 'dying/dead cells': 0
+    }
 
-CLASS_IDS_TO_CLASS_NAMES_MAP = {6: 'nucleus',
-                                5: 'soma',
-                                4: 'cytoplasm',
-                                3: 'cage', 
-                                2: 'bead', 
-                                1: 'cell'}
-                                
+CLASS_IDS_TO_CLASS_NAMES_MAP = {
+    0: 'cell',
+    1: 'bead',  
+    2: 'cage', 
+    3: 'cell-adhered', 
+    4: 'soma',
+    # 5: 'nucleus'
+}
+MASK_RCNN_CLASS_NAMES_TO_CLASS_IDS_MAP = {
+    'cell': 1, 'Cell': 1, 'dying/dead cells': 1, 'dead-cell': 1,
+    'bead': 2, 'Bead': 2,
+    'cage': 3, 'cages': 3,
+    'cell-adhered': 4, 'cytoplasm': 4,
+    'soma': 5,
+    # 'nucleus': 6
+    }
+MASK_RCNN_CLASS_IDS_TO_CLASS_NAMES_MAP = {
+    1: 'cell',
+    2: 'bead',
+    3: 'cage',
+    4: 'cell-adhered',
+    5: 'soma',
+    # 6: 'nucleus'
+}
+# soma=2 for RF-DETR, and RT-DETR, YOLO
+# CAGE location is known so no need to detect it
+OTHER_CLASS_NAMES_TO_CLASS_IDS_MAP =  {
+    # 'nucleus': 4,
+    'cytoplasm': 3,  'cell-adhered': 3, 
+    'soma': 2,
+    'bead': 1, 'Bead': 1,
+    'cell': 0, 'Cell': 0, 'dead-cell': 0, 'dying/dead cells': 0
+    }
+
+OTHER_CLASS_IDS_TO_CLASS_NAMES_MAP = {
+    0: 'cell',
+    1: 'bead',  
+    2: 'soma',
+    3: 'cell-adhered', 
+    # 4: 'nucleus'
+}
+
 NUM_CLASSES = len(set(CLASS_NAMES_TO_CLASS_IDS_MAP.values()))
 
 CLASS_NAMES_TO_USE_FOR_CROP_OVERLAPS = ['cell', 'cell-adhered', 'soma',] # 'cage']

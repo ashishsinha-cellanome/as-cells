@@ -1,5 +1,4 @@
 from __future__ import annotations
-from model_utils import iou_batch, overlap_batch, box_area, show_detections
 
 import numpy as np
 import cv2
@@ -12,6 +11,7 @@ import torch
 from abc import ABC, abstractmethod
 from collections import OrderedDict
 from typing import Any, Dict, List, Tuple, Optional, Union, Final
+from .model_utils import iou_batch, overlap_batch, box_area, show_detections
 
 
 
@@ -77,9 +77,10 @@ class VisionModel(ABC):
         self._model_state_dict: OrderedDict = None
         # the model's label map if available in the weight file
         loaded_label_map: Dict[int, str] = None   
-        
+        # import pdb; pdb.set_trace()
         # loading the PyTorch weights and the label map
         try:
+            # print ('vision model here')
             logging.info(
                 f"Loading {self._model_name} model from {self._weights_path}. Setting to run on {self._device.type}."
             )
@@ -87,6 +88,7 @@ class VisionModel(ABC):
             saved_model_param: Union[OrderedDict, dict] = torch.load(
                 self._weights_path, map_location=self._device
             )
+            # print ('torch load works', type(saved_model_param))
             if (isinstance(saved_model_param, dict) and "model_state_dict" in saved_model_param):
                 # the weights file contains the model state dictionary (the weights) and the label map (both are
                 # mandatory) and potentially other model related configs

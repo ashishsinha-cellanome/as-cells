@@ -2,7 +2,7 @@ from scipy.optimize import linear_sum_assignment  # for Hungarian algorithm
 import numpy as np
 import cv2
 from typing import Dict, List, Tuple, Optional, Final, Union
-from utils.cv_utils import iou_batch, iou_mask_pair
+from .cv_utils import iou_batch, iou_mask_pair
 
 
 def pair_gts_dets_bbox(gt_boxes: np.ndarray, det_boxes: np.ndarray, min_iou: float):

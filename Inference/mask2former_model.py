@@ -331,15 +331,14 @@ class Mask2FormerInstanceSegmentation(VisionModel):
                 sample_dict['masks'] =  masks
 
                 # remap the output class IDs if needed
-                if self._detected_class_ids_remap is not None and len(out["labels"]):
+                if self._detected_class_ids_remap is not None and len(sample_dict["labels"]):
                     sample_dict["labels"] = np.vectorize(
                         lambda x: (
                             self._detected_class_ids_remap[x] 
                             if x in self._detected_class_ids_remap 
                             else x
                         )
-                    )(sample_dict["labels"])
-            
+                    )(sample_dict["labels"]).tolist()
             else:
                 sample_dict = {'boxes': [],
                                'labels': [],

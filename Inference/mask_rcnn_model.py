@@ -186,6 +186,7 @@ class MaskRCNNInstanceSegmentation(VisionModel):
         # loading the PyTorch model
         try:
             self._model.load_state_dict(self._model_state_dict)
+            # print ('============ Failed to load the model')
             self._model.to(self._device)
             self._model.eval()
 

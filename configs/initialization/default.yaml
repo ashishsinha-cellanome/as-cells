@@ -1,0 +1,7 @@
+# configs/initialization/default.yaml
+# Default initialization settings
+
+# initialization:
+  create_initial_checkpoint: true
+  load_from_checkpoint: null # Set to a .ckpt path to resume
+  auto_resume: true

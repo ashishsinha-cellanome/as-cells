@@ -1,5 +1,5 @@
-from .AbstractVisionModel import VisionModel
-from .model_utils import to_numpy
+from models.AbstractVisionModel import VisionModel
+from utils.model_utils import to_numpy
 
 import numpy as np
 import cv2
@@ -208,5 +208,16 @@ class DeformableDetrObjectDetector(VisionModel):
             # move to CPU and convert to numpy arrays before returning
             results = [{k: list(to_numpy(v)) for k, v in result.items()} for result in processed_outputs]
 
+        for result in results:
+            # map the class IDs
+            if self._detected_class_ids_remap is not None and len(result["labels"]):
+                result["labels"] = np.vectorize(
+                    lambda x: (
+                        self._detected_class_ids_remap[x]
+                        if x in self._detected_class_ids_remap
+                        else x
+                    )
+                )(result["labels"]).tolist()
+                
         return results
    

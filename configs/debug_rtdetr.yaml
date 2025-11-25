@@ -1,0 +1,128 @@
+# RT-DETR with DINOv2 Backbone Training Configuration
+
+# Dataset Configuration
+dataset:
+  path: "/global/home/ashish.sinha/cellanome/TRAINING_DATA"
+  model_input_size: 672
+  min_random_scale: 0.7
+  max_random_scale: 1.0
+  p_noise: 0.25
+  org_images_in_model_input_size: true
+
+# Model Configuration
+model:
+  # Label mapping
+  label_map:
+    0: 'cell'
+    1: 'bead'
+    2: 'cell-adhered'
+    3: 'soma'
+  
+  # DINOv2 backbone configuration
+  dinov2_backbone: "facebook/dinov2-base"  # or "facebook/dinov2-large"
+  # TODO:  (try: [2,7,12] later)
+  output_indices_for_fpn: [4, 8, 12]  # Layer indices to use for FPN
+  intermediate_channel_sizes: [128, 256, 512]  # FPN output channels
+  
+  # RT-DETR pretrained checkpoint
+  rtdetr_pretrained: "PekingU/rtdetr_v2_r18vd"
+  
+  # Detection thresholds
+  detection_threshold: 0.05  # For validation
+  max_detections: 100
+
+  # model parameters
+  auxiliary_loss: True # turn OFF the auxillary outputs
+  use_focal_loss: True
+  matcher_alpha: 0.25
+  matcher_gamma: 2.0
+  matcher_class_cost: 2.0
+  matcher_bbox_cost: 5.0
+  matcher_giou_cost: 2.0
+  use_focal_loss: True
+  auxiliary_loss: True
+  focal_loss_alpha: 0.75
+  focal_loss_gamma: 2.0
+  weight_loss_vfl: 0.5
+  weight_loss_bbox: 5.0
+  weight_loss_giou: 2.0
+  eos_coefficient: 0.0001
+  decoder_n_levels: 3
+  decoder_offset_scale: 0.5
+
+  # decoder_n_points: 8
+  # learn_initial_query: true
+  # with_box_refine: False
+  # focal_loss_alpha: 
+  # matcher_alpha: 
+  decoder_method: "default" # discrete
+  custom_config: 'configs/custom_backbone.json'
+
+
+# Training Configuration
+training:
+  batch_size: 64
+  num_epochs: 50
+  learning_rate: 5.0e-5 # old was 5e-5, now scaled by 16 for ddp
+  weight_decay: 1e-4 # old was 1e-4, now scaled by 16 for ddp 
+  max_grad_norm: 0.1
+  warmup_steps: 300
+  lr_scheduler_type: "reduce_lr_on_plateau"  # Options: reduce_lr_on_plateau, cosine, warmup
+  
+  # DataLoader settings
+  num_workers: 4
+  pin_memory: true
+  profile_dir: 'profiler_logs'
+  profiler: 'simple'
+
+# Checkpoint Configuration
+checkpointing:
+  save_dir: "checkpoints/debug"
+  save_top_k: 1
+  monitor: "val_map"
+  mode: "max"
+  save_last: true
+  every_n_epochs: 1
+  
+  # Initial checkpoint paths (for creating or loading)
+  dinov2_backbone_checkpoint: "checkpoints/debug/dinov2_backbone_with_fpn"
+  rtdetr_initial_checkpoint: "checkpoints/debug/custom_rt_detr_with_dinov2_backbone"
+
+  # intermediate predictions
+  val_image_dir: ""
+  visualization_dir: "predictions"
+  visualize_every_n_epochs: 1
+  visualize_samples: 10
+
+# WandB Configuration
+wandb:
+  enabled: true
+  project: "rt-detr-cell-detection"
+  name: debug  # Auto-generate if null
+  tags: ["rt-detr", "dinov2", "cell-detection", "loss_valid", 'aux_False']
+  notes: "Training RT-DETR with DINOv2 backbone for cell instance detection"
+
+# PyTorch Lightning Trainer Configuration
+trainer:
+  accelerator: "auto"  # auto, gpu, cpu
+  devices: -1  # Number of GPUs/devices # set to -1 to use all available devices
+  precision: "16-mixed"  # 32, 16-mixed, bf16-mixed
+  strategy: "auto"  # auto, ddp, deepspeed
+  max_epochs: 100
+  log_every_n_steps: 100
+  val_check_interval: 1.  # Check validation every epoch
+  gradient_clip_val: 5.0
+  gradient_clip_algo: 'norm' # choices: norm, value
+  accumulate_grad_batches: 1
+  deterministic: false
+  benchmark: true
+  limit_train_batches: 10
+  limit_val_batches: 10
+  limit_test_batches: 10
+  fast_dev_run: 10
+  num_overfit_samples : 10
+
+# Initialization
+initialization:
+  create_initial_checkpoint: true  # Set to true to create initial checkpoint
+  load_from_checkpoint: null  # Path to resume from checkpoint

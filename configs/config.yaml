@@ -1,0 +1,27 @@
+# configs/config.yaml
+# Main config. This file selects the default for each config group.
+
+defaults:
+  - data: default
+  - model: rtdetr_dinov2
+  - optimizer: adamw_scaled
+  - trainer: default
+  - checkpointing: default
+  - logging: default
+  - initialization: default
+  - _self_  # Allows this file to add its own keys
+
+# --- Top-Level Global Settings ---
+seed: 42
+run_name: "rtdetr_dinov2_${now:%Y-%m-%d_%H-%M-%S}"
+debug: false
+test_only: false
+
+# file/folder names to use 
+val_name: 'test'
+test_name: 'test'
+train_name: 'train'
+
+training:
+  profiler:
+    type: 'simple'

@@ -32,35 +32,40 @@ def get_transform(
         # we call these before PILToTensor as these classes 
         # operates on numpy images
         trsfms = []
-        if not org_images_in_model_input_size:
-            trsfms = [A.Resize(
-                height=model_input_height, width=model_input_width, 
-                interpolation=cv2.INTER_CUBIC, mask_interpolation=cv2.INTER_NEAREST, area_for_downscale = "image", 
-                p=1.0
-            ), ] # needed if the cropped images were not created for the model input size
+        # TODO: uncomment this if something happens
+        # if not org_images_in_model_input_size:
+        #     trsfms = [A.Resize(
+        #         height=model_input_height, width=model_input_width, 
+        #         interpolation=cv2.INTER_CUBIC, mask_interpolation=cv2.INTER_NEAREST, area_for_downscale = "image", 
+        #         p=1.0
+        #     ), ] # needed if the cropped images were not created for the model input size
         trsfms.extend([
             A.RandomScale(
                 scale_limit=(min_random_scale - 1.0, max_random_scale - 1.0), 
-                interpolation=cv2.INTER_CUBIC, mask_interpolation=cv2.INTER_NEAREST, area_for_downscale = "image", 
+                # interpolation=cv2.INTER_CUBIC, mask_interpolation=cv2.INTER_NEAREST, area_for_downscale = "image", 
                 p=1.0
             ),
-            A.RandomCrop(height = model_input_height, width=model_input_width, pad_if_needed=True, pad_position='random', p=1.0),
+            A.PadIfNeeded(min_height = model_input_height, min_width = model_input_width, position = 'random'),
+            A.RandomCrop(height = model_input_height, width=model_input_width, pad_if_needed=False, p=1.0),
             A.RandomRotate90(),
-            # A.Perspective(p=P_NOISE),
+            A.Perspective(p=p_noise),
             A.RandomBrightnessContrast(p=p_noise),
-            A.CoarseDropout(
-                num_holes_range=(1, 0.02 * model_input_width * model_input_height),
-                hole_height_range=(1, 1),
-                hole_width_range=(1, 1), 
-                p = p_noise
-            ),
-            A.GaussianBlur(
-                sigma_limit=(0, 2.0),
-                p = p_noise,
-            ),
+            # breakpoint(),
+            # TODO: changed the ratio of coarse dropout from 0.02 -> 0.0002
+            # A.CoarseDropout(
+            #     num_holes_range=(1, int(0.0002 * model_input_width * model_input_height)),
+            #     hole_height_range=(1, 1),
+            #     hole_width_range=(1, 1), 
+            #     p = p_noise
+            # ),
+            # A.GaussianBlur(
+            #     sigma_limit=(0, 2.0),
+            #     p = p_noise,
+            # ),
+            A.HueSaturationValue(p=p_noise),
             A.AdditiveNoise(
-                noise_type='gaussian', 
-                noise_params={'mean_range': (0, 0), 'std_range': (0, 0.04)}, 
+                # noise_type='gaussian', 
+                # noise_params={'mean_range': (0, 0), 'std_range': (0, 0.04)}, 
                 p=p_noise, 
                 spatial_mode='per_pixel'
             )

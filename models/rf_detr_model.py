@@ -1,5 +1,5 @@
-from .AbstractVisionModel import VisionModel
-from .model_utils import to_numpy
+from models.AbstractVisionModel import VisionModel
+from utils.model_utils import to_numpy
 
 import numpy as np
 import cv2
@@ -244,16 +244,19 @@ class RfDetrObjectDetector(VisionModel):
                 img_array = cv2.cvtColor(img_array, cv2.COLOR_GRAY2RGB)
                 
             org_img_dims.append(img_shape[:2])
-
+           
             # check if the aspect ratio of the input image is almost the same as the aspect ratio of
             # the model input size
             # if not, then the input image will be resized without keeping its aspect ratio when it
             # is passed to the model, and this may lead to inaccurate detection
-            aspect_ratio_diff: float = float(img_shape[1]) / float(img_shape[0]) - 1.0
+            aspect_ratio_diff: float = float(img_shape[1] * self._model_input_size[1]) / float(
+                    img_shape[0] * self._model_input_size[0]
+            ) - 1.0
            
             if np.abs(aspect_ratio_diff) > INPUT_IMAGE_ASPECT_RATIO_DIFF_DEV_THRESH:
                 logging.warning(
-                    f"The input image has a different aspect ratio: {aspect_ratio_diff + 1} than the model: 1! The results may not be accurate"
+                    f"The input image has a different aspect ratio: {img_shape[1] / float(img_shape[0])} than the model: "
+                    f"{self._model_input_size[0] / float(self._model_input_size[1])}! The results may not be accurate"
                 )
 
             # resize the input image to match the model input size
@@ -284,9 +287,23 @@ class RfDetrObjectDetector(VisionModel):
             
             results.append(out)
 
+        results = self.postprocess(results)
         # clear the CUDA cache
         torch.cuda.empty_cache()
         
         return results
-    def postprocess(self):
-        pass
+
+    
+    def postprocess(self, results):
+        for result in results:
+            # map the class IDs
+            if self._detected_class_ids_remap is not None and len(result["labels"]):
+                result["labels"] = np.vectorize(
+                    lambda x: (
+                        self._detected_class_ids_remap[x]
+                        if x in self._detected_class_ids_remap
+                        else x
+                    )
+                )(result["labels"]).tolist()
+        
+        return results

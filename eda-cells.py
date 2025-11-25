@@ -354,7 +354,7 @@ if __name__ == '__main__':
 
         sample_idx = 0
         sample = train_dataset[sample_idx]
-        import ipdb; ipdb.set_trace()
+        # import ipdb; ipdb.set_trace()
         
         
         df_name = OUTPUT_DIR / (dataset_path.name + '_mask-size-distro.csv')

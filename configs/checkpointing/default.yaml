@@ -1,0 +1,21 @@
+# configs/checkpointing/default.yaml
+# Default checkpointing and visualization settings
+
+# checkpointing:
+  save_dir: "checkpoints/" # Base dir, run_name will be appended
+  save_top_k: 1
+  monitor: "val_map"
+  mode: "max"
+  save_last: true
+  every_n_epochs: 1
+  
+  # Paths for initial model creation
+  # We use ${hydra:runtime.cwd} to make paths absolute
+  dinov2_backbone_checkpoint: "${hydra:runtime.cwd}/checkpoints/dinov2_backbone_with_fpn"
+  rtdetr_initial_checkpoint: "${hydra:runtime.cwd}/checkpoints/custom_rt_detr_with_dinov2_backbone"
+
+  # Visualization
+  val_image_dir: "${hydra:runtime.cwd}"
+  visualization_dir: "predictions"
+  visualize_every_n_epochs: 5
+  visualize_samples: 10

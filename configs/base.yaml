@@ -1,0 +1,47 @@
+# configs/base.yaml
+# Holds all non-swappable base configurations.
+
+# --- PyTorch Lightning Trainer ---
+trainer:
+  accelerator: "auto"
+  devices: -1
+  precision: "16-mixed"
+  strategy: "auto"
+  max_epochs: 50
+  log_every_n_steps: 100
+  val_check_interval: 1.0
+  gradient_clip_algo: 'value'
+  accumulate_grad_batches: 1
+  deterministic: false
+  benchmark: true
+  num_overfit_samples : 0 # Overridden by debug=true
+
+# --- Checkpointing & Visualization ---
+checkpointing:
+  save_dir: "checkpoints/" # Base dir, run_name will be appended
+  save_top_k: 1
+  monitor: "val_map"
+  mode: "max"
+  save_last: true
+  every_n_epochs: 1
+  
+  dinov2_backbone_checkpoint: "checkpoints/dinov2_backbone_with_fpn"
+  rtdetr_initial_checkpoint: "checkpoints/custom_rt_detr_with_dinov2_backbone"
+
+  val_image_dir: "/global/home/ashish.sinha/cellanome/TRAINING_DATA/images/valid"
+  visualization_dir: "predictions"
+  visualize_every_n_epochs: 1
+  visualize_samples: 10
+
+# --- Logging (W&B) ---
+wandb:
+  enabled: true
+  project: "rt-detr-cell-detection"
+  # 'name' is set by the top-level 'run_name'
+  tags: ["rt-detr", "dinov2", "cell-detection"]
+  notes: "Training RT-DETR with DINOv2 backbone"
+
+# --- Initialization ---
+initialization:
+  create_initial_checkpoint: true
+  load_from_checkpoint: null

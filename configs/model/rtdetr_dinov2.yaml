@@ -1,0 +1,66 @@
+# configs/model/rtdetr_dinov2.yaml
+
+# model:
+  # --- RT-DETR Config ---
+rtdetr:
+  pretrained_name_or_path: "PekingU/rtdetr_v2_r18vd"
+  
+  freeze_backbone_batch_norms: true
+  normalize_before: false
+
+  # --- SWEEP PARAMETERS ---
+  config_overrides: 
+  auxiliary_loss: true
+  use_focal_loss: true
+
+  # hungarian matching
+  matcher_alpha: 0.25
+  matcher_gamma: 2.0
+
+  # label's loss
+  focal_loss_alpha: 0.75
+  focal_loss_gamma: 2.0
+  
+  # Matcher costs
+  matcher_class_cost: 2.0
+  matcher_bbox_cost: 5.0
+  matcher_giou_cost: 2.0
+  
+  # Loss weights
+  weight_loss_vfl: 1.0
+  weight_loss_bbox: 5.0
+  weight_loss_giou: 2.0
+  eos_coefficient: 0.0001
+  
+  # Decoder params
+  decoder_n_levels: 3
+  decoder_n_points: 4
+  decoder_method: 'default' # choices: default/discrete
+  num_feature_levels: ${model.rtdetr.decoder_n_levels}
+
+  # denoising params
+  num_denoising: 0
+  box_noise_scale: 1.0
+  label_noise_ratio: 0.5
+
+  learn_initial_query: false
+  with_box_refine: true
+  
+
+
+
+# --- DINOv2 Config ---
+dinov2:
+  pretrained_name_or_path: "facebook/dinov2-base"
+  output_indices_for_fpn: [4, 8, 12]
+
+# --- General ---
+label_map:
+  0: 'cell'
+  1: 'bead'
+  2: 'cell-adhered'
+  3: 'soma'
+
+detection_threshold: 0.05
+draw_threshold: 0.4
+max_detections: 100
