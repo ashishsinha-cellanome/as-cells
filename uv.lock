@@ -650,6 +650,7 @@ dependencies = [
     { name = "tensorboard" },
     { name = "tensorboard-plugin-profile" },
     { name = "torch" },
+    { name = "torchshow" },
     { name = "torchvision" },
     { name = "tqdm" },
     { name = "transformers" },
@@ -680,6 +681,7 @@ requires-dist = [
     { name = "tensorboard", specifier = ">=2.20.0" },
     { name = "tensorboard-plugin-profile", specifier = ">=2.21.1" },
     { name = "torch", specifier = ">=2.8.0" },
+    { name = "torchshow", specifier = ">=0.5.2" },
     { name = "torchvision", specifier = ">=0.23.0" },
     { name = "tqdm", specifier = ">=4.67.1" },
     { name = "transformers", specifier = ">=4.57.0" },
@@ -3847,6 +3849,19 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/85/2e/48a887a59ecc4a10ce9e8b35b3e3c5cef29d902c4eac143378526e7485cb/torchmetrics-1.8.2.tar.gz", hash = "sha256:cf64a901036bf107f17a524009eea7781c9c5315d130713aeca5747a686fe7a5", size = 580679, upload-time = "2025-09-03T14:00:54.077Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/02/21/aa0f434434c48490f91b65962b1ce863fdcce63febc166ca9fe9d706c2b6/torchmetrics-1.8.2-py3-none-any.whl", hash = "sha256:08382fd96b923e39e904c4d570f3d49e2cc71ccabd2a94e0f895d1f0dac86242", size = 983161, upload-time = "2025-09-03T14:00:51.921Z" },
+]
+
+[[package]]
+name = "torchshow"
+version = "0.5.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "matplotlib" },
+    { name = "numpy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/c9/43/91488b3addef178f3c9c89fae53a131139eac6ead3884df6cca9fcb90d6a/torchshow-0.5.2.tar.gz", hash = "sha256:130beb4883916686f4f51d577716a0fe8579ead203271f7a7f78c61e9af303cc", size = 21633, upload-time = "2025-03-20T06:05:53.204Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b0/33/b6f2d7d5b2baa18dfc8b7b4323547ce959e8c7ef3d611361db856aac277f/torchshow-0.5.2-py3-none-any.whl", hash = "sha256:8ebc3d5ad71c8f61164f7dbb03da3dcba680fb6edb1d24f57dd5835131b1ffd2", size = 17342, upload-time = "2025-03-20T06:05:51.74Z" },
 ]
 
 [[package]]

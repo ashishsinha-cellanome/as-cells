@@ -51,7 +51,13 @@ def create_initial_checkpoint(config: DictConfig) -> str:
         model_config.dinov2.output_indices_for_fpn, 
         resolve=True
     )
-    indices_suffix = f"_indices_{'_'.join(map(str, target_indices))}"
+    # breakpoint()    
+    first_layer_dims = OmegaConf.to_container(
+        model_config.dinov2.first_layer_dims, 
+        resolve=True
+    )
+    # indices_suffix = f"_indices_{'_'.join(map(str, target_indices))}"
+    indices_suffix = f"_{model_config.dinov2.fpn_type}_indices_{'_'.join(map(str, target_indices))}"
     
     # 3. Construct Versioned Paths
     # Base: .../dinov2_backbone_with_fpn
@@ -71,6 +77,8 @@ def create_initial_checkpoint(config: DictConfig) -> str:
         dinov2_backbone = Dinov2BackBoneWithFPN.from_pretrained(
             model_config.dinov2.pretrained_name_or_path,
             output_indices_for_fpn=target_indices,
+            first_layer_dims=first_layer_dims,
+            fpn_type=model_config.dinov2.fpn_type,
         )
         dinov2_backbone.save_pretrained(versioned_backbone_path)
         print(f"✓ DINOv2 backbone saved.")
@@ -282,7 +290,6 @@ def setup_logger(config: DictConfig):
     print(f"✓ WandB logger configured - Project: {wandb_config.project}")
     return logger
 
-# --- THIS IS THE NEW MAIN FUNCTION ---
 @hydra.main(config_path="configs", config_name="config.yaml", version_base=None)
 def main(config: DictConfig):
     # breakpoint()

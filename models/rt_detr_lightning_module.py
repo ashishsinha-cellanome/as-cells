@@ -90,7 +90,9 @@ class RTDETRLightningModule(pl.LightningModule):
         # debug setting
         self.debug_train_image_ids = set() 
         self.config = config
-        # self.
+        # breakpoint()
+        self.warmup_steps = self.config.optimizer.scheduler.warmup_steps
+        self.base_lr = self.config.optimizer.optimizer.lr
         # breakpoint()
         self.validation_step_outputs = []
         self.test_step_outputs = []
@@ -428,6 +430,28 @@ class RTDETRLightningModule(pl.LightningModule):
             }
         
         return {'optimizer': optimizer, 'lr_scheduler': scheduler}
+
+    def optimizer_step(self, epoch, batch_idx, optimizer, optimizer_closure):
+        # 1. Execute the optimizer step (gradient update)
+        optimizer.step(closure=optimizer_closure)
+
+        # 2. Warmup Logic
+        # We use 'global_step' which tracks total batches across all epochs
+        if self.trainer.global_step < self.config.optimizer.scheduler.warmup_steps:
+            
+            # Calculate linear scale (0.0 to 1.0)
+            # We add +1 so we don't start at exactly 0.0, which can cause issues for some optimizers
+            lr_scale = min(1.0, float(self.trainer.global_step + 1) / self.config.optimizer.scheduler.warmup_steps)
+            
+            # Apply to ALL param groups (handles your Backbone vs Head split automatically)
+            for pg in optimizer.param_groups:
+                # We save the 'initial_lr' in the param group when the optimizer is created.
+                # If it's not there (first step), we use the current 'lr' as the initial.
+                if 'initial_lr' not in pg:
+                    pg['initial_lr'] = pg['lr']
+                
+                # Update the current LR based on the initial base
+                pg['lr'] = pg['initial_lr'] * lr_scale
 
     def draw_boxes(self, image, boxes, labels, scores, id2label):
         """Draws bounding boxes on a PIL image."""

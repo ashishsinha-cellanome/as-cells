@@ -9,7 +9,7 @@ scheduler:
   type: "reduce_lr_on_plateau"
   warmup_steps: 300
   factor: 0.5
-  patience: 5
+  patience: 2
 
 training:
   profiler:

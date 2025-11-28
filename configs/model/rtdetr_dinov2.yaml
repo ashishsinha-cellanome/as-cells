@@ -45,14 +45,17 @@ rtdetr:
 
   learn_initial_query: false
   with_box_refine: true
+
   
-
-
 
 # --- DINOv2 Config ---
 dinov2:
   pretrained_name_or_path: "facebook/dinov2-base"
   output_indices_for_fpn: [4, 8, 12]
+  fpn_type: 'fused' # choices fused/tiny/none
+  fusion_method: 'conv' # choices conv/xattn
+  first_layer_dims: [80,80]
+  intermediate_channel_sizes: [128, 256, 512]
 
 # --- General ---
 label_map:

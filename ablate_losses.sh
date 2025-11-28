@@ -1,8 +1,10 @@
 uv run train_rt_detr_v2.py --multirun \
-    model.rtdetr.num_denoising=0\
-    optimizer.scheduler.patience=2\
-    model.rtdetr.decoder_n_points=[1,2,4]
-    model.dinov2.output_indices_for_fpn=[4,8,12],[3,7,11],[8,10,12]
+    model.dinov2.output_indices_for_fpn=[1,3,5],[4,8,12],[3,7,11],[8,10,12]\
+    model.dinov2.fpn_type='tiny','fused'\
+    data.batch_size=32\
+    
+
+    # model.rtdetr.decoder_n_points=[1,2,4]\
 
     # model.rtdetr.label_noise_ratio=0.5,0.25\
     # model.rtdetr.box_noise_scale=0.5,1\
