@@ -24,9 +24,9 @@ class RescaleFeatures(nn.Module):
         )
 
 class TinyFPN(nn.Module):
-    def __init__(self, input_dim, out_dims, first_layer_dims):
+    def __init__(self, input_dim, out_dims, first_layer_dims, scale_factor=1):
         super().__init__()
-        
+        self.scale_factor = scale_factor
         self.lateral_convs = nn.ModuleList([
             nn.Sequential(
                 RescaleFeatures(first_layer_dims),
@@ -50,7 +50,7 @@ class TinyFPN(nn.Module):
         outs = []
         for x, conv, resize in zip(features, self.lateral_convs, self.feature_pyramid):
             outs.append(resize(conv(x)))
-        upsample_2x =  lambda x: nn.functional.interpolate(x, scale_factor=2.0, mode='bilinear', align_corners=False)
+        upsample_2x =  lambda x: nn.functional.interpolate(x, scale_factor=self.scale_factor, mode='bilinear', align_corners=False)
         # return outs  # list of [P3, P4, P5] features
         # upsample 2x each feature map to have same spatial dims
         return [upsample_2x(feat) for feat in outs]

@@ -1,7 +1,8 @@
 uv run train_rt_detr_v2.py --multirun \
+    model.dinov2.scale_factor=2\
     model.dinov2.output_indices_for_fpn=[1,3,5],[4,8,12],[3,7,11],[8,10,12]\
     model.dinov2.fpn_type='tiny','fused'\
-    data.batch_size=32\
+    data.batch_size=32
     
 
     # model.rtdetr.decoder_n_points=[1,2,4]\

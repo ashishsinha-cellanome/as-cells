@@ -55,6 +55,7 @@ dinov2:
   fpn_type: 'fused' # choices fused/tiny/none
   fusion_method: 'conv' # choices conv/xattn
   first_layer_dims: [80,80]
+  scale_factor: 1
   intermediate_channel_sizes: [128, 256, 512]
 
 # --- General ---

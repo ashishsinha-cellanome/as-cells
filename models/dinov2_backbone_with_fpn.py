@@ -14,7 +14,7 @@ import torchshow as ts
 def plot_embeddings(features, title="Feature Maps"):
     # features: list of fqeature maps from DINOv2
     # only plot a max of 8 feature maps
-    feat = features[:, :-1, :]  # remove class token
+    feat = features[:, 1:, :]  # remove class token
     B, N, C = feat.shape
     grid_size = min(int(C ** 0.5), 4)
     H = W = int((N) ** 0.5)
@@ -31,9 +31,9 @@ def plot_embeddings(features, title="Feature Maps"):
     ts.save(feat_img, title=f"{title}.png", cmap='magma')
 
 class FusedFPN(nn.Module):
-    def __init__(self, input_dim, out_dims):
+    def __init__(self, input_dim, out_dims, scale_factor=1):
         super().__init__()
-
+        self.scale_factor = scale_factor
         # 1x1 lateral convolutions (projections to change the number of channels)
         self.lateral_conv_2 = nn.Conv2d(input_dim, out_dims[0], kernel_size=1)
         self.lateral_conv_3 = nn.Conv2d(input_dim, out_dims[1], kernel_size=1)
@@ -90,9 +90,10 @@ class FusedFPN(nn.Module):
         p_2 = self.fusion_conv_2(torch.cat([l_2_up, l_3_up], dim=1)) 
         
         p_2_up = nn.functional.interpolate(p_2, scale_factor=2.0, mode='bilinear', align_corners=False)
-        
-        # return [p_2, p_3, p_4]
-        return [p_2_up, p_3_up, p_4_up]
+        if self.scale_factor == 1:
+            return [p_2, p_3, p_4]
+        elif self.scale_factor == 2:
+            return [p_2_up, p_3_up, p_4_up]
 
 class Dinov2BackBoneWithFPNConfig(Dinov2Config):
     model_type = "dinov2_backbone_with_fpn"
@@ -103,6 +104,7 @@ class Dinov2BackBoneWithFPNConfig(Dinov2Config):
         output_indices_for_fpn: List[int]= [8, 10, 12], 
         intermediate_channel_sizes: List[int] = [128, 256, 512], # to be consistent with the feature map dims of RT-DETRv2 default backbone 
         fpn_type: str = 'fused', # choices fused/tiny/none
+        scale_factor: int =1,
         **kwargs
     ):
         super().__init__(**kwargs)
@@ -112,6 +114,7 @@ class Dinov2BackBoneWithFPNConfig(Dinov2Config):
         self.intermediate_channel_sizes: List[int] = intermediate_channel_sizes
         self.first_layer_dims: List[int, int] = first_layer_dims
         self.fpn_type: str = fpn_type
+        self.scale_factor: int = scale_factor
 
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path, **kwargs):
@@ -169,6 +172,7 @@ class Dinov2BackBoneWithFPN(PreTrainedModel):
         self.output_indices_for_fpn = config.output_indices_for_fpn
         self.fpn_type = config.fpn_type
         self.first_layer_dims = config.first_layer_dims
+        self.scale_factor = config.scale_factor
         if config.dinov2_pretrained_backbone_name_or_path:
             # load pre-trained DINOv2 weights if a given path is specified in the config
             self.backbone = Dinov2Model.from_pretrained(config.dinov2_pretrained_backbone_name_or_path)
@@ -192,12 +196,14 @@ class Dinov2BackBoneWithFPN(PreTrainedModel):
             self.fpn = TinyFPN(
                 input_dim=config.hidden_size, 
                 out_dims=config.intermediate_channel_sizes, 
-                first_layer_dims=config.first_layer_dims
+                first_layer_dims=config.first_layer_dims,
+                scale_factor=config.scale_factor,
             )
         elif config.fpn_type == 'fused':
             self.fpn = FusedFPN(
                 input_dim=config.hidden_size, 
                 out_dims=config.intermediate_channel_sizes, 
+                scale_factor=config.scale_factor,
             )
         else:
             # self.fpn = FusedFPN(

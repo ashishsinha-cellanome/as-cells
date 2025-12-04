@@ -79,6 +79,7 @@ def create_initial_checkpoint(config: DictConfig) -> str:
             output_indices_for_fpn=target_indices,
             first_layer_dims=first_layer_dims,
             fpn_type=model_config.dinov2.fpn_type,
+            scale_factor=model_config.dinov2.scale_factor,
         )
         dinov2_backbone.save_pretrained(versioned_backbone_path)
         print(f"✓ DINOv2 backbone saved.")
@@ -166,14 +167,6 @@ def setup_model(config: DictConfig) -> RTDETRLightningModule:
         
         if not changes_made:
             print("...Loaded model config already matches overrides.")
-    # if rtdetr_overrides:
-    #     print(f"Applying config overrides to loaded model: {rtdetr_overrides}")
-    #     for key, value in rtdetr_overrides.items():
-    #         if hasattr(model.config, key):
-    #             print(f"  > Setting model.config.{key} = {value}")
-    #             setattr(model.config, key, value)
-    #         else:
-    #             print(f"  > WARNING: model.config has no attribute '{key}'")
     
     processor = RTDetrImageProcessor.from_pretrained(config.model.rtdetr.pretrained_name_or_path)
     processor.do_normalize = True
@@ -183,7 +176,6 @@ def setup_model(config: DictConfig) -> RTDETRLightningModule:
         "width": config.data.model_input_size
     }
     
-    # --- Hydra Path Handling ---
     data_path = hydra.utils.to_absolute_path(config.data.path)
     val_annot_path = os.path.join(data_path, 'images', config.val_name)
     val_json_path = os.path.join(data_path, f'{config.val_name}_annotations.json')

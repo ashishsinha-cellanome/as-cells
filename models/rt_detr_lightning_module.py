@@ -392,7 +392,9 @@ class RTDETRLightningModule(pl.LightningModule):
         optimizer = torch.optim.AdamW([
             {'params': other_params, 'lr': opt_config.lr},
             {'params': backbone_params, 'lr': opt_config.lr}  # Lower LR for FPN if necessary
-        ], weight_decay= opt_config.weight_decay)
+            ], 
+            weight_decay= opt_config.weight_decay
+        )
         
         # Configure scheduler
         if sch_config.type == "reduce_lr_on_plateau":
