@@ -30,6 +30,46 @@ def plot_embeddings(features, title="Feature Maps"):
     # breakpoint()
     ts.save(feat_img, title=f"{title}.png", cmap='magma')
 
+class NoneFPN(nn.Module):
+    def __init__(self, input_dim, out_dims, scale_factor=1):
+        """
+        performs dimensionality reduction and upscales the spatial resolution if needed
+
+        """
+        super().__init__()
+        self.scale_factor = scale_factor
+        self.input_dim = input_dim
+        self.out_dims = out_dims
+
+    def forward(self, features):
+        features_2, features_3, features_4 = features
+        return features
+
+class SimpleFPN(nn.Module):
+    def __init__(self, input_dim, out_dims, scale_factor=1):
+        super().__init__()
+        self.scale_factor = scale_factor
+        self.input_dim = input_dim
+        self.out_dims = out_dims
+        self.upsampler = nn.Upsample(scale_factor=scale_factor, mode='bilinear', align_corners=False)
+        self.scale_2x = lambda x, y: nn.functional.interpolate(x, scale_factor=y, mode='bilinear', align_corners=False)
+        # 1x1 lateral convolutions (projections to change the number of channels)
+        self.lateral_conv_2 = nn.Sequential(nn.Conv2d(input_dim, out_dims[0], kernel_size=1), nn.ReLU(), nn.Upsample(scale_factor=4))
+        self.lateral_conv_3 = nn.Sequential(nn.Conv2d(input_dim, out_dims[1], kernel_size=1), nn.ReLU(), nn.Upsample(scale_factor=2))
+        self.lateral_conv_4 = nn.Sequential(nn.Conv2d(input_dim, out_dims[2], kernel_size=1), nn.ReLU())
+        
+    def forward(self, features):
+        # import pdb; pdb.set_trace()
+        # features = list of feature maps from DINOv2
+        features_2, features_3, features_4 = features # each feature map is B x 1024 x L x L (L = 48 for input size 672)
+        p_4 = self.lateral_conv_4(features_4)
+        p_3 = self.lateral_conv_3(features_3)
+        p_2 = self.lateral_conv_2(features_2)
+        if self.scale_factor == 1:
+            return [p_2, p_3, p_4]
+        elif self.scale_factor == 2:
+            return [self.upsampler(p_2), self.upsampler(p_3), self.upsampler(p_4)]
+        
 class FusedFPN(nn.Module):
     def __init__(self, input_dim, out_dims, scale_factor=1):
         super().__init__()
@@ -90,6 +130,7 @@ class FusedFPN(nn.Module):
         p_2 = self.fusion_conv_2(torch.cat([l_2_up, l_3_up], dim=1)) 
         
         p_2_up = nn.functional.interpolate(p_2, scale_factor=2.0, mode='bilinear', align_corners=False)
+        # breakpoint()
         if self.scale_factor == 1:
             return [p_2, p_3, p_4]
         elif self.scale_factor == 2:
@@ -105,6 +146,7 @@ class Dinov2BackBoneWithFPNConfig(Dinov2Config):
         intermediate_channel_sizes: List[int] = [128, 256, 512], # to be consistent with the feature map dims of RT-DETRv2 default backbone 
         fpn_type: str = 'fused', # choices fused/tiny/none
         scale_factor: int =1,
+        upscale_method: str ='none', # choices bilinear/deconv/none
         **kwargs
     ):
         super().__init__(**kwargs)
@@ -115,6 +157,7 @@ class Dinov2BackBoneWithFPNConfig(Dinov2Config):
         self.first_layer_dims: List[int, int] = first_layer_dims
         self.fpn_type: str = fpn_type
         self.scale_factor: int = scale_factor
+        self.upscale_method: str = upscale_method
 
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path, **kwargs):
@@ -173,6 +216,7 @@ class Dinov2BackBoneWithFPN(PreTrainedModel):
         self.fpn_type = config.fpn_type
         self.first_layer_dims = config.first_layer_dims
         self.scale_factor = config.scale_factor
+        self.upscale_method = config.upscale_method
         if config.dinov2_pretrained_backbone_name_or_path:
             # load pre-trained DINOv2 weights if a given path is specified in the config
             self.backbone = Dinov2Model.from_pretrained(config.dinov2_pretrained_backbone_name_or_path)
@@ -201,6 +245,12 @@ class Dinov2BackBoneWithFPN(PreTrainedModel):
             )
         elif config.fpn_type == 'fused':
             self.fpn = FusedFPN(
+                input_dim=config.hidden_size, 
+                out_dims=config.intermediate_channel_sizes, 
+                scale_factor=config.scale_factor,
+            )
+        elif config.fpn_type == 'simple':
+            self.fpn = SimpleFPN(
                 input_dim=config.hidden_size, 
                 out_dims=config.intermediate_channel_sizes, 
                 scale_factor=config.scale_factor,
@@ -234,7 +284,17 @@ class Dinov2BackBoneWithFPN(PreTrainedModel):
             processed_feats.append(features[:, 1:, :].transpose(1, 2).contiguous().reshape(B, C, H, W))
             
         # step 2: Apply FPN
-
+        # import pdb; pdb.set_trace()
+        if self.upscale_method == 'bilinear' and self.scale_factor > 1:
+            # upscale DINOv2 feature maps before FPN
+            upsampled_feats = []
+            # TODO: replace with FeatUp later
+            for feat in processed_feats:
+                upsampled_feat = nn.functional.interpolate(feat, scale_factor=self.scale_factor, mode='bilinear', align_corners=False)
+                upsampled_feats.append(upsampled_feat)
+            processed_feats = upsampled_feats
+        
+        # breakpoint()
         multi_scale_feats = self.fpn(processed_feats)
         # print([feat.shape for feat in multi_scale_feats])
         # breakpoint()

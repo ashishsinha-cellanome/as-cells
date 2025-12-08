@@ -8,7 +8,6 @@ from pycocotools.cocoeval import COCOeval
 from PIL import Image, ImageDraw, ImageFont
 from models.custom_rt_detr_with_dinov2_backbone import RTDetrV2ForObjectDetectionWithCustomBackbone
 
-
 def to_cpu_device(tensor):
     """Move a CUDA torch tensor to CPU memory."""
     return tensor.detach().cpu() if tensor.requires_grad else tensor.cpu()
@@ -395,6 +394,18 @@ class RTDETRLightningModule(pl.LightningModule):
             ], 
             weight_decay= opt_config.weight_decay
         )
+
+        # 2. Get Modular Scheduler Config
+        # scheduler_config = self._get_scheduler_with_warmup(optimizer, sch_config)
+
+        # return [optimizer], scheduler_config
+    
+        warmup_scheduler = torch.optim.lr_scheduler.LinearLR(
+            optimizer,
+            start_factor= 0.01 ,
+            total_iters= sch_config.warmup_steps
+        )
+        milestones = [sch_config.warmup_steps]
         
         # Configure scheduler
         if sch_config.type == "reduce_lr_on_plateau":
@@ -410,50 +421,129 @@ class RTDETRLightningModule(pl.LightningModule):
                 'frequency': 1,
                 # 'verbose': Trueq
             }
-        elif sch_config.typ == "cosine":
+            # schedulers = [ scheduler, scheduler ]
+        elif sch_config.type == "cosine":
             scheduler = {
                 'scheduler': torch.optim.lr_scheduler.CosineAnnealingLR(
                     optimizer,
-                    T_max=self.config.trainer.max_epochs,
+                    T_max=self.config.trainer.max_epochs - sch_config.warmup_steps,
                     eta_min=opt_config.lr * 0.01
                 ),
                 'interval': 'epoch'
             }
+            # schedulers = [warmup_scheduler, scheduler]
         else:
             # Linear warmup + constant
             def lr_lambda(step):
                 if step < sch_config.warmup_steps:
                     return step / sch_config.warmup_steps
                 return 1.0
-            
             scheduler = {
                 'scheduler': torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda),
                 'interval': 'step'
             }
+            # schedulers = [warmup_scheduler, scheduler]
         
+        # sequential_scheduler = torch.optim.lr_scheduler.SequentialLR(
+        #     optimizer, 
+        #     schedulers=schedulers, 
+        #     milestones=milestones
+        # )
         return {'optimizer': optimizer, 'lr_scheduler': scheduler}
 
-    def optimizer_step(self, epoch, batch_idx, optimizer, optimizer_closure):
-        # 1. Execute the optimizer step (gradient update)
-        optimizer.step(closure=optimizer_closure)
+    def _get_scheduler_with_warmup(self, optimizer, sch_config):
+        """
+        Helper to attach warmup to any scheduler strategy safely.
+        """
+        # --- A. Define the Warmup Scheduler ---
+        # Starts at 1% of target LR and ramps up linearly
+        warmup_scheduler = torch.optim.lr_scheduler.LinearLR(
+            optimizer,
+            start_factor= 1e-2, 
+            total_iters=sch_config.warmup_steps
+        )
 
-        # 2. Warmup Logic
-        # We use 'global_step' which tracks total batches across all epochs
-        if self.trainer.global_step < self.config.optimizer.scheduler.warmup_steps:
+        # --- B. Define the Main Scheduler & Combine ---
+        
+        # 1. Reduce LR on Plateau (Cannot be chained sequentially)
+        if sch_config.type == "reduce_lr_on_plateau":
+            plateau_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+                optimizer,
+                mode='max',
+                factor=sch_config.factor,
+                patience=sch_config.patience,
+            )
+            # Return list: Warmup runs every step, Plateau runs every epoch independently
+            return [
+                {'scheduler': warmup_scheduler, 'interval': 'step', 'frequency': 1},
+                {'scheduler': plateau_scheduler, 'interval': 'epoch', 'frequency': 1, 'monitor': 'val/map'}
+            ]
+
+        # 2. Cosine Annealing (Sequential)
+        elif sch_config.type == "cosine":
+            # Calculate remaining steps for the cosine phase
+            total_steps = self.trainer.estimated_stepping_batches
+            main_iters = total_steps - sch_config.warmup_steps
+
+            main_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                optimizer,
+                T_max=main_iters,
+                eta_min=optimizer.defaults['lr'] * 0.01
+            )
             
+            chained_scheduler = torch.optim.lr_scheduler.SequentialLR(
+                optimizer,
+                schedulers=[warmup_scheduler, main_scheduler],
+                milestones=[sch_config.warmup_steps]
+            )
+            return [{'scheduler': chained_scheduler, 'interval': 'step'}]
+
+        # 3. Lambda LR (Sequential)
+        elif sch_config.type == "lambda":
+            # Define your lambda logic here. 
+            # NOTE: In SequentialLR, the lambda receives the GLOBAL step count.
+            
+            # Example: Inverse Square Root Decay (common in Transformers)
+            # We use 'max' to prevent division by zero or overly high values if step < warmup
+            def lr_lambda(step):
+                # Since this runs AFTER warmup, step will be > warmup_steps
+                # We normalize so it continues smoothly from 1.0 down
+                if step < sch_config.warmup_steps: return 1.0 
+                return (sch_config.warmup_steps / step) ** 0.5
+
+            main_scheduler = torch.optim.lr_scheduler.LambdaLR(
+                optimizer,
+                lr_lambda=lr_lambda
+            )
+            
+            chained_scheduler = torch.optim.lr_scheduler.SequentialLR(
+                optimizer,
+                schedulers=[warmup_scheduler, main_scheduler],
+                milestones=[sch_config.warmup_steps]
+            )
+            return [{'scheduler': chained_scheduler, 'interval': 'step'}]
+
+        # 4. Default: Warmup only (Constant afterwards)
+        else:
+            # LinearLR stays at factor 1.0 after total_iters are done
+            return [{'scheduler': warmup_scheduler, 'interval': 'step'}]
+        
+    def optimizer_step(self, epoch, batch_idx, optimizer, optimizer_closure):
+        # --- 1. Warmup Logic (Apply BEFORE step) ---
+        warmup_steps = self.config.optimizer.scheduler.warmup_steps
+        
+        if self.trainer.global_step < warmup_steps:
             # Calculate linear scale (0.0 to 1.0)
-            # We add +1 so we don't start at exactly 0.0, which can cause issues for some optimizers
-            lr_scale = min(1.0, float(self.trainer.global_step + 1) / self.config.optimizer.scheduler.warmup_steps)
+            lr_scale = min(1.0, float(self.trainer.global_step + 1) / float(warmup_steps))
             
-            # Apply to ALL param groups (handles your Backbone vs Head split automatically)
+            # Get the base LR from config to ensure we always scale from the correct starting point
+            # (Avoids issues where pg['lr'] might be modified by other schedulers or restarts)
+            base_lr = self.config.optimizer.optimizer.lr
+            
             for pg in optimizer.param_groups:
-                # We save the 'initial_lr' in the param group when the optimizer is created.
-                # If it's not there (first step), we use the current 'lr' as the initial.
-                if 'initial_lr' not in pg:
-                    pg['initial_lr'] = pg['lr']
-                
-                # Update the current LR based on the initial base
-                pg['lr'] = pg['initial_lr'] * lr_scale
+                pg['lr'] = base_lr * lr_scale
+        
+        optimizer.step(closure=optimizer_closure)
 
     def draw_boxes(self, image, boxes, labels, scores, id2label):
         """Draws bounding boxes on a PIL image."""

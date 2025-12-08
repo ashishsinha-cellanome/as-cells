@@ -80,6 +80,7 @@ def create_initial_checkpoint(config: DictConfig) -> str:
             first_layer_dims=first_layer_dims,
             fpn_type=model_config.dinov2.fpn_type,
             scale_factor=model_config.dinov2.scale_factor,
+            upscale_method=model_config.dinov2.upscale_method,
         )
         dinov2_backbone.save_pretrained(versioned_backbone_path)
         print(f"✓ DINOv2 backbone saved.")
