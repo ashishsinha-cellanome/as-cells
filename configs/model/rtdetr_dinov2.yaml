@@ -3,7 +3,9 @@
 # model:
   # --- RT-DETR Config ---
 rtdetr:
-  pretrained_name_or_path: "PekingU/rtdetr_v2_r18vd"
+  # change this model name to swithc pretrained RT-DETR weights
+  model_name: "rtdetr_v2_r18vd" # choices: rtdetr_v2_r18vd/ rtdetr_v2_r34vd/ rtdetr_v2_r50vd/ rtdetr_v2_r101vd
+  pretrained_name_or_path: PekingU/${model.rtdetr.model_name}
   
   freeze_backbone_batch_norms: true
   normalize_before: false
@@ -49,14 +51,24 @@ rtdetr:
 # --- DINOv2 Config ---
 dinov2:
   pretrained_name_or_path: "facebook/dinov2-base"
-  output_indices_for_fpn: [4, 8, 12]
+  output_indices_for_fpn: [3,7,11] # [4, 8, 12]
   fpn_type: 'fused' # choices fused/tiny/none/simple
   fusion_method: 'conv' # choices conv/xattn
   first_layer_dims: [80,80]
   scale_factor: 1
-  upscale_method: 'none' # choices bilinear/deconv
+  upscale_method: 'none' # choices none/dino
   upscale_dino: true
-  intermediate_channel_sizes: [128, 256, 512]
+  # intermediate_channel_sizes: [512, 1024, 2048] # [128, 256, 512]
+
+  # Define the channel sizes for every possible model_name here.
+  _channel_map:
+    rtdetr_v2_r18vd: [128, 256, 512]
+    rtdetr_v2_r34vd: [128, 256, 512]
+    rtdetr_v2_r50vd: [512, 1024, 2048]
+    rtdetr_v2_r101vd: [512, 1024, 2048]
+  
+  # This dynamically looks up the key in the map above based on rtdetr.model_name
+  intermediate_channel_sizes: ${model.dinov2._channel_map.${model.rtdetr.model_name}}
 
 # --- General ---
 label_map:

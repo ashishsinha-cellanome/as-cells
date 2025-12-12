@@ -76,6 +76,7 @@ class RTDetrV2ForObjectDetectionWithCustomBackbone(RTDetrV2ForObjectDetection):
         return model
 
     def __init__(self, config):
+        # breakpoint()
         if isinstance(config.backbone_config, Dinov2BackBoneWithFPNConfig):
             print(f"[INFO]: The passed config.backbone_config is a custom one of type Dinov2BackBoneWithFPNConfig. "
                   f"The model and the backbone are instantiated separately as the backbone is not supported by the original model.")

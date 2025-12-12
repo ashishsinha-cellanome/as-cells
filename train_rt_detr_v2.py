@@ -56,8 +56,12 @@ def create_initial_checkpoint(config: DictConfig) -> str:
         model_config.dinov2.first_layer_dims, 
         resolve=True
     )
+    intermediate_channel_sizes = OmegaConf.to_container(
+        model_config.dinov2.intermediate_channel_sizes,
+        resolve=True
+    )
     # indices_suffix = f"_indices_{'_'.join(map(str, target_indices))}"
-    indices_suffix = f"_{model_config.dinov2.fpn_type}_indices_{'_'.join(map(str, target_indices))}"
+    indices_suffix = f"_base_{model_config.rtdetr.model_name}_fpn_{model_config.dinov2.fpn_type}_scale_{model_config.dinov2.scale_factor}x_upscaler_{model_config.dinov2.upscale_method}_indices_{'_'.join(map(str, target_indices))}"
     
     # 3. Construct Versioned Paths
     # Base: .../dinov2_backbone_with_fpn
@@ -70,7 +74,9 @@ def create_initial_checkpoint(config: DictConfig) -> str:
 
     print(f"Target Architecture Indices: {target_indices}")
     print(f"Target Checkpoint Path:      {versioned_rtdetr_path}")
-    if not os.path.exists(versioned_backbone_path) or len(os.listdir(versioned_backbone_path)) == 0:
+    # TODO: remove later
+    # force ckpt creation for every run 
+    if True: #not os.path.exists(versioned_backbone_path) or len(os.listdir(versioned_backbone_path)) == 0:
         print(f"\n[INFO] Cached backbone not found. Creating: {versioned_backbone_path}")
         os.makedirs(versioned_backbone_path, exist_ok=True)
         
@@ -81,13 +87,15 @@ def create_initial_checkpoint(config: DictConfig) -> str:
             fpn_type=model_config.dinov2.fpn_type,
             scale_factor=model_config.dinov2.scale_factor,
             upscale_method=model_config.dinov2.upscale_method,
+            intermediate_channel_sizes=intermediate_channel_sizes,
         )
         dinov2_backbone.save_pretrained(versioned_backbone_path)
         print(f"✓ DINOv2 backbone saved.")
     else:
         print(f"✓ Found cached backbone at: {versioned_backbone_path}")
 
-    if not os.path.exists(versioned_rtdetr_path) or len(os.listdir(versioned_rtdetr_path)) == 0:
+    # TODO: remove later
+    if True: #not os.path.exists(versioned_rtdetr_path) or len(os.listdir(versioned_rtdetr_path)) == 0:
         print(f"\n[INFO] Cached RT-DETR not found. Creating: {versioned_rtdetr_path}")
         os.makedirs(versioned_rtdetr_path, exist_ok=True)
         
@@ -95,9 +103,11 @@ def create_initial_checkpoint(config: DictConfig) -> str:
         label2id = {v: k for k, v in id2label.items()}
         
         # Get overrides
+        # breakpoint()
         overrides = OmegaConf.to_container(model_config.rtdetr, resolve=True)
         overrides.pop("pretrained_name_or_path", None)
         overrides.pop("config_overrides", None)
+        overrides.pop("model_name", None)
 
         print(f"Loading base RT-DETR to inject backbone...")
         pretrained_rt_detr = RTDetrV2ForObjectDetection.from_pretrained(
@@ -150,6 +160,7 @@ def setup_model(config: DictConfig) -> RTDETRLightningModule:
     rtdetr_overrides = OmegaConf.to_container(config.model.rtdetr, resolve=True)
     rtdetr_overrides.pop("pretrained_name_or_path", None)
     rtdetr_overrides.pop("config_overrides", None)
+    rtdetr_overrides.pop("model_name", None)
     if rtdetr_overrides:
         print("Checking for model config overrides...")
         changes_made = False
@@ -349,7 +360,8 @@ def main(config: DictConfig):
     base_save_dir = hydra.utils.to_absolute_path(config.checkpointing.save_dir)
     run_save_dir = os.path.join(base_save_dir, config.run_name)
     config.checkpointing.save_dir = run_save_dir
-
+    
+    # breakpoint()
     ckpt_path = config.initialization.load_from_checkpoint
     if ckpt_path:
         print(f"🔄 Manual Resume: Loading specified checkpoint: {ckpt_path}")

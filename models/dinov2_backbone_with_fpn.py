@@ -284,8 +284,9 @@ class Dinov2BackBoneWithFPN(PreTrainedModel):
             processed_feats.append(features[:, 1:, :].transpose(1, 2).contiguous().reshape(B, C, H, W))
             
         # step 2: Apply FPN
+        # upscale the dinov2 features before passing to FPN if needed
         # import pdb; pdb.set_trace()
-        if self.upscale_method == 'bilinear' and self.scale_factor > 1:
+        if self.upscale_method == 'dino':
             # upscale DINOv2 feature maps before FPN
             upsampled_feats = []
             # TODO: replace with FeatUp later

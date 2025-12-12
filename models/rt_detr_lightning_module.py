@@ -56,8 +56,8 @@ class RTDETRLightningModule(pl.LightningModule):
         config = None,
     ):
         super().__init__()
-        self.save_hyperparameters(ignore=['model', 'config', 'image_processor', 'val_coco_gt', 'test_coco_gt', 'train_coco_gt'])
         # breakpoint()
+        self.save_hyperparameters(ignore=['model', 'config', 'image_processor', 'val_coco_gt', 'test_coco_gt', 'train_coco_gt'])
         self.model = model
         self.image_processor = image_processor
         self.val_coco_gt = val_coco_gt
@@ -89,10 +89,8 @@ class RTDETRLightningModule(pl.LightningModule):
         # debug setting
         self.debug_train_image_ids = set() 
         self.config = config
-        # breakpoint()
         self.warmup_steps = self.config.optimizer.scheduler.warmup_steps
         self.base_lr = self.config.optimizer.optimizer.lr
-        # breakpoint()
         self.validation_step_outputs = []
         self.test_step_outputs = []
 
@@ -155,7 +153,7 @@ class RTDETRLightningModule(pl.LightningModule):
         
         if (self.current_epoch + 1) % self.config.checkpointing.visualize_every_n_epochs == 0 and \
            self.trainer.is_global_zero and \
-           self.val_viz_counter < self.config.checkpointing.visualize_samples:
+           (self.val_viz_counter < self.config.checkpointing.visualize_samples or self.config.checkpointing.visualize_samples == -1):
             
             save_dir = os.path.join(
                 self.config.checkpointing.save_dir,
@@ -258,8 +256,11 @@ class RTDETRLightningModule(pl.LightningModule):
             {k: to_cpu_device(v) for k, v in outputs.items()}
             for outputs in post_processed_outputs
         ]
-
-        if self.trainer.is_global_zero and self.test_viz_counter < self.config.checkpointing.visualize_samples:
+        # breakpoint()
+        if self.config.checkpointing.visualize_samples ==-1:
+            self.config.checkpointing.visualize_samples = float('inf')
+        if self.trainer.is_global_zero and \
+            (self.test_viz_counter < self.config.checkpointing.visualize_samples): # or self.config.checkpointing.visualize_samples ==-1):
             save_dir = os.path.join(
                 self.config.checkpointing.save_dir,
                 # self.config.run_name, 
@@ -389,8 +390,8 @@ class RTDETRLightningModule(pl.LightningModule):
         # Different learning rates for different parts
         # breakpoint()
         optimizer = torch.optim.AdamW([
-            {'params': other_params, 'lr': opt_config.lr},
-            {'params': backbone_params, 'lr': opt_config.lr}  # Lower LR for FPN if necessary
+            {'params': other_params, 'lr': opt_config.lr}, # Lower LR for original wts for rtdetr
+            {'params': backbone_params, 'lr': opt_config.lr}  # slighly higher LR for FPN and other backbone params
             ], 
             weight_decay= opt_config.weight_decay
         )
@@ -402,7 +403,7 @@ class RTDETRLightningModule(pl.LightningModule):
     
         warmup_scheduler = torch.optim.lr_scheduler.LinearLR(
             optimizer,
-            start_factor= 0.01 ,
+            start_factor= 0.01 , # 1% of target LR
             total_iters= sch_config.warmup_steps
         )
         milestones = [sch_config.warmup_steps]
@@ -577,6 +578,7 @@ class RTDETRLightningModule(pl.LightningModule):
 
         # Un-normalize the entire batch at once (faster)
         # 1. Multiply by std, 2. Add mean, 3. Clamp to [0, 1] range
+        # breakpoint()
         unnormalized_images = torch.clamp((pixel_values * std) + mean, 0, 1)
         for i in range(len(labels)):
             if counter >= max_samples:
@@ -1052,7 +1054,7 @@ class RTDETRLightningModuleDebug(pl.LightningModule):
         # Get mean and std from the processor to un-normalize
         mean = torch.tensor(self.image_processor.image_mean, device=pixel_values.device).view(1, 3, 1, 1)
         std = torch.tensor(self.image_processor.image_std, device=pixel_values.device).view(1, 3, 1, 1)
-
+        breakpoint()
         # Un-normalize the entire batch at once (faster)
         # 1. Multiply by std, 2. Add mean, 3. Clamp to [0, 1] range
         unnormalized_images = torch.clamp((pixel_values * std) + mean, 0, 1)
