@@ -1,0 +1,14 @@
+**/*.ipynb
+*.ipynb
+debug*/
+*EVAL*/
+*checkpoints*/
+wandb/
+outputs/
+logs/
+multirun/
+new/
+*.png
+*logs/
+**/__pycache__/
+benchmark_results/

@@ -401,6 +401,7 @@ def p_r_based_on_c_m(predictions: List[dict],
             recall_w_break_down[class_ids_to_classnames_map[class_id]] = 0
 
     p_r_df = pd.DataFrame(data=[precision, recall], index = ['Precision', 'Recall']).transpose()
+    p_r_df['Class'] = p_r_df.index
     p_r_with_break_down_df = pd.DataFrame(data=[precision, recall_w_break_down], index = ['Precision', 'Recall']).transpose()
     
     return c_m_df, p_r_df, p_r_with_break_down_df

@@ -1,5 +1,5 @@
-from AbstractVisionModel import VisionModel
-from model_utils import to_numpy
+from models.AbstractVisionModel import VisionModel
+from utils.model_utils import to_numpy
 
 import numpy as np
 import cv2
@@ -18,7 +18,8 @@ from collections import OrderedDict
 TRANSFORM_MEAN: Final[List[float]] = [0.485, 0.456, 0.406] 
 TRANSFORM_STD: Final[List[float]] = [0.229, 0.224, 0.225]
 
-MODEL_REPO_PATH: Final[str] = '/home/cellareye/Cellanome/dl-mehdi/Mask RCNN/checkpoints/mask2former_checkpoints'
+# MODEL_REPO_PATH: Final[str] = '/home/cellareye/Cellanome/dl-mehdi/Mask RCNN/checkpoints/mask2former_checkpoints'
+MODEL_REPO_PATH: Final[str] = '/global/home/ashish.sinha/cellanome/models/mask2former_checkpoints/'
 
 # default model parameters
 # in case the weights file does not include them, they can be used

@@ -1,0 +1,16 @@
+# configs/optimizer/adamw_scaled.yaml
+optimizer:
+  _target_: torch.optim.AdamW
+  lr: 1e-4 # 5.0e-5
+  weight_decay: 1e-4 
+  # max_grad_norm: 5.0
+
+scheduler:
+  type: "reduce_lr_on_plateau"
+  warmup_steps: 1000
+  factor: 0.5
+  patience: 2
+
+training:
+  profiler:
+    type: 'simple'

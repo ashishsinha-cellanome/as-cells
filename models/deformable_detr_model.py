@@ -1,5 +1,5 @@
-from AbstractVisionModel import VisionModel
-from model_utils import to_numpy
+from models.AbstractVisionModel import VisionModel
+from utils.model_utils import to_numpy
 
 import numpy as np
 import cv2
