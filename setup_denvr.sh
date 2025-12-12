@@ -16,9 +16,14 @@ sudo chown ubuntu:ubuntu /home/ubuntu/scratch
 
 # create data directory
 mkdir -p /home/ubuntu/scratch/cellanome/{SMALL_TRAINING_DATA2,TRAINING_DATA}
+echo "Data directories created"
 
 # unpack data from /personal to local scratch
-tar -xvf /mnt/personal/small-data.tar.xz -C /home/ubuntu/scratch/cellanome/SMALL_TRAINING_DATA2
+echo "Unpacking small-data.tar.xz data..."
+time tar -xvf /mnt/personal/small-data.tar.xz -C /home/ubuntu/scratch/cellanome/
+echo "Unpacking small-data.tar.xz complete."
 
 # unpack all data from /personal to local scratch
-tar -xvf /mnt/personal/train.tar.xz -C /home/ubuntu/scratch/cellanome/TRAINING_DATA
+echo "Unpacking train.tar.xz data..."
+time tar -xvf /mnt/personal/train.tar.xz -C /home/ubuntu/scratch/cellanome/TRAINING_DATA
+echo "Unpacking train.tar.xz complete."
