@@ -1,6 +1,11 @@
 #!/usr/bin/bash
-
 # this scripts setups the mounts and unpacks the data on denvr
+
+# install uv
+wget -qO- https://astral.sh/uv/install.sh | sh
+
+# configure uv paths
+source $HOME/.local/bin/env
 
 # set up fast local storage
 sudo mkfs -t ext4 /dev/vdc

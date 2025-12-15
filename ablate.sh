@@ -1,8 +1,13 @@
 uv run train_rt_detr_v2.py --multirun \
-    model.rtdetr.model_name="rtdetr_v2_r18d","rtdetr_v2_r34vd","rtdetr_v2_r50vd","rtdetr_v2_101vd"\
-    model.dinov2.output_indices_for_fpn=[1,3,5],[4,8,12],[8,10,12]\
-    trainer.max_epochs=40\
-    model.dinov2.fpn_type="simple" #,'tiny','fused'\
+    model.backbone='resnet18'\
+    model.rtdetr.model_name="rtdetr_v2_r18vd","rtdetr_v2_r34vd","rtdetr_v2_r50vd","rtdetr_v2_r101vd"\
+    model.backbone.output_indices_for_fpn=[1,3,5],[4,8,12],[8,10,12]\
+    trainer.max_epochs=1\
+    data.limit_train_batches=1\
+    data.limit_val_batches=1\
+    data.limit_test_batches=1\
+    model.backbone.fpn_type="simple" #,'tiny','fused'\
+
     # model.dinov2.scale_factor=1,2\
     # data.batch_size=32\
     # optimizer.optimizer.lr=1e-4,3e-4,5e-4\

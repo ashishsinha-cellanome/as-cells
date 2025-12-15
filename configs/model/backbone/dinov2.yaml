@@ -1,0 +1,24 @@
+# configs/model/backbone/dinov2.yaml
+# @package model.backbone
+
+type: "dinov2"
+pretrained_name_or_path: "facebook/dinov2-base"
+output_indices_for_fpn: [3,7,11]
+fpn_type: 'fused'
+fusion_method: 'conv'
+first_layer_dims: [80,80]
+scale_factor: 1
+upscale_method: 'none'
+upscale_dino: true
+
+# --- Dynamic Channel Logic ---
+# 1. Define the Map
+_channel_map:
+  rtdetr_v2_r18vd: [128, 256, 512]
+  rtdetr_v2_r34vd: [128, 256, 512]
+  rtdetr_v2_r50vd: [512, 1024, 2048]
+  rtdetr_v2_r101vd: [512, 1024, 2048]
+
+# 2. Use Absolute Interpolation to read the RT-DETR model choice
+# Note: We point to 'model.backbone._channel_map' because this file is loaded into that namespace
+intermediate_channel_sizes: ${model.backbone._channel_map.${model.rtdetr.model_name}}

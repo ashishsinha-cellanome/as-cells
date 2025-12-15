@@ -3,7 +3,8 @@
 
 defaults:
   - data: default
-  - model: rtdetr_dinov2
+  - model: rtdetr_base
+  - model/backbone: dinov2
   - optimizer: adamw_scaled
   - trainer: default
   - checkpointing: default
