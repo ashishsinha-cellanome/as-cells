@@ -1,18 +1,25 @@
 # configs/checkpointing/default.yaml
-# Default checkpointing and visualization settings
 
 # checkpointing:
-  save_dir: "checkpoints/" # Base dir, run_name will be appended
+  save_dir: "checkpoints/" 
   save_top_k: 1
   monitor: "val_map"
   mode: "max"
   save_last: true
   every_n_epochs: 1
   
+  # --- Dynamic Folder Naming ---
+  # We construct a unique folder name based on the backbone type
+  # 1. If backbone.type is 'dinov2', this resolves to "dinov2"
+  # 2. If backbone.type is 'resnet' or 'official', it resolves to that
+  # We also append the RT-DETR variant name (r18/r50/r101) to keep them separate
+  
+  _folder_name: "${model.backbone.type}_backbone_${model.rtdetr.model_name}"
+
   # Paths for initial model creation
-  # We use ${hydra:runtime.cwd} to make paths absolute
-  dinov2_backbone_checkpoint: "${hydra:runtime.cwd}/checkpoints/dinov2_backbone_with_fpn"
-  rtdetr_initial_checkpoint: "${hydra:runtime.cwd}/checkpoints/custom_rt_detr_with_dinov2_backbone"
+  # Uses the dynamic folder name defined above
+  dinov2_backbone_checkpoint: "${hydra:runtime.cwd}/checkpoints/backbones/${model.backbone.type}"
+  rtdetr_initial_checkpoint: "${hydra:runtime.cwd}/checkpoints/${checkpointing._folder_name}"
 
   # Visualization
   val_image_dir: "${hydra:runtime.cwd}"

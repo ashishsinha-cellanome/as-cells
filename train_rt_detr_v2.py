@@ -48,125 +48,172 @@ def create_initial_checkpoint(config: DictConfig) -> str:
         model_config.backbone, 
         model_config.rtdetr.model_name
     )
+    print(f"DEBUG CHECK: backbone.type is '{model_config.backbone.type}'")
+    print(f"DEBUG CHECK: backbone.name is '{model_config.backbone.name}'")
+    
+    # Check both "official" AND "resnet" to catch the mismatch
+    if model_config.backbone.type in ["official", "resnet"]: 
+         base_model_name = model_config.backbone.name
+         print(f"DEBUG: Logic selected OFFICIAL name: {base_model_name}")
+    else:
+         base_model_name = model_config.rtdetr.model_name
+         print(f"DEBUG: Logic selected DEFAULT name: {base_model_name}")
+
+    print(f"Loading Base Weights: PekingU/{base_model_name}")
     
     base_rtdetr_path = hydra.utils.to_absolute_path(checkpoint_config.rtdetr_initial_checkpoint)
     # If using official backbone, we append the model name to ensure uniqueness
-    if model_config.backbone.type == "official":
-        full_suffix = f"{unique_suffix}" # Suffix already contains logic
+    if model_config.backbone.type == "resnet":
+        full_suffix = f"{unique_suffix}" 
     else:
         full_suffix = f"{unique_suffix}_{model_config.rtdetr.model_name}"
 
     versioned_rtdetr_path = f"{base_rtdetr_path}{full_suffix}"
 
-    # target_indices = OmegaConf.to_container(
-    #     model_config.dinov2.output_indices_for_fpn, 
-    #     resolve=True
-    # )
-    # # breakpoint()    
-    # first_layer_dims = OmegaConf.to_container(
-    #     model_config.dinov2.first_layer_dims, 
-    #     resolve=True
-    # )
-    # intermediate_channel_sizes = OmegaConf.to_container(
-    #     model_config.dinov2.intermediate_channel_sizes,
-    #     resolve=True
-    # )
-    # # indices_suffix = f"_indices_{'_'.join(map(str, target_indices))}"
-    # indices_suffix = f"_base_{model_config.rtdetr.model_name}_fpn_{model_config.dinov2.fpn_type}_scale_{model_config.dinov2.scale_factor}x_upscaler_{model_config.dinov2.upscale_method}_indices_{'_'.join(map(str, target_indices))}"
-    
     # 3. Construct Versioned Paths
     # Base: .../dinov2_backbone_with_fpn
     # New:  .../dinov2_backbone_with_fpn_indices_4_8_12
-    base_backbone = hydra.utils.to_absolute_path(checkpoint_config.dinov2_backbone_checkpoint)
-    base_rtdetr = hydra.utils.to_absolute_path(checkpoint_config.rtdetr_initial_checkpoint)
+    # base_backbone = hydra.utils.to_absolute_path(checkpoint_config.dinov2_backbone_checkpoint)
+    # base_rtdetr = hydra.utils.to_absolute_path(checkpoint_config.rtdetr_initial_checkpoint)
     
-    # versioned_backbone_path = f"{base_backbone}{indices_suffix}"
-    # versioned_rtdetr_path = f"{base_rtdetr}{indices_suffix}"
+    # # versioned_backbone_path = f"{base_backbone}{indices_suffix}"
+    # # versioned_rtdetr_path = f"{base_rtdetr}{indices_suffix}"
 
-    # print(f"Target Architecture Indices: {target_indices}")
-    # print(f"Target Checkpoint Path:      {versioned_rtdetr_path}")
-    # The suffix now already contains the rtdetr model name, so we just append it
-    versioned_backbone_path = f"{base_backbone}{unique_suffix}"
-    versioned_rtdetr_path = f"{base_rtdetr}{unique_suffix}"
+    # # print(f"Target Architecture Indices: {target_indices}")
+    # # print(f"Target Checkpoint Path:      {versioned_rtdetr_path}")
+    # # The suffix now already contains the rtdetr model name, so we just append it
+    # versioned_backbone_path = f"{base_backbone}{unique_suffix}"
+    # versioned_rtdetr_path = f"{base_rtdetr}{unique_suffix}"
 
-    print(f"Backbone Type:          {model_config.backbone.type}")
-    print(f"RT-DETR Variant:        {model_config.rtdetr.model_name}")
-    print(f"Target Checkpoint Path: {versioned_rtdetr_path}")
+    # print(f"Backbone Type:          {model_config.backbone.type}")
+    # print(f"RT-DETR Variant:        {model_config.rtdetr.model_name}")
+    # print(f"Target Checkpoint Path: {versioned_rtdetr_path}")
 
-    # TODO: remove later
-    # force ckpt creation for every run 
-    if True: #not os.path.exists(versioned_backbone_path) or len(os.listdir(versioned_backbone_path)) == 0:
-        print(f"\n[INFO] Cached backbone not found. Creating: {versioned_backbone_path}")
-        os.makedirs(versioned_backbone_path, exist_ok=True)
-        backbone_model.save_pretrained(versioned_backbone_path)
-        print(f"✓ Backbone saved.")
+    # # TODO: remove later
+    # # force ckpt creation for every run 
+    # if True: #not os.path.exists(versioned_backbone_path) or len(os.listdir(versioned_backbone_path)) == 0:
+    #     print(f"\n[INFO] Cached backbone not found. Creating: {versioned_backbone_path}")
+    #     os.makedirs(versioned_backbone_path, exist_ok=True)
+    #     backbone_model.save_pretrained(versioned_backbone_path)
+    #     print(f"✓ Backbone saved.")
         
-        # dinov2_backbone = Dinov2BackBoneWithFPN.from_pretrained(
-        #     model_config.dinov2.pretrained_name_or_path,
-        #     output_indices_for_fpn=target_indices,
-        #     first_layer_dims=first_layer_dims,
-        #     fpn_type=model_config.dinov2.fpn_type,
-        #     scale_factor=model_config.dinov2.scale_factor,
-        #     upscale_method=model_config.dinov2.upscale_method,
-        #     intermediate_channel_sizes=intermediate_channel_sizes,
-        # )
-        # dinov2_backbone.save_pretrained(versioned_backbone_path)
-        # print(f"✓ DINOv2 backbone saved.")
-    else:
-        print(f"✓ Found cached backbone at: {versioned_backbone_path}")
+    #     # dinov2_backbone = Dinov2BackBoneWithFPN.from_pretrained(
+    #     #     model_config.dinov2.pretrained_name_or_path,
+    #     #     output_indices_for_fpn=target_indices,
+    #     #     first_layer_dims=first_layer_dims,
+    #     #     fpn_type=model_config.dinov2.fpn_type,
+    #     #     scale_factor=model_config.dinov2.scale_factor,
+    #     #     upscale_method=model_config.dinov2.upscale_method,
+    #     #     intermediate_channel_sizes=intermediate_channel_sizes,
+    #     # )
+    #     # dinov2_backbone.save_pretrained(versioned_backbone_path)
+    #     # print(f"✓ DINOv2 backbone saved.")
+    # else:
+    #     print(f"✓ Found cached backbone at: {versioned_backbone_path}")
 
-    # TODO: remove later
-    if True: #not os.path.exists(versioned_rtdetr_path) or len(os.listdir(versioned_rtdetr_path)) == 0:
-        print(f"\n[INFO] Cached RT-DETR not found. Creating: {versioned_rtdetr_path}")
+    # # TODO: remove later
+    # if True: #not os.path.exists(versioned_rtdetr_path) or len(os.listdir(versioned_rtdetr_path)) == 0:
+    #     print(f"\n[INFO] Cached RT-DETR not found. Creating: {versioned_rtdetr_path}")
+    #     os.makedirs(versioned_rtdetr_path, exist_ok=True)
+        
+    #     id2label = {int(k): v for k, v in model_config.label_map.items()}
+    #     label2id = {v: k for k, v in id2label.items()}
+        
+    #     # Get overrides
+    #     # breakpoint()
+    #     overrides = OmegaConf.to_container(model_config.rtdetr, resolve=True)
+    #     # Clean up keys that aren't model arguments
+    #     for k in ["pretrained_name_or_path", "config_overrides", "model_name"]:
+    #         overrides.pop(k, None)
+
+    #     print(f"Loading base RT-DETR to inject backbone...")
+    #     pretrained_rt_detr = RTDetrV2ForObjectDetection.from_pretrained(
+    #         model_config.rtdetr.pretrained_name_or_path,
+    #         id2label=id2label,
+    #         label2id=label2id,
+    #         ignore_mismatched_sizes=True,
+    #         **overrides
+    #     )
+
+    #     # TODO: check and remove later
+    #     # Inject Custom Backbone Config
+    #     pretrained_model_config_dict = pretrained_rt_detr.config.to_dict()
+    #     rt_detr_config = RTDetrV2ConfigWithCustomBackBone(**pretrained_model_config_dict)
+    #     rt_detr_config.backbone_config = backbone_config_obj
+        
+    #     # Inject Backbone Model
+    #     pretrained_rt_detr.config = rt_detr_config
+    #     pretrained_rt_detr.model.backbone = backbone_model
+    #     pretrained_rt_detr.save_pretrained(versioned_rtdetr_path)
+        
+    #     # Load the SPECIFIC backbone version we just checked/created
+    #     # dinov2_backbone_config = Dinov2BackBoneWithFPNConfig.from_pretrained(versioned_backbone_path)
+    #     # dinov2_backbone = Dinov2BackBoneWithFPN.from_pretrained(versioned_backbone_path)
+        
+    #     # pretrained_model_config_dict = pretrained_rt_detr.config.to_dict()
+    #     # rt_detr_config = RTDetrV2ConfigWithCustomBackBone(**pretrained_model_config_dict)
+    #     # rt_detr_config.backbone_config = dinov2_backbone_config
+        
+    #     # pretrained_rt_detr.config = rt_detr_config
+    #     # pretrained_rt_detr.model.backbone = dinov2_backbone
+    #     # pretrained_rt_detr.save_pretrained(versioned_rtdetr_path)
+        
+    #     # print(f"✓ RT-DETR initialized and saved to: {versioned_rtdetr_path}")
+    # else:
+    #     print(f"✓ Found cached RT-DETR at: {versioned_rtdetr_path}")
+    
+    # # Return the specific versioned path
+    # return versioned_rtdetr_path
+    if True: # Replace with os.path.exists check
+        print(f"\n[INFO] Creating/Loading model at: {versioned_rtdetr_path}")
         os.makedirs(versioned_rtdetr_path, exist_ok=True)
         
         id2label = {int(k): v for k, v in model_config.label_map.items()}
         label2id = {v: k for k, v in id2label.items()}
         
-        # Get overrides
-        # breakpoint()
+        # Determine which base model to load
+        # If official, we force the base model to be the one specified in backbone config
+        if model_config.backbone.type in ["official", "resnet"]:
+             base_model_name = model_config.backbone.name 
+        else:
+             base_model_name = model_config.rtdetr.model_name
+
+        print(f"Loading Base Weights: PekingU/{base_model_name}")
+        
+        # Load Model
         overrides = OmegaConf.to_container(model_config.rtdetr, resolve=True)
-        # Clean up keys that aren't model arguments
         for k in ["pretrained_name_or_path", "config_overrides", "model_name"]:
             overrides.pop(k, None)
 
-        print(f"Loading base RT-DETR to inject backbone...")
-        pretrained_rt_detr = RTDetrV2ForObjectDetection.from_pretrained(
-            model_config.rtdetr.pretrained_name_or_path,
+        model = RTDetrV2ForObjectDetection.from_pretrained(
+            f"PekingU/{base_model_name}",
             id2label=id2label,
             label2id=label2id,
             ignore_mismatched_sizes=True,
             **overrides
         )
 
-        # TODO: check and remove later
-        # Inject Custom Backbone Config
-        pretrained_model_config_dict = pretrained_rt_detr.config.to_dict()
-        rt_detr_config = RTDetrV2ConfigWithCustomBackBone(**pretrained_model_config_dict)
-        rt_detr_config.backbone_config = backbone_config_obj
-        
-        # Inject Backbone Model
-        pretrained_rt_detr.config = rt_detr_config
-        pretrained_rt_detr.model.backbone = backbone_model
-        pretrained_rt_detr.save_pretrained(versioned_rtdetr_path)
-        
-        # Load the SPECIFIC backbone version we just checked/created
-        # dinov2_backbone_config = Dinov2BackBoneWithFPNConfig.from_pretrained(versioned_backbone_path)
-        # dinov2_backbone = Dinov2BackBoneWithFPN.from_pretrained(versioned_backbone_path)
-        
-        # pretrained_model_config_dict = pretrained_rt_detr.config.to_dict()
-        # rt_detr_config = RTDetrV2ConfigWithCustomBackBone(**pretrained_model_config_dict)
-        # rt_detr_config.backbone_config = dinov2_backbone_config
-        
-        # pretrained_rt_detr.config = rt_detr_config
-        # pretrained_rt_detr.model.backbone = dinov2_backbone
-        # pretrained_rt_detr.save_pretrained(versioned_rtdetr_path)
-        
-        # print(f"✓ RT-DETR initialized and saved to: {versioned_rtdetr_path}")
-    else:
-        print(f"✓ Found cached RT-DETR at: {versioned_rtdetr_path}")
-    
-    # Return the specific versioned path
+        # --- LOGIC FORK ---
+        if  config.model.backbone.type == "resnet":
+            # Case A: Official Backbone
+            print("✓ Using Official ResNet Backbone")
+            # Freeze layers if requested
+            if not model_config.backbone.train_backbone:
+                freeze_backbone_layers(model, model_config.backbone.freeze_at_stage)
+        else:
+            # Case B: Custom (DINOv2) Backbone
+            print("✓ Injecting Custom Backbone")
+            
+            # (Your existing injection logic)
+            pretrained_model_config_dict = model.config.to_dict()
+            rt_detr_config = RTDetrV2ConfigWithCustomBackBone(**pretrained_model_config_dict)
+            rt_detr_config.backbone_config = backbone_config_obj
+            model.config = rt_detr_config
+            model.model.backbone = backbone_model
+            
+        model.save_pretrained(versioned_rtdetr_path)
+        print(f"✓ Model saved to {versioned_rtdetr_path}")
+
     return versioned_rtdetr_path
 
 
@@ -188,6 +235,19 @@ def setup_model(config: DictConfig) -> RTDETRLightningModule:
     model = RTDetrV2ForObjectDetectionWithCustomBackbone.from_pretrained(
         model_checkpoint_path,
     )
+    if config.model.backbone.type == "resnet":
+        if not config.model.backbone.train_backbone:
+            print("[INFO] Re-applying backbone freezing after load...")
+            freeze_backbone_layers(model, config.model.backbone.freeze_at_stage)
+    
+    elif config.model.backbone.type == "dinov2":
+         # Re-freeze DINOv2 if needed (usually handled by DINO class init, 
+         # but good to ensure if you are loading a full model checkpoint)
+         print("[INFO] Ensuring DINOv2 backbone is frozen...")
+         for name, param in model.named_parameters():
+             if "model.backbone.backbone" in name: # The ViT part
+                 param.requires_grad = False
+
     # breakpoint()
     rtdetr_overrides = OmegaConf.to_container(config.model.rtdetr, resolve=True)
     rtdetr_overrides.pop("pretrained_name_or_path", None)
@@ -338,8 +398,8 @@ def main(config: DictConfig):
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     
     # If the user didn't provide a specific name in CLI, use the timestamp format
-    if config.run_name.startswith("rtdetr_dinov2_"): 
-        config.run_name = f"rtdetr_dinov2_{timestamp}"
+    if config.run_name.startswith("rtdetrv2_dinov2"): 
+        config.run_name = f"rtdetrv2_dinov2_{timestamp}"
     else:
         # If user passed a custom name (e.g. "my_sweep"), append timestamp to keep it unique
         config.run_name = f"{config.run_name}_{timestamp}"

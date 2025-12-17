@@ -2,7 +2,7 @@
 # @package model.backbone
 
 type: "resnet" 
-name: "rtdetr_v2_r101vd" # Matches the supported model names
+name: "rtdetr_v2_r50vd" # Matches the supported model names
 
 # Freezing params
 train_backbone: false     # If false, we freeze layers
@@ -10,4 +10,4 @@ freeze_at_stage: 5        # 0=Stem, 1=Layer1, ..., 4=Layer4 (Freeze everything)
 
 # These are needed for logic consistency but won't change the architecture
 # (The official R101 backbone outputs these channels naturally)
-intermediate_channel_sizes: [512, 1024, 2048]
+intermediate_channel_sizes: [128, 256, 512]

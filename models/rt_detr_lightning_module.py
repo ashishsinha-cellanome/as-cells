@@ -366,7 +366,26 @@ class RTDETRLightningModule(pl.LightningModule):
         # Separate parameters: freeze DINOv2, train FPN and rest of model
         backbone_params = []
         other_params = []
-        # breakpoint()
+
+        for name, param in self.model.named_parameters():
+            # 1. If it's frozen, SKIP IT entirely. 
+            # This ensures we don't accidentally pass it to the optimizer.
+            if not param.requires_grad:
+                continue
+
+            # 2. Separate Backbone vs Head for different Learning Rates
+            # This check works for both DINO ('model.backbone.backbone...') 
+            # and ResNet ('model.backbone.model...')
+            if 'backbone' in name:
+                backbone_params.append(param)
+            else:
+                other_params.append(param)
+
+        # # breakpoint()
+        # if self.trainer.is_global_zero:
+        #     print(f"[Optimizer] Backbone params to update: {len(backbone_params)}")
+        #     print(f"[Optimizer] Head/Other params to update: {len(other_params)}")
+        
         # TODO: same as HF, comment below to change LR
         # trainable_params = [
         #     param for param in self.model.parameters() if param.requires_grad
@@ -376,16 +395,16 @@ class RTDETRLightningModule(pl.LightningModule):
         #     lr=self.learning_rate,
         #     weight_decay=self.weight_decay
         # )
-        for name, param in self.model.named_parameters():
-            if 'model.backbone.backbone' in name:
-                # DINOv2 backbone - frozen
-                param.requires_grad = False
-            elif 'model.backbone' in name:
-                # FPN part of backbone - trainable
-                backbone_params.append(param)
-            else:
-                # Rest of model - trainable
-                other_params.append(param)
+        # for name, param in self.model.named_parameters():
+        #     if 'model.backbone.backbone' in name:
+        #         # DINOv2 backbone - frozen
+        #         param.requires_grad = False
+        #     elif 'model.backbone' in name:
+        #         # FPN part of backbone - trainable
+        #         backbone_params.append(param)
+        #     else:
+        #         # Rest of model - trainable
+        #         other_params.append(param)
         
         # Different learning rates for different parts
         # breakpoint()

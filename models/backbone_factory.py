@@ -43,7 +43,7 @@ def build_backbone(backbone_cfg, rtdetr_model_name):
         return model, model.config, unique_str
 
     elif model_type == "resnet":
-        unique_str = f"_official_{backbone_cfg.name}_freeze_stage_{backbone_cfg.freeze_at_stage}"
+        unique_str = f"_{model_type}_{backbone_cfg.name}_freeze_stage_{backbone_cfg.freeze_at_stage}"
         return None, None, unique_str
         # raise NotImplementedError("ResNet backbone not yet implemented")
          
@@ -77,6 +77,7 @@ def freeze_backbone_layers(model, freeze_at_stage):
 
     # Helper to freeze a module
     def freeze_module(module):
+        module.eval()  # Set to eval mode
         for param in module.parameters():
             param.requires_grad = False
 

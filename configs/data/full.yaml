@@ -1,0 +1,20 @@
+# configs/data/default.yaml
+# Default (full) dataset configuration
+
+# data:
+  path: "/global/home/ashish.sinha/cellanome/TRAINING_DATA"
+  model_input_size: 672
+  min_random_scale: 0.7
+  max_random_scale: 1.0
+  p_noise: 0.25
+  org_images_in_model_input_size: true
+
+  # Dataloader params
+  batch_size: 16
+  num_workers: 4
+  
+  # Data limiting
+  num_overfit_samples: 0.
+  limit_train_batches: 1.0 # 1.0 = all data
+  limit_val_batches: 1.0
+  limit_test_batches: 1.0
