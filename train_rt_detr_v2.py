@@ -391,12 +391,12 @@ def main(config: DictConfig):
     # breakpoint()
     # Unlock config to make changes
     OmegaConf.set_struct(config, False)
-
+    # breakpoint()
     # --- 1. Handle Run Naming (Datetime) ---
     # We regenerate the timestamp here so that EVERY job in the sweep 
     # gets its own unique time-based ID (e.g., job 1 starts at :01, job 2 at :05)
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    
+    # config.run_name = config.run_name.replace(" ", "_")
     # If the user didn't provide a specific name in CLI, use the timestamp format
     if config.run_name.startswith("rtdetrv2_dinov2"): 
         config.run_name = f"rtdetrv2_dinov2_{timestamp}"

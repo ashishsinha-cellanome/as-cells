@@ -1,41 +1,41 @@
 # configs/data/denvr.yaml
 # @package _global_
 
-# 1. Inherit everything from your default data config
 defaults:
-  - default
+  # CRITICAL: This puts the default data config inside 'cfg.data'
+  # If you just use "- default", it puts keys at the root and breaks everything.
+  - /data@data: default
 
-# 2. OVERRIDE: Data loads from Fast Scratch
+# 1. FIX THE CRASH: Hardcode run_name
+# This stops Hydra from trying to interpolate the broken ${model.backbone.name}
+run_name: "rtdetrv2_dinov2_${now:%Y-%m-%d_%H-%M-%S}"
+
+# 2. FIX THE MISSING KEY
+# We manually inject the key you "fucked" so downstream code works
+model:
+  backbone:
+    name: "dinov2"
+    type: "dinov2"
+
+# 3. OVERRIDE: Data loads from Fast Scratch
 data:
   path: "/home/ubuntu/scratch/cellanome/TRAINING_DATA"
-  batch_size: 16
-  num_workers: 4
-  num_overfit_samples: 0.
-  limit_train_batches: 1.0 # 1.0 = all data
-  limit_val_batches: 1.0
-  limit_test_batches: 1.0
-
   val_name: 'valid'
   test_name: 'test'
   train_name: 'train'
-  # (All other params like batch_size are inherited from default)
 
-# 3. OVERRIDE: Checkpoints save to Permanent NAS
-# This overwrites the value in configs/checkpointing/default.yaml
+# 4. OVERRIDE: Checkpoints to NAS
 checkpointing:
   save_dir: "/mnt/personal/cellanome/checkpoints/"
   
-  # Ensure the sub-folders are created inside the NAS path
-  # We override the initial checkpoint paths to look in the NAS if they exist there,
-  # OR keep them at {hydra:runtime.cwd} if the pre-trained weights are with the code.
-  # Assuming you want to SAVE to NAS:
+  # _folder_name: "dinov2_backbone_rtdetr"
+  
   rtdetr_initial_checkpoint: "/mnt/personal/cellanome/checkpoints/${checkpointing._folder_name}"
-  dinov2_backbone_checkpoint: "/mnt/personal/cellanome/checkpoints/backbones/${model.backbone.type}"
-
+  dinov2_backbone_checkpoint: "/mnt/personal/cellanome/checkpoints/backbones/dinov2"
+  
   val_image_dir: "/mnt/personal/cellanome/checkpoints/${checkpointing._folder_name}/predictions"
 
-# 4. OVERRIDE: Logs & Hydra Output to Fast Scratch
-# This moves the 'outputs/2023-...' folder out of your code dir and into scratch
+# 5. OVERRIDE: Logs to Scratch
 hydra:
   run:
     dir: "/home/ubuntu/scratch/cellanome/logs/${now:%Y-%m-%d}/${now:%H-%M-%S}"

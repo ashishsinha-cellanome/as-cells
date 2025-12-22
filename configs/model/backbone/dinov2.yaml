@@ -3,6 +3,7 @@
 
 type: "dinov2"
 pretrained_name_or_path: "facebook/dinov2-base"
+name: "dinov2"  # Matches the supported model names
 output_indices_for_fpn: [3,7,11]
 fpn_type: 'fused'
 fusion_method: 'conv'
