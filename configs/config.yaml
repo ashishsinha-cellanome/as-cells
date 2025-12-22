@@ -6,6 +6,7 @@ defaults:
   - model: rtdetr_base
   - model/backbone: dinov2
   - optimizer: adamw_scaled
+  - scheduler: cosine_warmup
   - trainer: default
   - checkpointing: default
   - logging: default
@@ -20,9 +21,9 @@ debug: false
 test_only: false
 
 # file/folder names to use 
-val_name: 'test'
-test_name: 'test'
-train_name: 'train'
+val_name: ${data.val_name}
+test_name: ${data.test_name}
+train_name: ${data.train_name}
 
 training:
   profiler:

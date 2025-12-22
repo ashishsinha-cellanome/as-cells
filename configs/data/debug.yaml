@@ -2,16 +2,20 @@
 # Overrides for a fast debug run with 10 batches.
 
 # data:
-  path: "/global/home/ashish.sinha/cellanome/TRAINING_DATA"
-  model_input_size: 672
-  min_random_scale: 0.7
-  max_random_scale: 1.0
-  p_noise: 0.25
-  org_images_in_model_input_size: true
+path: "/global/home/ashish.sinha/cellanome/TRAINING_DATA"
+model_input_size: 672
+min_random_scale: 0.7
+max_random_scale: 1.0
+p_noise: 0.25
+org_images_in_model_input_size: true
 
-  batch_size: 1
-  num_workers: 4
-  limit_train_batches: 10 
-  limit_val_batches: 10
-  limit_test_batches: 10
-  num_overfit_samples: 10
+batch_size: 1
+num_workers: 4
+limit_train_batches: 10 
+limit_val_batches: 10
+limit_test_batches: 10
+num_overfit_samples: 10
+
+val_name: 'valid'
+test_name: 'test'
+train_name: 'train'

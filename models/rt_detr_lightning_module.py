@@ -442,12 +442,12 @@ class RTDETRLightningModule(pl.LightningModule):
                 # 'verbose': Trueq
             }
             # schedulers = [ scheduler, scheduler ]
-        elif sch_config.type == "cosine":
+        elif sch_config.type == "cosine_warmup":
             scheduler = {
                 'scheduler': torch.optim.lr_scheduler.CosineAnnealingLR(
                     optimizer,
                     T_max=self.config.trainer.max_epochs - sch_config.warmup_steps,
-                    eta_min=opt_config.lr * 0.01
+                    eta_min=sch_config.eta_min
                 ),
                 'interval': 'epoch'
             }
