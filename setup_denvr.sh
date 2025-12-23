@@ -19,16 +19,27 @@ sudo mount /dev/vdc /home/ubuntu/scratch
 # change the ownership to ubuntu user
 sudo chown ubuntu:ubuntu /home/ubuntu/scratch
 
+# clone the git repo
+echo "Cloning the git repository..."
+git clone https://github.com/ashishsinha-cellanome/as-cells.git -b ashish /home/ubuntu/scratch/code
+echo "Repo cloned at /home/ubuntu/scratch/code"
+
 # create data directory
 mkdir -p /home/ubuntu/scratch/cellanome/{SMALL_TRAINING_DATA2,TRAINING_DATA}
 echo "Data directories created"
 
+# skip unpacking small data 
 # unpack data from /personal to local scratch
-echo "Unpacking small-data.tar.xz data..."
-time tar -xvf /mnt/personal/small-data.tar.xz -C /home/ubuntu/scratch/cellanome/
-echo "Unpacking small-data.tar.xz complete."
+# echo "Unpacking small-data.tar.xz data..."
+# time tar -xvf /mnt/personal/small-data.tar.xz -C /home/ubuntu/scratch/cellanome/
+# echo "Unpacking small-data.tar.xz complete."
 
 # unpack all data from /personal to local scratch
 echo "Unpacking train.tar.xz data..."
 time tar -xvf /mnt/personal/train.tar.xz -C /home/ubuntu/scratch/cellanome/TRAINING_DATA
 echo "Unpacking train.tar.xz complete."
+
+# cd to code dir
+cd /home/ubuntu/scratch/code
+echo "Changed directory to /home/ubuntu/scratch/code"
+echo "Run training code from here"
