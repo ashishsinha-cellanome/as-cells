@@ -1,0 +1,7 @@
+defaults:
+  - default
+
+type: "onecycle"
+milestones: [10, 15, 25]
+gamma: 0.9
+pct_start: 0.1

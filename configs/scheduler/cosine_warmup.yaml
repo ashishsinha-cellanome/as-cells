@@ -1,10 +1,13 @@
 # configs/scheduler/cosine_warmup.yaml
 defaults:
-  - _self_
-
-type: "CosineAnnealingLR"
+  - default
+  
+type: "cosine"
 T_max: ${trainer.max_epochs} # Matches total epochs
 eta_min: 1e-6                 # Minimum LR at the end
+warmup_steps: 5000
+factor: 0.9
+patience: 5
 
 # IMPORTANT: Combine this with a Linear Warmup in your Trainer code
 # or use a composite scheduler if your library supports it.

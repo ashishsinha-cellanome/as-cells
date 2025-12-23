@@ -2,30 +2,56 @@ import hydra
 from omegaconf import OmegaConf
 from models.dinov2_backbone_with_fpn import Dinov2BackBoneWithFPN
 
-def build_backbone(backbone_cfg, rtdetr_model_name):
+def get_backbone_unique_id(backbone_cfg, rtdetr_model_name):
     """
-    Factory function to initialize different backbones based on config.
-    Returns: (model, config_object, unique_cache_string)
+    Pure function: Generates the unique hash string from config.
+    Does NOT load model or weights.
     """
     model_type = backbone_cfg.type
-    
-    # Start the unique string with the backbone type
     unique_str = f"_{model_type}"
     
-    # --- CRITICAL: Add RT-DETR model name to hash ---
-    # This ensures r18 and r50 get different cached backbones 
-    # (since they require different channel sizes)
+    # RT-DETR model name
     unique_str += f"_{rtdetr_model_name}"
 
-    # Add other key backbone parameters to the hash
+    # Hash key parameters
     cfg_dict = OmegaConf.to_container(backbone_cfg, resolve=True)
     keys_to_hash = ['fpn_type', 'scale_factor', 'output_indices_for_fpn', 'upscale_method']
     
     for k in keys_to_hash:
         if k in cfg_dict:
-            # Clean up list string representations for filenames
             val = str(cfg_dict[k]).replace('[','').replace(']','').replace(', ','_').replace("'", "")
             unique_str += f"_{k}_{val}"
+            
+    if model_type == "resnet":
+        unique_str = f"_{model_type}_{backbone_cfg.name}_freeze_stage_{backbone_cfg.freeze_at_stage}"
+        
+    return unique_str
+
+def build_backbone(backbone_cfg, rtdetr_model_name):
+    """
+    Factory function to initialize different backbones based on config.
+    Returns: (model, config_object, unique_cache_string)
+    """
+    unique_str = get_backbone_unique_id(backbone_cfg, rtdetr_model_name)
+    model_type = backbone_cfg.type
+    
+    # # Start the unique string with the backbone type
+    # unique_str = f"_{model_type}"
+    
+    # # --- CRITICAL: Add RT-DETR model name to hash ---
+    # # This ensures r18 and r50 get different cached backbones 
+    # # (since they require different channel sizes)
+    # unique_str += f"_{rtdetr_model_name}"
+
+    # # Add other key backbone parameters to the hash
+    # cfg_dict = OmegaConf.to_container(backbone_cfg, resolve=True)
+    # keys_to_hash = ['fpn_type', 'scale_factor', 'output_indices_for_fpn', 'upscale_method']
+    
+    # for k in keys_to_hash:
+    #     if k in cfg_dict:
+    #         # Clean up list string representations for filenames
+    #         val = str(cfg_dict[k]).replace('[','').replace(']','').replace(', ','_').replace("'", "")
+    #         unique_str += f"_{k}_{val}"
 
     if model_type == "dinov2":
         # Resolve interpolation before passing to class

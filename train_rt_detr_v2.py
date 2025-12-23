@@ -14,6 +14,7 @@ from pytorch_lightning.loggers import WandbLogger
 from lightning.pytorch.profilers import SimpleProfiler, AdvancedProfiler
 from transformers import RTDetrImageProcessor, RTDetrV2ForObjectDetection
 from torchvision.datasets import CocoDetection
+import torch.distributed as dist
 
 # --- HYDRA & OMEGACONF ---
 from omegaconf import DictConfig, OmegaConf
@@ -29,12 +30,17 @@ from models.custom_rt_detr_with_dinov2_backbone import (
 from models.dinov2_backbone_with_fpn import Dinov2BackBoneWithFPN, Dinov2BackBoneWithFPNConfig
 from models.rt_detr_lightning_module import RTDETRLightningModule
 from data.coco_data_module import COCODataModule
-from models.backbone_factory import build_backbone,freeze_backbone_layers
+from models.backbone_factory import build_backbone,freeze_backbone_layers, get_backbone_unique_id
+from utils.train_utils import BackupToNASCallback
+
+def rank_zero_print(*args, **kwargs):
+    """Print only on the main process (Rank 0)."""
+    if not dist.is_initialized() or dist.get_rank() == 0:
+        print(*args, **kwargs)
 
 def create_initial_checkpoint(config: DictConfig) -> str:
     """
     Create initial RT-DETR checkpoint with DINOv2 backbone.
-    (This function is now Hydra-aware)
     """
     print("\n" + "="*80)
     print("Creating initial RT-DETR checkpoint with DINOv2 backbone...")
@@ -43,51 +49,53 @@ def create_initial_checkpoint(config: DictConfig) -> str:
     model_config = config.model
     checkpoint_config = config.checkpointing
     
-    # choose the backbone model
-    backbone_model, backbone_config_obj, unique_suffix = build_backbone(
-        model_config.backbone, 
-        model_config.rtdetr.model_name
-    )
-    print(f"DEBUG CHECK: backbone.type is '{model_config.backbone.type}'")
-    print(f"DEBUG CHECK: backbone.name is '{model_config.backbone.name}'")
+    # Determine suffix WITHOUT loading the model
+    unique_suffix = get_backbone_unique_id(model_config.backbone, model_config.rtdetr.model_name)
     
-    # Check both "official" AND "resnet" to catch the mismatch
-    if model_config.backbone.type in ["official", "resnet"]: 
-         base_model_name = model_config.backbone.name
-         print(f"DEBUG: Logic selected OFFICIAL name: {base_model_name}")
-    else:
-         base_model_name = model_config.rtdetr.model_name
-         print(f"DEBUG: Logic selected DEFAULT name: {base_model_name}")
-
-    print(f"Loading Base Weights: PekingU/{base_model_name}")
-    
-    base_rtdetr_path = hydra.utils.to_absolute_path(checkpoint_config.rtdetr_initial_checkpoint)
-    # If using official backbone, we append the model name to ensure uniqueness
     if model_config.backbone.type == "resnet":
         full_suffix = f"{unique_suffix}" 
     else:
         full_suffix = f"{unique_suffix}_{model_config.rtdetr.model_name}"
+    base_rtdetr_path = hydra.utils.to_absolute_path(checkpoint_config.rtdetr_initial_checkpoint)
+    local_path = f"{base_rtdetr_path}{full_suffix}"
 
-    versioned_rtdetr_path = f"{base_rtdetr_path}{full_suffix}"
+    # NAS Path (Safe get)
+    nas_base = checkpoint_config.get("nas_initial_checkpoint")
+    nas_path = None
+    if nas_base:
+        nas_path = f"{hydra.utils.to_absolute_path(nas_base)}{full_suffix}"
 
-    # 3. Construct Versioned Paths
-    # Base: .../dinov2_backbone_with_fpn
-    # New:  .../dinov2_backbone_with_fpn_indices_4_8_12
-    # base_backbone = hydra.utils.to_absolute_path(checkpoint_config.dinov2_backbone_checkpoint)
-    # base_rtdetr = hydra.utils.to_absolute_path(checkpoint_config.rtdetr_initial_checkpoint)
+    # --- 2. FAST CHECK (Scratch) ---
+    if os.path.exists(local_path) and len(os.listdir(local_path)) > 0:
+        # print(f"✓ Found weights in SCRATCH: {local_path}")
+        rank_zero_print( f"✓ Found weights in SCRATCH: {local_path}")
+
+        return local_path
+
+    # Only if NAS is configured and file exists there
+    if nas_path and os.path.exists(nas_path) and len(os.listdir(nas_path)) > 0:
+        rank_zero_print(f"✓ Found weights on NAS: {nas_path}")
+        rank_zero_print(f"  -> Copying to scratch...")
+        try:
+            shutil.copytree(nas_path, local_path)
+            rank_zero_print("  -> Copy complete.")
+            return local_path
+        except Exception as e:
+            rank_zero_print(f"  -> Copy failed ({e}). Creating new...")
+        
+    rank_zero_print("! Weights not found. Starting Heavy Initialization...")
+
+    backbone_model, backbone_config_obj, _ = build_backbone(
+        model_config.backbone, 
+        model_config.rtdetr.model_name
+    )
     
-    # # versioned_backbone_path = f"{base_backbone}{indices_suffix}"
-    # # versioned_rtdetr_path = f"{base_rtdetr}{indices_suffix}"
-
-    # # print(f"Target Architecture Indices: {target_indices}")
-    # # print(f"Target Checkpoint Path:      {versioned_rtdetr_path}")
-    # # The suffix now already contains the rtdetr model name, so we just append it
-    # versioned_backbone_path = f"{base_backbone}{unique_suffix}"
-    # versioned_rtdetr_path = f"{base_rtdetr}{unique_suffix}"
-
-    # print(f"Backbone Type:          {model_config.backbone.type}")
-    # print(f"RT-DETR Variant:        {model_config.rtdetr.model_name}")
-    # print(f"Target Checkpoint Path: {versioned_rtdetr_path}")
+    if model_config.backbone.type in ["official", "resnet"]:
+         base_model_name = model_config.backbone.name 
+    else:
+         base_model_name = model_config.rtdetr.model_name
+    
+    rank_zero_print(f"Loading Base Weights: PekingU/{base_model_name}")
 
     # # TODO: remove later
     # # force ckpt creation for every run 
@@ -111,110 +119,71 @@ def create_initial_checkpoint(config: DictConfig) -> str:
     # else:
     #     print(f"✓ Found cached backbone at: {versioned_backbone_path}")
 
-    # # TODO: remove later
-    # if True: #not os.path.exists(versioned_rtdetr_path) or len(os.listdir(versioned_rtdetr_path)) == 0:
-    #     print(f"\n[INFO] Cached RT-DETR not found. Creating: {versioned_rtdetr_path}")
-    #     os.makedirs(versioned_rtdetr_path, exist_ok=True)
-        
-    #     id2label = {int(k): v for k, v in model_config.label_map.items()}
-    #     label2id = {v: k for k, v in id2label.items()}
-        
-    #     # Get overrides
-    #     # breakpoint()
-    #     overrides = OmegaConf.to_container(model_config.rtdetr, resolve=True)
-    #     # Clean up keys that aren't model arguments
-    #     for k in ["pretrained_name_or_path", "config_overrides", "model_name"]:
-    #         overrides.pop(k, None)
-
-    #     print(f"Loading base RT-DETR to inject backbone...")
-    #     pretrained_rt_detr = RTDetrV2ForObjectDetection.from_pretrained(
-    #         model_config.rtdetr.pretrained_name_or_path,
-    #         id2label=id2label,
-    #         label2id=label2id,
-    #         ignore_mismatched_sizes=True,
-    #         **overrides
-    #     )
-
-    #     # TODO: check and remove later
-    #     # Inject Custom Backbone Config
-    #     pretrained_model_config_dict = pretrained_rt_detr.config.to_dict()
-    #     rt_detr_config = RTDetrV2ConfigWithCustomBackBone(**pretrained_model_config_dict)
-    #     rt_detr_config.backbone_config = backbone_config_obj
-        
-    #     # Inject Backbone Model
-    #     pretrained_rt_detr.config = rt_detr_config
-    #     pretrained_rt_detr.model.backbone = backbone_model
-    #     pretrained_rt_detr.save_pretrained(versioned_rtdetr_path)
-        
-    #     # Load the SPECIFIC backbone version we just checked/created
-    #     # dinov2_backbone_config = Dinov2BackBoneWithFPNConfig.from_pretrained(versioned_backbone_path)
-    #     # dinov2_backbone = Dinov2BackBoneWithFPN.from_pretrained(versioned_backbone_path)
-        
-    #     # pretrained_model_config_dict = pretrained_rt_detr.config.to_dict()
-    #     # rt_detr_config = RTDetrV2ConfigWithCustomBackBone(**pretrained_model_config_dict)
-    #     # rt_detr_config.backbone_config = dinov2_backbone_config
-        
-    #     # pretrained_rt_detr.config = rt_detr_config
-    #     # pretrained_rt_detr.model.backbone = dinov2_backbone
-    #     # pretrained_rt_detr.save_pretrained(versioned_rtdetr_path)
-        
-    #     # print(f"✓ RT-DETR initialized and saved to: {versioned_rtdetr_path}")
-    # else:
-    #     print(f"✓ Found cached RT-DETR at: {versioned_rtdetr_path}")
-    
     # # Return the specific versioned path
     # return versioned_rtdetr_path
-    if True: # Replace with os.path.exists check
-        print(f"\n[INFO] Creating/Loading model at: {versioned_rtdetr_path}")
-        os.makedirs(versioned_rtdetr_path, exist_ok=True)
-        
-        id2label = {int(k): v for k, v in model_config.label_map.items()}
-        label2id = {v: k for k, v in id2label.items()}
-        
-        # Determine which base model to load
-        # If official, we force the base model to be the one specified in backbone config
-        if model_config.backbone.type in ["official", "resnet"]:
-             base_model_name = model_config.backbone.name 
+    id2label = {int(k): v for k, v in model_config.label_map.items()}
+    label2id = {v: k for k, v in id2label.items()}
+    overrides = OmegaConf.to_container(model_config.rtdetr, resolve=True)
+    for k in ["pretrained_name_or_path", "config_overrides", "model_name"]:
+        overrides.pop(k, None)
+
+    model = RTDetrV2ForObjectDetection.from_pretrained(
+        f"PekingU/{base_model_name}",
+        id2label=id2label,
+        label2id=label2id,
+        ignore_mismatched_sizes=True,
+        **overrides
+    )
+    # Inject Backbone
+    if config.model.backbone.type == "resnet":
+        if not model_config.backbone.train_backbone:
+            freeze_backbone_layers(model, freeze_at_stage=5)
         else:
-             base_model_name = model_config.rtdetr.model_name
+            freeze_backbone_layers(model, freeze_at_stage=model_config.backbone.freeze_at_stage)
+    else:
+        pretrained_model_config_dict = model.config.to_dict()
+        rt_detr_config = RTDetrV2ConfigWithCustomBackBone(**pretrained_model_config_dict)
+        rt_detr_config.backbone_config = backbone_config_obj
+        model.config = rt_detr_config
+        model.model.backbone = backbone_model
 
-        print(f"Loading Base Weights: PekingU/{base_model_name}")
-        
-        # Load Model
-        overrides = OmegaConf.to_container(model_config.rtdetr, resolve=True)
-        for k in ["pretrained_name_or_path", "config_overrides", "model_name"]:
-            overrides.pop(k, None)
+    # Save to Scratch (Always)
+    rank_zero_print(f"Saving new model to Scratch: {local_path}")
+    model.save_pretrained(local_path)
 
-        model = RTDetrV2ForObjectDetection.from_pretrained(
-            f"PekingU/{base_model_name}",
-            id2label=id2label,
-            label2id=label2id,
-            ignore_mismatched_sizes=True,
-            **overrides
-        )
-
-        # --- LOGIC FORK ---
-        if  config.model.backbone.type == "resnet":
-            # Case A: Official Backbone
-            print("✓ Using Official ResNet Backbone")
-            # Freeze layers if requested
-            if not model_config.backbone.train_backbone:
-                freeze_backbone_layers(model, model_config.backbone.freeze_at_stage)
-        else:
-            # Case B: Custom (DINOv2) Backbone
-            print("✓ Injecting Custom Backbone")
+    #     # --- LOGIC FORK ---
+    #     if  config.model.backbone.type == "resnet":
+    #         # Case A: Official Backbone
+    #         print("✓ Using Official ResNet Backbone")
+    #         # Freeze layers if requested
+    #         if not model_config.backbone.train_backbone:
+    #             freeze_backbone_layers(model, model_config.backbone.freeze_at_stage)
+    #     else:
+    #         # Case B: Custom (DINOv2) Backbone
+    #         print("✓ Injecting Custom Backbone")
             
-            # (Your existing injection logic)
-            pretrained_model_config_dict = model.config.to_dict()
-            rt_detr_config = RTDetrV2ConfigWithCustomBackBone(**pretrained_model_config_dict)
-            rt_detr_config.backbone_config = backbone_config_obj
-            model.config = rt_detr_config
-            model.model.backbone = backbone_model
+    #         # (Your existing injection logic)
+    #         pretrained_model_config_dict = model.config.to_dict()
+    #         rt_detr_config = RTDetrV2ConfigWithCustomBackBone(**pretrained_model_config_dict)
+    #         rt_detr_config.backbone_config = backbone_config_obj
+    #         model.config = rt_detr_config
+    #         model.model.backbone = backbone_model
             
-        model.save_pretrained(versioned_rtdetr_path)
-        print(f"✓ Model saved to {versioned_rtdetr_path}")
+    #     model.save_pretrained(versioned_rtdetr_path)
+    #     print(f"✓ Model saved to {versioned_rtdetr_path}")
 
-    return versioned_rtdetr_path
+    # return versioned_rtdetr_path
+
+    # Backup to NAS (If available)
+    if nas_path:
+        rank_zero_print(f"Mirroring new model to NAS: {nas_path}")
+        try:
+            if not os.path.exists(nas_path):
+                shutil.copytree(local_path, nas_path)
+        except Exception as e:
+            rank_zero_print(f"Warning: Backup to NAS failed: {e}")
+
+    return local_path
 
 
 def setup_model(config: DictConfig) -> RTDETRLightningModule:
@@ -227,23 +196,23 @@ def setup_model(config: DictConfig) -> RTDETRLightningModule:
     else:
         model_checkpoint_path = hydra.utils.to_absolute_path(config.checkpointing.rtdetr_initial_checkpoint)
         if not os.path.exists(model_checkpoint_path):
-            print(f"WARNING: Checkpoint not found at {model_checkpoint_path}")
-            print("Creating initial checkpoint...")
+            rank_zero_print(f"WARNING: Checkpoint not found at {model_checkpoint_path}")
+            rank_zero_print("Creating initial checkpoint...")
             model_checkpoint_path = create_initial_checkpoint(config)
     
-    print(f"\nLoading RT-DETR model from: {model_checkpoint_path}")
+    rank_zero_print(f"\nLoading RT-DETR model from: {model_checkpoint_path}")
     model = RTDetrV2ForObjectDetectionWithCustomBackbone.from_pretrained(
         model_checkpoint_path,
     )
     if config.model.backbone.type == "resnet":
         if not config.model.backbone.train_backbone:
-            print("[INFO] Re-applying backbone freezing after load...")
+            rank_zero_print("[INFO] Re-applying backbone freezing after load...")
             freeze_backbone_layers(model, config.model.backbone.freeze_at_stage)
     
     elif config.model.backbone.type == "dinov2":
          # Re-freeze DINOv2 if needed (usually handled by DINO class init, 
          # but good to ensure if you are loading a full model checkpoint)
-         print("[INFO] Ensuring DINOv2 backbone is frozen...")
+         rank_zero_print("[INFO] Ensuring DINOv2 backbone is frozen...")
          for name, param in model.named_parameters():
              if "model.backbone.backbone" in name: # The ViT part
                  param.requires_grad = False
@@ -254,7 +223,7 @@ def setup_model(config: DictConfig) -> RTDETRLightningModule:
     rtdetr_overrides.pop("config_overrides", None)
     rtdetr_overrides.pop("model_name", None)
     if rtdetr_overrides:
-        print("Checking for model config overrides...")
+        rank_zero_print("Checking for model config overrides...")
         changes_made = False
         for key, value in rtdetr_overrides.items():
             if hasattr(model.config, key):
@@ -262,15 +231,15 @@ def setup_model(config: DictConfig) -> RTDETRLightningModule:
                 # Only print and set if the value has changed
                 if current_value != value:
                     if not changes_made:
-                        print("Applying config overrides to loaded model:")
+                        rank_zero_print("Applying config overrides to loaded model:")
                         changes_made = True
-                    print(f"  > Setting model.config.{key}: {current_value} -> {value}")
+                    rank_zero_print(f"  > Setting model.config.{key}: {current_value} -> {value}")
                     setattr(model.config, key, value)
             else:
-                print(f"  > WARNING: model.config has no attribute '{key}' (cannot set)")
+                rank_zero_print(f"  > WARNING: model.config has no attribute '{key}' (cannot set)")
         
         if not changes_made:
-            print("...Loaded model config already matches overrides.")
+            rank_zero_print("...Loaded model config already matches overrides.")
     
     processor = RTDetrImageProcessor.from_pretrained(config.model.rtdetr.pretrained_name_or_path)
     processor.do_normalize = True
@@ -301,7 +270,7 @@ def setup_model(config: DictConfig) -> RTDETRLightningModule:
         test_coco_gt=val_coco_gt if config.debug else test_coco_gt,
     )
     
-    print(f"✓ Model loaded successfully")
+    rank_zero_print(f"✓ Model loaded successfully")
     return lightning_model, processor
 
 
@@ -322,7 +291,7 @@ def setup_data(config: DictConfig, processor) -> COCODataModule:
         config = config,
     )
     
-    print(f"✓ Data module configured for: {data_config.path}")
+    rank_zero_print(f"✓ Data module configured for: {data_config.path}")
     return data_module
 
 
@@ -355,11 +324,15 @@ def setup_callbacks(config: DictConfig):
             every_n_epochs=checkpoint_config.every_n_epochs,
             verbose=True,
         ),
-        LearningRateMonitor(logging_interval='epoch'),
+        LearningRateMonitor(logging_interval='step'),
         ModelSummary(max_depth=2),
     ]
-    
-    print(f"✓ Callbacks configured")
+    if "backup_dir" in checkpoint_config and checkpoint_config.backup_dir:
+        # Resolve path (handle ${hydra...} if needed, though usually resolved by now)
+        backup_path = hydra.utils.to_absolute_path(checkpoint_config.backup_dir)
+        callbacks.append(BackupToNASCallback(backup_dir=backup_path))
+
+    rank_zero_print(f"✓ Callbacks configured")
     return callbacks
 
 def setup_logger(config: DictConfig):
@@ -367,7 +340,7 @@ def setup_logger(config: DictConfig):
     wandb_config = config.logging.wandb
     
     if not wandb_config.enabled:
-        print("✓ WandB logging disabled")
+        rank_zero_print("✓ WandB logging disabled")
         return None
     
     logger = WandbLogger(
@@ -383,7 +356,7 @@ def setup_logger(config: DictConfig):
         
     )
     
-    print(f"✓ WandB logger configured - Project: {wandb_config.project}")
+    rank_zero_print(f"✓ WandB logger configured - Project: {wandb_config.project}")
     return logger
 
 @hydra.main(config_path="configs", config_name="config.yaml", version_base=None)
@@ -408,7 +381,7 @@ def main(config: DictConfig):
     hydra_cfg = HydraConfig.get()
     
     if hydra_cfg.mode == RunMode.MULTIRUN:
-        print(f"🚀 Detected Hydra Sweep (Job {hydra_cfg.job.num})")
+        rank_zero_print(f"🚀 Detected Hydra Sweep (Job {hydra_cfg.job.num})")
         
         # A. Set WandB Group
         # We group by the directory name Hydra created for this sweep (shared by all jobs)
@@ -433,13 +406,13 @@ def main(config: DictConfig):
                 
                 # Add to WandB tags
                 config.logging.wandb.tags.append(tag)
-                print(f"   -> Added WandB tag: {tag}")
+                rank_zero_print(f"   -> Added WandB tag: {tag}")
 
     # --- Hydra handles all config loading and merging ---
     # The 'config' object is already the final, merged config
     
     if config.debug:
-        print ('Running in DEBUG mode')
+        rank_zero_print ('Running in DEBUG mode')
         OmegaConf.set_struct(config, False) # Unlock config
         # Apply debug settings
         config.trainer.num_overfit_samples = 10
@@ -456,7 +429,7 @@ def main(config: DictConfig):
     # breakpoint()
     ckpt_path = config.initialization.load_from_checkpoint
     if ckpt_path:
-        print(f"🔄 Manual Resume: Loading specified checkpoint: {ckpt_path}")
+        rank_zero_print(f"🔄 Manual Resume: Loading specified checkpoint: {ckpt_path}")
         ckpt_path = hydra.utils.to_absolute_path(ckpt_path)
     
     elif config.initialization.auto_resume:
@@ -464,10 +437,10 @@ def main(config: DictConfig):
         last_ckpt = os.path.join(run_save_dir, 'ckpts', "last.ckpt")
         
         if os.path.exists(last_ckpt):
-            print (f"🔄 Auto-Resume: Found existing 'last.ckpt' at {last_ckpt}")
+            rank_zero_print (f"🔄 Auto-Resume: Found existing 'last.ckpt' at {last_ckpt}")
             ckpt_path = last_ckpt
         else:
-            print (f"ℹ️  Auto-Resume: No 'last.ckpt' found in {last_ckpt}. Starting fresh.")
+            rank_zero_print (f"ℹ️  Auto-Resume: No 'last.ckpt' found in {last_ckpt}. Starting fresh.")
             ckpt_path = None
     else:
         ckpt_path = None
@@ -476,16 +449,16 @@ def main(config: DictConfig):
     # Set dynamic save_dir (relative to hydra's CWD)
     # This is now handled by ModelCheckpoint's dirpath
     
-    print("\n" + "="*80)
-    print("RT-DETR Training with DINOv2 Backbone (Hydra Edition)")
-    print("="*80 + "\n")
+    rank_zero_print("\n" + "="*80)
+    rank_zero_print("RT-DETR Training with DINOv2 Backbone (Hydra Edition)")
+    rank_zero_print("="*80 + "\n")
     
-    print("--- CWD (Hydra Output Dir) ---")
-    print(f"{os.getcwd()}\n")
+    rank_zero_print("--- CWD (Hydra Output Dir) ---")
+    rank_zero_print(f"{os.getcwd()}\n")
     
-    print("--- Final Configuration ---")
-    print(OmegaConf.to_yaml(config))
-    print("---------------------------")
+    rank_zero_print("--- Final Configuration ---")
+    rank_zero_print(OmegaConf.to_yaml(config))
+    rank_zero_print("---------------------------")
     
     # Set seed
     pl.seed_everything(config.seed, workers=True)
@@ -529,36 +502,36 @@ def main(config: DictConfig):
     if ckpt_path:
         ckpt_path = hydra.utils.to_absolute_path(ckpt_path)
         if not os.path.exists(ckpt_path):
-            print(f"WARNING: Checkpoint path not found: {ckpt_path}")
+            rank_zero_print(f"WARNING: Checkpoint path not found: {ckpt_path}")
             ckpt_path = None
     
     if config.test_only:
-        print("\n" + "="*80)
-        print("Running in TEST-ONLY mode")
-        print("="*80 + "\n")
+        rank_zero_print("\n" + "="*80)
+        rank_zero_print("Running in TEST-ONLY mode")
+        rank_zero_print("="*80 + "\n")
         if not ckpt_path:
             raise ValueError("Must provide a checkpoint path via 'initialization.load_from_checkpoint' for test-only mode.")
         
         trainer.test(model, datamodule=data_module, ckpt_path=ckpt_path)
     else:
-        print("\n" + "="*80)
-        print("Starting Training")
-        print("="*80 + "\n")
+        rank_zero_print("\n" + "="*80)
+        rank_zero_print("Starting Training")
+        rank_zero_print("="*80 + "\n")
 
         trainer.fit(model, datamodule=data_module, ckpt_path=ckpt_path)
         
-        print("\n" + "="*80)
-        print("Training Complete!")
-        print("="*80 + "\n")
+        rank_zero_print("\n" + "="*80)
+        rank_zero_print("Training Complete!")
+        rank_zero_print("="*80 + "\n")
         
         # Test the best model
         if trainer.checkpoint_callback.best_model_path:
-            print(f"Best model: {trainer.checkpoint_callback.best_model_path}")
-            print(f"Best val_map: {trainer.checkpoint_callback.best_model_score:.4f}")
-            print("\nRunning test evaluation on BEST checkpoint...")
+            rank_zero_print(f"Best model: {trainer.checkpoint_callback.best_model_path}")
+            rank_zero_print(f"Best val_map: {trainer.checkpoint_callback.best_model_score:.4f}")
+            rank_zero_print("\nRunning test evaluation on BEST checkpoint...")
             trainer.test(model, datamodule=data_module, ckpt_path='best')
         else:
-            print("\nNo best model found. Testing disabled.")
+            rank_zero_print("\nNo best model found. Testing disabled.")
     
     wandb.finish()
 

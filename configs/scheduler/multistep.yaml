@@ -1,0 +1,6 @@
+defaults:
+  - default
+
+type: "multistep"
+milestones: [10, 15, 25]
+gamma: 0.9

@@ -89,7 +89,7 @@ class RTDETRLightningModule(pl.LightningModule):
         # debug setting
         self.debug_train_image_ids = set() 
         self.config = config
-        self.warmup_steps = self.config.optimizer.scheduler.warmup_steps
+        self.warmup_steps = self.config.scheduler.warmup_steps
         self.base_lr = self.config.optimizer.optimizer.lr
         self.validation_step_outputs = []
         self.test_step_outputs = []
@@ -361,7 +361,7 @@ class RTDETRLightningModule(pl.LightningModule):
         # Read from the optimizer and scheduler config groups
         # breakpoint()
         opt_config = self.config.optimizer.optimizer
-        sch_config = self.config.optimizer.scheduler
+        sch_config = self.config.scheduler
         
         # Separate parameters: freeze DINOv2, train FPN and rest of model
         backbone_params = []
@@ -381,31 +381,6 @@ class RTDETRLightningModule(pl.LightningModule):
             else:
                 other_params.append(param)
 
-        # # breakpoint()
-        # if self.trainer.is_global_zero:
-        #     print(f"[Optimizer] Backbone params to update: {len(backbone_params)}")
-        #     print(f"[Optimizer] Head/Other params to update: {len(other_params)}")
-        
-        # TODO: same as HF, comment below to change LR
-        # trainable_params = [
-        #     param for param in self.model.parameters() if param.requires_grad
-        # ]
-        # optimizer = torch.optim.AdamW(
-        #     trainable_params,
-        #     lr=self.learning_rate,
-        #     weight_decay=self.weight_decay
-        # )
-        # for name, param in self.model.named_parameters():
-        #     if 'model.backbone.backbone' in name:
-        #         # DINOv2 backbone - frozen
-        #         param.requires_grad = False
-        #     elif 'model.backbone' in name:
-        #         # FPN part of backbone - trainable
-        #         backbone_params.append(param)
-        #     else:
-        #         # Rest of model - trainable
-        #         other_params.append(param)
-        
         # Different learning rates for different parts
         # breakpoint()
         optimizer = torch.optim.AdamW([
@@ -427,6 +402,8 @@ class RTDETRLightningModule(pl.LightningModule):
         )
         milestones = [sch_config.warmup_steps]
         
+        total_steps = self.trainer.estimated_stepping_batches
+        
         # Configure scheduler
         if sch_config.type == "reduce_lr_on_plateau":
             scheduler = {
@@ -442,17 +419,17 @@ class RTDETRLightningModule(pl.LightningModule):
                 # 'verbose': Trueq
             }
             # schedulers = [ scheduler, scheduler ]
-        elif sch_config.type == "cosine_warmup":
+        elif sch_config.type == "cosine":
             scheduler = {
                 'scheduler': torch.optim.lr_scheduler.CosineAnnealingLR(
                     optimizer,
-                    T_max=self.config.trainer.max_epochs - sch_config.warmup_steps,
+                    T_max= total_steps - sch_config.warmup_steps,
                     eta_min=sch_config.eta_min
                 ),
                 'interval': 'epoch'
             }
             # schedulers = [warmup_scheduler, scheduler]
-        else:
+        elif sch_config.type == "lambda":
             # Linear warmup + constant
             def lr_lambda(step):
                 if step < sch_config.warmup_steps:
@@ -462,13 +439,39 @@ class RTDETRLightningModule(pl.LightningModule):
                 'scheduler': torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda),
                 'interval': 'step'
             }
-            # schedulers = [warmup_scheduler, scheduler]
-        
-        # sequential_scheduler = torch.optim.lr_scheduler.SequentialLR(
-        #     optimizer, 
-        #     schedulers=schedulers, 
-        #     milestones=milestones
-        # )
+
+        elif sch_config.type == 'step':
+            scheduler = {
+                'scheduler': torch.optim.lr_scheduler.StepLR(
+                    optimizer,
+                    step_size=sch_config.step_size,
+                    gamma=sch_config.gamma
+                ),
+                'interval': 'epoch'
+            }
+        elif sch_config.type == 'multistep':
+            scheduler = {
+                'scheduler': torch.optim.lr_scheduler.MultiStepLR(
+                    optimizer,
+                    milestones=sch_config.milestones,
+                    gamma=sch_config.gamma
+                ),
+                'interval': 'epoch'
+            }
+        elif sch_config.type == 'onecycle':
+            scheduler = {
+                'scheduler': torch.optim.lr_scheduler.OneCycleLR(
+                    optimizer,
+                    max_lr=opt_config.lr,
+                    total_steps=total_steps,
+                    pct_start= sch_config.pct_start,
+                    anneal_strategy='cos',
+                    div_factor=25.0,
+                    final_div_factor=1e3
+                ),
+                'interval': 'step'
+            }
+
         return {'optimizer': optimizer, 'lr_scheduler': scheduler}
 
     def _get_scheduler_with_warmup(self, optimizer, sch_config):
@@ -550,9 +553,10 @@ class RTDETRLightningModule(pl.LightningModule):
         
     def optimizer_step(self, epoch, batch_idx, optimizer, optimizer_closure):
         # --- 1. Warmup Logic (Apply BEFORE step) ---
-        warmup_steps = self.config.optimizer.scheduler.warmup_steps
+        warmup_steps = self.config.scheduler.warmup_steps
+        is_one_cycle = self.config.scheduler.type == "onecycle"
         
-        if self.trainer.global_step < warmup_steps:
+        if self.trainer.global_step < warmup_steps and not is_one_cycle:
             # Calculate linear scale (0.0 to 1.0)
             lr_scale = min(1.0, float(self.trainer.global_step + 1) / float(warmup_steps))
             
