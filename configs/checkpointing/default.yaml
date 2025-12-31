@@ -1,6 +1,7 @@
 # configs/checkpointing/default.yaml
 
 # checkpointing:
+  _folder_name: "${model.backbone.model_name}_backbone_${model.rtdetr.model_name}"
   save_dir: "checkpoints/" 
   save_top_k: 1
   monitor: "val_map"
@@ -8,13 +9,6 @@
   save_last: true
   every_n_epochs: 1
   
-  # --- Dynamic Folder Naming ---
-  # We construct a unique folder name based on the backbone type
-  # 1. If backbone.type is 'dinov2', this resolves to "dinov2"
-  # 2. If backbone.type is 'resnet' or 'official', it resolves to that
-  # We also append the RT-DETR variant name (r18/r50/r101) to keep them separate
-  
-  _folder_name: "${model.backbone.type}_backbone_${model.rtdetr.model_name}"
 
   # Paths for initial model creation
   # Uses the dynamic folder name defined above
