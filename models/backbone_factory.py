@@ -35,24 +35,6 @@ def build_backbone(backbone_cfg, rtdetr_model_name):
     unique_str = get_backbone_unique_id(backbone_cfg, rtdetr_model_name)
     model_type = backbone_cfg.type
     
-    # # Start the unique string with the backbone type
-    # unique_str = f"_{model_type}"
-    
-    # # --- CRITICAL: Add RT-DETR model name to hash ---
-    # # This ensures r18 and r50 get different cached backbones 
-    # # (since they require different channel sizes)
-    # unique_str += f"_{rtdetr_model_name}"
-
-    # # Add other key backbone parameters to the hash
-    # cfg_dict = OmegaConf.to_container(backbone_cfg, resolve=True)
-    # keys_to_hash = ['fpn_type', 'scale_factor', 'output_indices_for_fpn', 'upscale_method']
-    
-    # for k in keys_to_hash:
-    #     if k in cfg_dict:
-    #         # Clean up list string representations for filenames
-    #         val = str(cfg_dict[k]).replace('[','').replace(']','').replace(', ','_').replace("'", "")
-    #         unique_str += f"_{k}_{val}"
-
     if model_type == "dinov2":
         # Resolve interpolation before passing to class
         resolved_channels = OmegaConf.to_container(backbone_cfg.intermediate_channel_sizes, resolve=True)
@@ -69,7 +51,7 @@ def build_backbone(backbone_cfg, rtdetr_model_name):
         return model, model.config, unique_str
 
     elif model_type == "resnet":
-        unique_str = f"_{model_type}_{backbone_cfg.name}_freeze_stage_{backbone_cfg.freeze_at_stage}"
+        unique_str = f"_{backbone_cfg.model_name}_{backbone_cfg.name}_freeze_stage_{backbone_cfg.freeze_at_stage}"
         return None, None, unique_str
         # raise NotImplementedError("ResNet backbone not yet implemented")
          
@@ -103,6 +85,9 @@ def freeze_backbone_layers(model, freeze_at_stage):
 
     # Helper to freeze a module
     def freeze_module(module):
+        # TODO: try training where the batchnorm stats are being updated
+        # TODO: comment later
+        
         module.eval()  # Set to eval mode
         for param in module.parameters():
             param.requires_grad = False

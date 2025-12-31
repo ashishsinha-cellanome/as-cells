@@ -8,6 +8,8 @@ import os
 import datetime
 import shutil
 import torch
+torch.set_float32_matmul_precision('medium')
+
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor, ModelSummary
 from pytorch_lightning.loggers import WandbLogger
@@ -16,8 +18,8 @@ from transformers import RTDetrImageProcessor, RTDetrV2ForObjectDetection
 from torchvision.datasets import CocoDetection
 import torch.distributed as dist
 
-# --- HYDRA & OMEGACONF ---
 from omegaconf import DictConfig, OmegaConf
+OmegaConf.register_new_resolver("extract_name", lambda path: path.split("/")[-1])
 import hydra
 from hydra.core.hydra_config import HydraConfig
 from hydra.types import RunMode
@@ -43,7 +45,7 @@ def create_initial_checkpoint(config: DictConfig) -> str:
     Create initial RT-DETR checkpoint with DINOv2 backbone.
     """
     print("\n" + "="*80)
-    print("Creating initial RT-DETR checkpoint with DINOv2 backbone...")
+    print(f"Creating initial RT-DETR checkpoint with {config.model.backbone.type.upper()} backbone...")
     print("="*80 + "\n")
     
     model_config = config.model
@@ -59,14 +61,15 @@ def create_initial_checkpoint(config: DictConfig) -> str:
     base_rtdetr_path = hydra.utils.to_absolute_path(checkpoint_config.rtdetr_initial_checkpoint)
     local_path = f"{base_rtdetr_path}{full_suffix}"
 
-    # NAS Path (Safe get)
+    # get nas path
     nas_base = checkpoint_config.get("nas_initial_checkpoint")
     nas_path = None
     if nas_base:
         nas_path = f"{hydra.utils.to_absolute_path(nas_base)}{full_suffix}"
 
-    # --- 2. FAST CHECK (Scratch) ---
-    if os.path.exists(local_path) and len(os.listdir(local_path)) > 0:
+    # TODO: remove later. best to be used only on denvr
+    # TODO: change to true, when running on DENVR
+    if False: # os.path.exists(local_path) and len(os.listdir(local_path)) > 0:
         # print(f"✓ Found weights in SCRATCH: {local_path}")
         rank_zero_print( f"✓ Found weights in SCRATCH: {local_path}")
 
@@ -124,9 +127,11 @@ def create_initial_checkpoint(config: DictConfig) -> str:
     id2label = {int(k): v for k, v in model_config.label_map.items()}
     label2id = {v: k for k, v in id2label.items()}
     overrides = OmegaConf.to_container(model_config.rtdetr, resolve=True)
-    for k in ["pretrained_name_or_path", "config_overrides", "model_name"]:
+    for k in ["pretrained_name_or_path", "config_overrides", "model_name", 'name']:
         overrides.pop(k, None)
-
+    # breakpoint()
+    # import pdb; pdb.set_trace()
+    # print ("*"*20,'breakpoint not working')
     model = RTDetrV2ForObjectDetection.from_pretrained(
         f"PekingU/{base_model_name}",
         id2label=id2label,
@@ -222,6 +227,7 @@ def setup_model(config: DictConfig) -> RTDETRLightningModule:
     rtdetr_overrides.pop("pretrained_name_or_path", None)
     rtdetr_overrides.pop("config_overrides", None)
     rtdetr_overrides.pop("model_name", None)
+    rtdetr_overrides.pop("name", None)
     if rtdetr_overrides:
         rank_zero_print("Checking for model config overrides...")
         changes_made = False
@@ -293,7 +299,6 @@ def setup_data(config: DictConfig, processor) -> COCODataModule:
     
     rank_zero_print(f"✓ Data module configured for: {data_config.path}")
     return data_module
-
 
 def setup_profiler(config: DictConfig):
     # Note: Hydra changes CWD, profiler logs save to the hydra output dir

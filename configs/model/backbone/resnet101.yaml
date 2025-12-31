@@ -3,6 +3,7 @@
 
 type: "resnet" 
 name: "rtdetr_v2_r101vd" # Matches the supported model names
+model_name: resnet101
 
 # Freezing params
 train_backbone: false     # If false, we freeze layers

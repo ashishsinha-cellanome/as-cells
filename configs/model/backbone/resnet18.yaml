@@ -3,7 +3,7 @@
 
 type: "resnet" 
 name: "rtdetr_v2_r18vd" # Matches the supported model names
-
+model_name: resnet18
 # Freezing params
 train_backbone: false     # If false, we freeze layers
 freeze_at_stage: 5        # 0=Stem, 1=Layer1, ..., 4=Layer4 (Freeze everything)

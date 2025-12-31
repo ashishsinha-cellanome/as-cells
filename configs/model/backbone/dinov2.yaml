@@ -2,8 +2,10 @@
 # @package model.backbone
 
 type: "dinov2"
-pretrained_name_or_path: "facebook/dinov2-base"
+pretrained_name_or_path: "facebook/dinov2-base" # facebook/dinov2-with-registers-base
 name: "dinov2"  # Matches the supported model names
+model_name: "${extract_name:${.pretrained_name_or_path}}"
+
 output_indices_for_fpn: [3,7,11]
 fpn_type: 'fused'
 fusion_method: 'conv'

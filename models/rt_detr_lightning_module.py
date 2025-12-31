@@ -418,12 +418,11 @@ class RTDETRLightningModule(pl.LightningModule):
                 'frequency': 1,
                 # 'verbose': Trueq
             }
-            # schedulers = [ scheduler, scheduler ]
         elif sch_config.type == "cosine":
             scheduler = {
                 'scheduler': torch.optim.lr_scheduler.CosineAnnealingLR(
                     optimizer,
-                    T_max= total_steps - sch_config.warmup_steps,
+                    T_max= total_steps - max(sch_config.warmup_steps, int(0.1 * total_steps)),
                     eta_min=sch_config.eta_min
                 ),
                 'interval': 'epoch'
@@ -553,7 +552,11 @@ class RTDETRLightningModule(pl.LightningModule):
         
     def optimizer_step(self, epoch, batch_idx, optimizer, optimizer_closure):
         # --- 1. Warmup Logic (Apply BEFORE step) ---
-        warmup_steps = self.config.scheduler.warmup_steps
+        total_steps = self.trainer.estimated_stepping_batches
+        warmup_steps = max(self.config.scheduler.warmup_steps, int(0.1 * total_steps))
+        # update the hparams
+        self.logger.experiment.config.update({'warmup_steps':warmup_steps}, allow_val_change=True)
+        
         is_one_cycle = self.config.scheduler.type == "onecycle"
         
         if self.trainer.global_step < warmup_steps and not is_one_cycle:
