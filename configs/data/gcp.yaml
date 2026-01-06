@@ -28,10 +28,10 @@ checkpointing:
   # nas_initial_checkpoint: "${checkpointing.nas_dir}/${checkpointing._folder_name}"
   
   # Visuals can go directly to NAS (low bandwidth usage)
-  val_image_dir: "${checkpointing.nas_initial_checkpoint}/predictions"
+  # val_image_dir: "${checkpointing.nas_initial_checkpoint}/predictions"
 
   # Backup dir for the callback (from previous step)
-  backup_dir: "${checkpointing.nas_initial_checkpoint}"
+  # backup_dir: "${checkpointing.nas_initial_checkpoint}"
 
 # checkpointing:
 #   save_dir: "/home/ubuntu/scratch/cellanome/checkpoints/"

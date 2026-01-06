@@ -7,7 +7,7 @@ name: "dinov2"  # Matches the supported model names
 model_name: "${extract_name:${.pretrained_name_or_path}}"
 
 output_indices_for_fpn: [3,7,11]
-fpn_type: 'fused'
+fpn_type: 'fused' # simple/fused/tiny
 fusion_method: 'conv'
 first_layer_dims: [80,80]
 scale_factor: 1
