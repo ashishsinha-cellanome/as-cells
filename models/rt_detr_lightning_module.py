@@ -555,7 +555,7 @@ class RTDETRLightningModule(pl.LightningModule):
         total_steps = self.trainer.estimated_stepping_batches
         warmup_steps = max(self.config.scheduler.warmup_steps, int(0.1 * total_steps))
         # update the hparams
-        self.logger.experiment.config.update({'warmup_steps':warmup_steps}, allow_val_change=True)
+        # self.logger.experiment.config.update({'warmup_steps':warmup_steps}, allow_val_change=True)
         
         is_one_cycle = self.config.scheduler.type == "onecycle"
         
