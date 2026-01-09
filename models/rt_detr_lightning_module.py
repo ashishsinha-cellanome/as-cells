@@ -321,6 +321,22 @@ class RTDETRLightningModule(pl.LightningModule):
         self.test_predictions = []
         self.test_image_ids = []
         self.test_step_outputs.clear()
+        
+    def on_load_checkpoint(self, checkpoint: dict) -> None:
+        """
+        Force the scheduler to accept a larger total_steps when resuming.
+        This prevents the 'Tried to step N+1 times' error.
+        """
+        # Look into the loaded state for the lr_schedulers
+        if "lr_schedulers" in checkpoint:
+            for scheduler_state in checkpoint["lr_schedulers"]:
+                # Check if it's a OneCycleLR state (it has total_steps)
+                if "total_steps" in scheduler_state:
+                    old_total = scheduler_state["total_steps"]
+                    # Add a buffer (e.g., +100 steps) to the restored state
+                    scheduler_state["total_steps"] = old_total + 100
+                    print(f"Restoring checkpoint: Increased total_steps from {old_total} to {old_total + 100}")
+                    
     
     def _compute_coco_metrics(self, predictions, image_ids, coco_gt):
         """Compute COCO mAP and mAR metrics."""
