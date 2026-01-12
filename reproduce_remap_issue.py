@@ -1,10 +1,13 @@
 
 import torch
+import hydra
 from unittest.mock import MagicMock
-from omegaconf import OmegaConf
+from omegaconf import OmegaConf, DictConfig
 
 class MockCOCO:
     def __init__(self):
+        # Simulating a dataset with the classes likely found in the source
+        # (Assuming standard IDs, but the key is the NAME matching)
         self.dataset = {
             'categories': [
                 {'id': 1, 'name': 'cell'},
@@ -25,31 +28,18 @@ class MockCOCO:
     def createIndex(self):
         print("MockCOCO: createIndex called")
         self.cats = {c['id']: c for c in self.dataset['categories']}
-        # (Simplified index creation for test)
 
-def test_remap_logic():
-    # 1. Setup Config
-    # SCENARIO: User wants to map 'cell-adhered' and 'soma' to 'cell'.
-    # BUT, the model config still lists all 4 classes? Or does it list only 2?
-    # Based on user's previous output, the model config lists ALL 4 classes.
-    
-    conf_yaml = """
-    model:
-      label_map:
-        0: 'cell'
-        1: 'bead'
-        2: 'cell-adhered'
-        3: 'soma'
-    data:
-      class_remapping:
-        'cell-adhered': 'cell'
-        'soma': 'cell'
-    """
-    cfg = OmegaConf.create(conf_yaml)
-    
+@hydra.main(config_path="configs", config_name="config.yaml", version_base=None)
+def test_remap_logic(cfg: DictConfig):
+    print("--- Loaded Config ---")
+    # Ensure remap_labels is True (it was added in previous turn)
+    print(f"remap_labels: {cfg.get('remap_labels', 'Not Found')}")
+    print(f"Target Label Map: {cfg.model.label_map}")
+    print(f"Remapping Rules: {cfg.data.class_remapping}")
+
     # 2. Setup Mock COCO
     coco_gt = MockCOCO()
-    print("--- Before Remap ---")
+    print("\n--- Before Remap ---")
     print(f"Categories: {[c['name'] for c in coco_gt.dataset['categories']]}")
     print(f"Annotations Cat IDs: {[a['category_id'] for a in coco_gt.dataset['annotations']]}")
     
@@ -58,10 +48,19 @@ def test_remap_logic():
         if not coco_gt or hasattr(coco_gt, '_remapped'):
             return
         
+        # ADDED CHECK: Only run if enabled
+        if hasattr(config, 'remap_labels') and not config.remap_labels:
+            print("Skipping remapping (remap_labels=False)")
+            return
+
         target_label_map = config.model.label_map
         name_to_target_id = {v: int(k) for k, v in target_label_map.items()}
         
-        remapping_rules = config.data.class_remapping
+        remapping_rules = {}
+        if hasattr(config, 'data') and config.data and 'class_remapping' in config.data:
+            remapping_rules = config.data.class_remapping
+        elif 'class_remapping' in config:
+            remapping_rules = config.class_remapping
             
         remap_dict = {}
         # NOTE: Using coco_gt.cats (source of truth for existing IDs)
@@ -89,11 +88,26 @@ def test_remap_logic():
         coco_gt._remapped = True
         
     # 4. Run Remap
+    print(f"Running _remap_coco_gt with remap_labels={cfg.get('remap_labels')}")
     _remap_coco_gt(coco_gt, cfg)
     
     print("\n--- After Remap ---")
     print(f"Categories: {coco_gt.dataset['categories']}")
     print(f"Annotations Cat IDs: {[a['category_id'] for a in coco_gt.dataset['annotations']]}")
 
+    # 5. Test Disabled Case
+    print("\n--- Test Disabled Case ---")
+    cfg_disabled = cfg.copy()
+    cfg_disabled.remap_labels = False
+    
+    coco_gt_2 = MockCOCO()
+    print(f"Running _remap_coco_gt with remap_labels={cfg_disabled.remap_labels}")
+    _remap_coco_gt(coco_gt_2, cfg_disabled)
+    
+    print("Categories (Should be original):", [c['name'] for c in coco_gt_2.dataset['categories']])
+    print("Annotations (Should be original):", [a['category_id'] for a in coco_gt_2.dataset['annotations']])
+
 if __name__ == "__main__":
     test_remap_logic()
+
+
