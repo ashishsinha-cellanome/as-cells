@@ -385,7 +385,6 @@ class RTDETRLightningModule(pl.LightningModule):
         if coco_gt is None or len(predictions) == 0:
             return {}
 	
-	breakpoint() 
         self._remap_coco_gt(coco_gt)
         
         metrics = {

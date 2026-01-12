@@ -20,7 +20,7 @@ run_name: "rtdetrv2_${model.backbone.name}_${now:%Y-%m-%d}"
 debug: false
 
 # allow remapping of labels
-remap_labels: true
+remap_labels: false
 test_only: false
 
 # file/folder names to use 
@@ -30,10 +30,10 @@ train_name: ${data.train_name}
 
 # --- Label Remapping ---
 # Merges multiple source classes into a single target class
-model:
-  label_map:
-    0: 'cell'
-    1: 'bead'
+#model:
+#  label_map:
+#    0: 'cell'
+#    1: 'bead'
 
 data:
   class_remapping:

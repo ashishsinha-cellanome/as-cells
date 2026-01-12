@@ -186,7 +186,6 @@ class COCODataModule(pl.LightningDataModule):
                 annFile=train_annot_path,
                 transforms=None
             )
-            breakpoint()
             train_remap = self._get_remap_dict(train_coco)
 
             train_transforms = get_transform(
