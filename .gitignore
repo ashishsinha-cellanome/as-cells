@@ -12,3 +12,5 @@ new/
 *logs/
 **/__pycache__/
 benchmark_results/
+./dataset
+*.json
