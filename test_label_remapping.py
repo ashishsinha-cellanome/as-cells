@@ -7,6 +7,7 @@ from omegaconf import OmegaConf
 def test_remapping():
     # 1. Simulate the config you just showed
     conf_yaml = """
+    remap_labels: true
     model:
       label_map:
         0: 'cell'

@@ -127,6 +127,10 @@ class COCODataModule(pl.LightningDataModule):
     
     def _get_remap_dict(self, coco_dataset: CocoDetection) -> Optional[Dict[int, int]]:
         """Builds a dictionary to map dataset category IDs to model class IDs."""
+        # 0. Check if remapping is enabled
+        if hasattr(self.config, 'remap_labels') and not self.config.remap_labels:
+            return None
+
         # 1. Get target label map (Model IDs -> Class Names)
         if not hasattr(self.config, 'model') or 'label_map' not in self.config.model:
             return None
