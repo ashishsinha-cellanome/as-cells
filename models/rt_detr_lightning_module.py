@@ -384,7 +384,8 @@ class RTDETRLightningModule(pl.LightningModule):
         """Compute COCO mAP and mAR metrics."""
         if coco_gt is None or len(predictions) == 0:
             return {}
-        
+	
+	breakpoint() 
         self._remap_coco_gt(coco_gt)
         
         metrics = {
