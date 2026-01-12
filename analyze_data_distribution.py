@@ -9,80 +9,27 @@ from omegaconf import DictConfig
 
 def print_table(headers, rows, title):
     print(f"\n{title}")
-    # Calculate column widths
     widths = [len(h) for h in headers]
     for row in rows:
         for i, val in enumerate(row):
             widths[i] = max(widths[i], len(str(val)))
             
-    # Print header
     header_str = " | ".join(f"{h:<{w}}" for h, w in zip(headers, widths))
     print("-" * len(header_str))
     print(header_str)
     print("-" * len(header_str))
     
-    # Print rows
     for row in rows:
         print(" | ".join(f"{str(v):<{w}}" for v, w in zip(row, widths)))
     print("-" * len(header_str))
 
-def plot_distributions(label_data, size_data, split_name, output_dir):
-    """
-    Generate and save bar plots for label and size distributions.
-    """
-    os.makedirs(output_dir, exist_ok=True)
-    sns.set_theme(style="whitegrid")
-    
-    # Use a color-blind friendly palette
-    palette = sns.color_palette("colorblind")
-    
-    # --- 1. Label Distribution Plot ---
-    if label_data:
-        df_label = pd.DataFrame(label_data)
-        plt.figure(figsize=(10, 6))
-        ax = sns.barplot(x='Class Name', y='Count', data=df_label, palette=palette)
-        
-        # Add labels on top of bars
-        for p in ax.patches:
-            height = p.get_height()
-            ax.text(p.get_x() + p.get_width()/2., height + 0.5,
-                    f'{int(height)}', ha="center", fontsize=10)
-            
-        plt.title(f'Label Distribution - {split_name.capitalize()}')
-        plt.xlabel('Class Name')
-        plt.ylabel('Count')
-        plt.tight_layout()
-        plt.savefig(os.path.join(output_dir, f'{split_name}_label_dist.png'), dpi=300)
-        plt.close()
-
-    # --- 2. Size Distribution Plot ---
-    if size_data:
-        df_size = pd.DataFrame(size_data)
-        plt.figure(figsize=(8, 6))
-        ax = sns.barplot(x='Size', y='Count', data=df_size, palette=palette, order=['Small', 'Medium', 'Large'])
-        
-        for p in ax.patches:
-            height = p.get_height()
-            ax.text(p.get_x() + p.get_width()/2., height + 0.5,
-                    f'{int(height)}', ha="center", fontsize=10)
-            
-        plt.title(f'Object Size Distribution - {split_name.capitalize()}')
-        plt.xlabel('Object Size')
-        plt.ylabel('Count')
-        plt.tight_layout()
-        plt.savefig(os.path.join(output_dir, f'{split_name}_size_dist.png'), dpi=300)
-        plt.close()
-    
-    print(f"Plots saved to: {output_dir}")
-
-def analyze_split(name, json_path, output_dir):
+def analyze_split(name, json_path):
     if not os.path.exists(json_path):
         print(f"\n[Skipping] File not found for {name}: {json_path}")
-        return
+        return None, None
 
     print(f"\nAnalyzing {name.upper()} split from: {json_path}")
     try:
-        # Suppress pycocotools print output
         import sys
         original_stdout = sys.stdout
         sys.stdout = open(os.devnull, 'w')
@@ -90,7 +37,7 @@ def analyze_split(name, json_path, output_dir):
         sys.stdout = original_stdout
     except Exception as e:
         print(f"Error loading COCO json: {e}")
-        return
+        return None, None
 
     # Categories
     cat_ids = coco.getCatIds()
@@ -99,7 +46,6 @@ def analyze_split(name, json_path, output_dir):
     
     # Initialize counts
     label_counts = {c['id']: 0 for c in cats}
-    # COCO definition: small < 32x32, medium < 96x96, large >= 96x96
     size_counts = {'small': 0, 'medium': 0, 'large': 0}
     
     anns = coco.loadAnns(coco.getAnnIds())
@@ -107,15 +53,13 @@ def analyze_split(name, json_path, output_dir):
     
     if total_anns == 0:
         print("No annotations found.")
-        return
+        return [], []
 
     for ann in anns:
-        # Label count
         cid = ann['category_id']
         if cid in label_counts:
             label_counts[cid] += 1
             
-        # Size count
         area = ann['area']
         if area < 32**2:
             size_counts['small'] += 1
@@ -124,42 +68,65 @@ def analyze_split(name, json_path, output_dir):
         else:
             size_counts['large'] += 1
             
-    # Prepare Label Table & Data for Plotting
-    label_rows = []
-    plot_label_data = []
-    
+    # Prepare Data for Plotting (return list of dicts)
+    label_data = []
     for cid in sorted(label_counts.keys()):
         count = label_counts[cid]
-        pct = (count / total_anns) * 100
         cname = cat_names.get(cid, 'Unknown')
-        label_rows.append([cid, cname, count, f"{pct:.2f}%"])
-        plot_label_data.append({'Class Name': cname, 'Count': count})
+        label_data.append({'Class Name': cname, 'Count': count, 'Split': name.capitalize()})
     
-    print_table(
-        headers=['ID', 'Class Name', 'Count', 'Percentage'], 
-        rows=label_rows, 
-        title=f"--- Label Distribution ({name}) ---"
-    )
-    
-    # Prepare Size Table & Data for Plotting
-    size_rows = []
-    plot_size_data = []
-    
+    size_data = []
     for size in ['small', 'medium', 'large']:
         count = size_counts[size]
-        pct = (count / total_anns) * 100
-        capital_size = size.capitalize()
-        size_rows.append([capital_size, count, f"{pct:.2f}%"])
-        plot_size_data.append({'Size': capital_size, 'Count': count})
+        size_data.append({'Size': size.capitalize(), 'Count': count, 'Split': name.capitalize()})
         
-    print_table(
-        headers=['Size', 'Count', 'Percentage'], 
-        rows=size_rows, 
-        title=f"--- Size Distribution ({name}) ---"
-    )
+    return label_data, size_data
+
+def plot_combined_distributions(all_label_data, all_size_data, output_dir):
+    os.makedirs(output_dir, exist_ok=True)
+    sns.set_theme(style="whitegrid")
+    palette = sns.color_palette("colorblind")
     
-    # Generate Plots
-    plot_distributions(plot_label_data, plot_size_data, name, output_dir)
+    # --- 1. Combined Label Distribution ---
+    if all_label_data:
+        df_label = pd.DataFrame(all_label_data)
+        plt.figure(figsize=(12, 6))
+        
+        # Plot with hue for splits
+        ax = sns.barplot(x='Class Name', y='Count', hue='Split', data=df_label, palette=palette)
+        
+        # Add labels (optional, can get crowded)
+        for container in ax.containers:
+            ax.bar_label(container, fmt='%d', padding=3, fontsize=9)
+
+        plt.title('Label Distribution Across Splits')
+        plt.xlabel('Class Name')
+        plt.ylabel('Count')
+        plt.legend(title='Dataset Split')
+        plt.tight_layout()
+        plt.savefig(os.path.join(output_dir, 'combined_label_dist.png'), dpi=300)
+        plt.close()
+
+    # --- 2. Combined Size Distribution ---
+    if all_size_data:
+        df_size = pd.DataFrame(all_size_data)
+        plt.figure(figsize=(10, 6))
+        
+        ax = sns.barplot(x='Size', y='Count', hue='Split', data=df_size, palette=palette, 
+                         order=['Small', 'Medium', 'Large'])
+        
+        for container in ax.containers:
+            ax.bar_label(container, fmt='%d', padding=3, fontsize=9)
+            
+        plt.title('Object Size Distribution Across Splits')
+        plt.xlabel('Object Size')
+        plt.ylabel('Count')
+        plt.legend(title='Dataset Split')
+        plt.tight_layout()
+        plt.savefig(os.path.join(output_dir, 'combined_size_dist.png'), dpi=300)
+        plt.close()
+        
+    print(f"\nCombined plots saved to: {output_dir}")
 
 @hydra.main(config_path="configs", config_name="config.yaml", version_base=None)
 def main(cfg: DictConfig):
@@ -167,16 +134,24 @@ def main(cfg: DictConfig):
     print(f"Base Data Path: {data_path}")
     
     output_dir = "analysis_plots"
-    
     splits = [
         ('train', 'train_annotations.json'),
         ('valid', 'valid_annotations.json'),
         ('test',  'test_annotations.json'),
     ]
     
+    all_label_data = []
+    all_size_data = []
+    
     for split_name, filename in splits:
         full_path = os.path.join(data_path, filename)
-        analyze_split(split_name, full_path, output_dir)
+        l_data, s_data = analyze_split(split_name, full_path)
+        
+        if l_data: all_label_data.extend(l_data)
+        if s_data: all_size_data.extend(s_data)
+        
+    # Generate Combined Plots
+    plot_combined_distributions(all_label_data, all_size_data, output_dir)
 
 if __name__ == "__main__":
     main()
