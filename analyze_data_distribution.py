@@ -92,12 +92,18 @@ def plot_combined_distributions(all_label_data, all_size_data, output_dir):
         df_label = pd.DataFrame(all_label_data)
         plt.figure(figsize=(12, 6))
         
-        # Plot with hue for splits
-        ax = sns.barplot(x='Class Name', y='Count', hue='Split', data=df_label, palette=palette)
+        hue_order = sorted(df_label['Split'].unique())
+        split_totals = df_label.groupby('Split')['Count'].sum()
         
-        # Add labels (optional, can get crowded)
-        for container in ax.containers:
-            ax.bar_label(container, fmt='%d', padding=3, fontsize=18)
+        # Plot with hue for splits
+        ax = sns.barplot(x='Class Name', y='Count', hue='Split', data=df_label, 
+                         palette=palette, hue_order=hue_order)
+        
+        # Add labels (percentage)
+        for container, split_name in zip(ax.containers, hue_order):
+            total = split_totals.get(split_name, 1)
+            labels = [f'{rect.get_height()/total*100:.1f}%' if rect.get_height() > 0 else '' for rect in container]
+            ax.bar_label(container, labels=labels, padding=3, fontsize=18)
 
         plt.title('Label Distribution Across Splits', fontsize=18)
         plt.xlabel('Class Name', fontsize=18)
@@ -114,11 +120,16 @@ def plot_combined_distributions(all_label_data, all_size_data, output_dir):
         df_size = pd.DataFrame(all_size_data)
         plt.figure(figsize=(10, 6))
         
-        ax = sns.barplot(x='Size', y='Count', hue='Split', data=df_size, palette=palette, 
-                         order=['Small', 'Medium', 'Large'])
+        hue_order = sorted(df_size['Split'].unique())
+        split_totals = df_size.groupby('Split')['Count'].sum()
         
-        for container in ax.containers:
-            ax.bar_label(container, fmt='%d', padding=3, fontsize=18)
+        ax = sns.barplot(x='Size', y='Count', hue='Split', data=df_size, palette=palette, 
+                         order=['Small', 'Medium', 'Large'], hue_order=hue_order)
+        
+        for container, split_name in zip(ax.containers, hue_order):
+            total = split_totals.get(split_name, 1)
+            labels = [f'{rect.get_height()/total*100:.1f}%' if rect.get_height() > 0 else '' for rect in container]
+            ax.bar_label(container, labels=labels, padding=3, fontsize=18)
             
         plt.title('Object Size Distribution Across Splits', fontsize=18)
         plt.xlabel('Object Size', fontsize=18)
