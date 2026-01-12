@@ -25,6 +25,18 @@ val_name: ${data.val_name}
 test_name: ${data.test_name}
 train_name: ${data.train_name}
 
+# --- Label Remapping ---
+# Merges multiple source classes into a single target class
+model:
+  label_map:
+    0: 'cell'
+    1: 'bead'
+
+data:
+  class_remapping:
+    'cell-adhered': 'cell'
+    'soma': 'cell'
+
 training:
   profiler:
     type: 'simple'

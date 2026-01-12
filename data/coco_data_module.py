@@ -16,11 +16,13 @@ class CocoDataset(torch.utils.data.Dataset):
         self, 
         dataset_coco: CocoDetection, 
         processor,
-        transforms: Optional[A.core.composition.Compose] = None
+        transforms: Optional[A.core.composition.Compose] = None,
+        remap_dict: Optional[Dict[int, int]] = None
     ):
         self.dataset_coco = dataset_coco
         self.processor = processor
         self.transforms = transforms
+        self.remap_dict = remap_dict
     
     def __len__(self):
         return len(self.dataset_coco)
@@ -39,6 +41,18 @@ class CocoDataset(torch.utils.data.Dataset):
             image_id = annotations[0]['image_id']
         else:
             image_id = idx + 1
+        
+        # Remap and Filter annotations if remap_dict is provided
+        valid_annotations = []
+        if self.remap_dict is not None:
+            for record in annotations:
+                cat_id = record['category_id']
+                if cat_id in self.remap_dict:
+                    # Create a copy to avoid modifying the original dataset cache if any
+                    new_record = record.copy()
+                    new_record['category_id'] = self.remap_dict[cat_id]
+                    valid_annotations.append(new_record)
+            annotations = valid_annotations
         
         boxes = np.array([record['bbox'] for record in annotations])
         labels = [record['category_id'] for record in annotations]
@@ -111,6 +125,46 @@ class COCODataModule(pl.LightningDataModule):
         self.val_dataset = None
         self.test_dataset = None
     
+    def _get_remap_dict(self, coco_dataset: CocoDetection) -> Optional[Dict[int, int]]:
+        """Builds a dictionary to map dataset category IDs to model class IDs."""
+        # 1. Get target label map (Model IDs -> Class Names)
+        if not hasattr(self.config, 'model') or 'label_map' not in self.config.model:
+            return None
+        
+        target_label_map = self.config.model.label_map
+        # Invert to (Class Name -> Model ID)
+        name_to_target_id = {v: int(k) for k, v in target_label_map.items()}
+        
+        # 2. Get remapping rules (Source Name -> Target Name)
+        remapping_rules = {}
+        # Check various config locations
+        if hasattr(self.config, 'data') and self.config.data and 'class_remapping' in self.config.data:
+            remapping_rules = self.config.data.class_remapping
+        elif 'class_remapping' in self.config:
+             remapping_rules = self.config.class_remapping
+        
+        if not remapping_rules:
+             # If no remapping rules, just check if names match directly
+             pass
+
+        # 3. Build the map (Dataset Category ID -> Model ID)
+        remap_dict = {}
+        # coco_dataset.coco.cats is Dict[int, Dict]
+        for cat_id, cat_info in coco_dataset.coco.cats.items():
+            src_name = cat_info['name']
+            
+            # Apply remapping if exists, otherwise keep original name
+            effective_name = remapping_rules.get(src_name, src_name)
+            
+            if effective_name in name_to_target_id:
+                target_id = name_to_target_id[effective_name]
+                remap_dict[cat_id] = target_id
+            
+        if remap_dict:
+            print(f"[INFO] Built Label Remap Dict: {remap_dict} (Source IDs -> Target IDs)")
+            return remap_dict
+        return None
+
     def setup(self, stage: Optional[str] = None):
         """Setup datasets for each stage."""
         
@@ -129,6 +183,8 @@ class COCODataModule(pl.LightningDataModule):
                 transforms=None
             )
             
+            train_remap = self._get_remap_dict(train_coco)
+
             train_transforms = get_transform(
                 model_input_width=self.model_input_size,
                 model_input_height=self.model_input_size,
@@ -142,7 +198,8 @@ class COCODataModule(pl.LightningDataModule):
             self.train_dataset = CocoDataset(
                 dataset_coco=train_coco,
                 processor=self.processor,
-                transforms=train_transforms
+                transforms=train_transforms,
+                remap_dict=train_remap
             )
             
             # Validation dataset
@@ -155,6 +212,8 @@ class COCODataModule(pl.LightningDataModule):
                 transforms=None
             )
             
+            val_remap = self._get_remap_dict(val_coco)
+
             val_transforms = get_transform(
                 model_input_width=self.model_input_size,
                 model_input_height=self.model_input_size,
@@ -168,7 +227,8 @@ class COCODataModule(pl.LightningDataModule):
             self.val_dataset = CocoDataset(
                 dataset_coco=val_coco,
                 processor=self.processor,
-                transforms=val_transforms
+                transforms=val_transforms,
+                remap_dict=val_remap
             )
             print('Training set includes %d annotated images.' %len(self.train_dataset))
             print('Validation set includes %d annotated images.' %len(self.val_dataset))
@@ -187,6 +247,8 @@ class COCODataModule(pl.LightningDataModule):
                 transforms=None
             )
             
+            test_remap = self._get_remap_dict(test_coco)
+
             test_transforms = get_transform(
                 model_input_width=self.model_input_size,
                 model_input_height=self.model_input_size,
@@ -200,7 +262,8 @@ class COCODataModule(pl.LightningDataModule):
             self.test_dataset = CocoDataset(
                 dataset_coco=test_coco,
                 processor=self.processor,
-                transforms=test_transforms
+                transforms=test_transforms,
+                remap_dict=test_remap
             )
             print ('Test set includes %d annotated images.' %len(self.test_dataset))
     

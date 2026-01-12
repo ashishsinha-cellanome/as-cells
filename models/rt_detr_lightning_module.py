@@ -333,15 +333,59 @@ class RTDETRLightningModule(pl.LightningModule):
                 # Check if it's a OneCycleLR state (it has total_steps)
                 if "total_steps" in scheduler_state:
                     old_total = scheduler_state["total_steps"]
-                    # Add a buffer (e.g., +100 steps) to the restored state
-                    scheduler_state["total_steps"] = old_total + 100
-                    print(f"Restoring checkpoint: Increased total_steps from {old_total} to {old_total + 100}")
+                    # Add a buffer (e.g., +5000 steps) to the restored state
+                    scheduler_state["total_steps"] = old_total + 5000
+                    self.print(f"Restoring checkpoint: Increased total_steps from {old_total} to {old_total + 5000}")
                     
     
+    def _remap_coco_gt(self, coco_gt):
+        """In-place remap of COCO GT categories to match remapped classes."""
+        if not coco_gt or hasattr(coco_gt, '_remapped'):
+            return
+        
+        # 1. Get target map from config
+        if not self.config or 'model' not in self.config or 'label_map' not in self.config.model:
+            return
+            
+        target_label_map = self.config.model.label_map
+        name_to_target_id = {v: int(k) for k, v in target_label_map.items()}
+        
+        # 2. Get remapping rules
+        remapping_rules = {}
+        if 'data' in self.config and self.config.data and 'class_remapping' in self.config.data:
+            remapping_rules = self.config.data.class_remapping
+        elif 'class_remapping' in self.config:
+            remapping_rules = self.config.class_remapping
+            
+        remap_dict = {}
+        for cat_id, cat_info in coco_gt.cats.items():
+            src_name = cat_info['name']
+            effective_name = remapping_rules.get(src_name, src_name)
+            if effective_name in name_to_target_id:
+                remap_dict[cat_id] = name_to_target_id[effective_name]
+        
+        # 3. Apply to annotations
+        for ann in coco_gt.dataset.get('annotations', []):
+            if ann['category_id'] in remap_dict:
+                ann['category_id'] = remap_dict[ann['category_id']]
+        
+        # 4. Update categories in GT to match target
+        new_categories = []
+        for target_id, name in target_label_map.items():
+            new_categories.append({'id': int(target_id), 'name': name})
+        coco_gt.dataset['categories'] = new_categories
+        
+        # 5. Re-index
+        coco_gt.createIndex()
+        coco_gt._remapped = True
+        self.print(f"[INFO] Remapped Validation GT classes using: {remap_dict}")
+
     def _compute_coco_metrics(self, predictions, image_ids, coco_gt):
         """Compute COCO mAP and mAR metrics."""
         if coco_gt is None or len(predictions) == 0:
             return {}
+        
+        self._remap_coco_gt(coco_gt)
         
         metrics = {
             'map': -1.0, 'map_50': -1.0, 'map_75': -1.0,
@@ -368,7 +412,7 @@ class RTDETRLightningModule(pl.LightningModule):
                 # if i < len(coco_evaluator.stats):
                 metrics[key] = round(coco_evaluator.stats[i], 4)
         except Exception as e:
-            print(f"Error computing COCO metrics: {e}")
+            self.print(f"Error computing COCO metrics: {e}")
         
         return metrics
     
