@@ -377,9 +377,24 @@ class RTDETRLightningModule(pl.LightningModule):
                 ann['category_id'] = remap_dict[ann['category_id']]
         
         # 4. Update categories in GT to match target
+        # Only keep categories that are actually used as targets in the remapping
+        used_target_ids = set(remap_dict.values())
         new_categories = []
         for target_id, name in target_label_map.items():
-            new_categories.append({'id': int(target_id), 'name': name})
+            # If we remapped *everything* (checked via remap_dict), strictly filter.
+            # But if a class wasn't in source (not in remap_dict keys), we might still want it if it's a valid target.
+            # Better strategy: If the user provided a remapping, trust the target_label_map BUT
+            # we know the user wants to hide 2 and 3.
+            
+            # If the target_id is NOT in the values of our remapping, it implies no source category maps to it.
+            # However, if we have a target class 'bead' (1) and NO 'bead' (1) in the source images, 
+            # remap_dict might not contain 1 as a value if we only loop over existing cats.
+            
+            # Let's rely on the explicit instruction: 
+            # "Only include categories that are present as values in the remap_dict"
+            if int(target_id) in used_target_ids:
+                new_categories.append({'id': int(target_id), 'name': name})
+                
         coco_gt.dataset['categories'] = new_categories
         
         # 5. Re-index
