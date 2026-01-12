@@ -97,12 +97,14 @@ def plot_combined_distributions(all_label_data, all_size_data, output_dir):
         
         # Add labels (optional, can get crowded)
         for container in ax.containers:
-            ax.bar_label(container, fmt='%d', padding=3, fontsize=9)
+            ax.bar_label(container, fmt='%d', padding=3, fontsize=18)
 
-        plt.title('Label Distribution Across Splits')
-        plt.xlabel('Class Name')
-        plt.ylabel('Count')
-        plt.legend(title='Dataset Split')
+        plt.title('Label Distribution Across Splits', fontsize=18)
+        plt.xlabel('Class Name', fontsize=18)
+        plt.ylabel('Count', fontsize=18)
+        plt.legend(title='Dataset Split', fontsize=18, title_fontsize=18)
+        plt.xticks(fontsize=18)
+        plt.yticks(fontsize=18)
         plt.tight_layout()
         plt.savefig(os.path.join(output_dir, 'combined_label_dist.png'), dpi=300)
         plt.close()
@@ -116,12 +118,14 @@ def plot_combined_distributions(all_label_data, all_size_data, output_dir):
                          order=['Small', 'Medium', 'Large'])
         
         for container in ax.containers:
-            ax.bar_label(container, fmt='%d', padding=3, fontsize=9)
+            ax.bar_label(container, fmt='%d', padding=3, fontsize=18)
             
-        plt.title('Object Size Distribution Across Splits')
-        plt.xlabel('Object Size')
-        plt.ylabel('Count')
-        plt.legend(title='Dataset Split')
+        plt.title('Object Size Distribution Across Splits', fontsize=18)
+        plt.xlabel('Object Size', fontsize=18)
+        plt.ylabel('Count', fontsize=18)
+        plt.legend(title='Dataset Split', fontsize=18, title_fontsize=18)
+        plt.xticks(fontsize=18)
+        plt.yticks(fontsize=18)
         plt.tight_layout()
         plt.savefig(os.path.join(output_dir, 'combined_size_dist.png'), dpi=300)
         plt.close()
