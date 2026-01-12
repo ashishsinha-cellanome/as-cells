@@ -121,7 +121,8 @@ def plot_combined_distributions(all_label_data, all_size_data, output_dir):
         df_size = pd.DataFrame(all_size_data)
         plt.figure(figsize=(10, 6))
         
-        hue_order = sorted(df_size['Split'].unique())
+        hue_order = ['Train', 'Valid', 'Test']
+        hue_order = [h for h in hue_order if h in df_size['Split'].unique()]
         split_totals = df_size.groupby('Split')['Count'].sum()
         
         ax = sns.barplot(x='Size', y='Count', hue='Split', data=df_size, palette=palette, 
