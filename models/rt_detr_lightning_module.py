@@ -340,16 +340,19 @@ class RTDETRLightningModule(pl.LightningModule):
     
     def _remap_coco_gt(self, coco_gt):
         """In-place remap of COCO GT categories to match remapped classes."""
-        if not coco_gt or hasattr(coco_gt, '_remapped'):
-            return
+        if not coco_gt:
+            return None
+            
+        if hasattr(coco_gt, '_remapped'):
+            return coco_gt
         
         # 0. Check if remapping is enabled
         if hasattr(self.config, 'remap_labels') and not self.config.remap_labels:
-            return
+            return coco_gt
 
         # 1. Get target map from config
         if not self.config or 'model' not in self.config or 'label_map' not in self.config.model:
-            return
+            return coco_gt
             
         target_label_map = self.config.model.label_map
         name_to_target_id = {v: int(k) for k, v in target_label_map.items()}
@@ -383,13 +386,18 @@ class RTDETRLightningModule(pl.LightningModule):
         coco_gt.createIndex()
         coco_gt._remapped = True
         self.print(f"[INFO] Remapped Validation GT classes using: {remap_dict}")
+        return coco_gt
 
     def _compute_coco_metrics(self, predictions, image_ids, coco_gt):
         """Compute COCO mAP and mAR metrics."""
         if coco_gt is None or len(predictions) == 0:
             return {}
 	
-        self._remap_coco_gt(coco_gt)
+        coco_gt = self._remap_coco_gt(coco_gt)
+        
+        # Debug: Verify remapping
+        if self.config.debug:
+            self.print(f"DEBUG: COCO GT Categories after remap: {[c['name'] for c in coco_gt.dataset['categories']]}")
         
         metrics = {
             'map': -1.0, 'map_50': -1.0, 'map_75': -1.0,
