@@ -409,12 +409,12 @@ class RTDETRLightningModule(pl.LightningModule):
             return {}
 	
         if self.config.debug:
-            self.print(f"DEBUG: COCO GT Categories before remap: {[{c['id']:c['name']} for c in coco_gt.dataset['categories']]}")
+            self.print(f"DEBUG: COCO GT Categories before remap: {[{c['id']: c['name']} for c in coco_gt.dataset['categories']]}")
         coco_gt = self._remap_coco_gt(coco_gt)
         
         # Debug: Verify remapping
         if self.config.debug:
-            self.print(f"DEBUG: COCO GT Categories after remap: {[{c['id']:c['name']} for c in coco_gt.dataset['categories']]}")
+            self.print(f"DEBUG: COCO GT Categories after remap: {[{c['id']: c['name']} for c in coco_gt.dataset['categories']]}")
         
         metrics = {
             'map': -1.0, 'map_50': -1.0, 'map_75': -1.0,
