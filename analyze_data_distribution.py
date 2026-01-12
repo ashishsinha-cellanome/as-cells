@@ -92,7 +92,8 @@ def plot_combined_distributions(all_label_data, all_size_data, output_dir):
         df_label = pd.DataFrame(all_label_data)
         plt.figure(figsize=(12, 6))
         
-        hue_order = sorted(df_label['Split'].unique())
+        hue_order = ['Train', 'Valid', 'Test']
+        hue_order = [h for h in hue_order if h in df_label['Split'].unique()]
         split_totals = df_label.groupby('Split')['Count'].sum()
         
         # Plot with hue for splits
