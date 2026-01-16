@@ -54,3 +54,7 @@ label_map:
 detection_threshold: 0.05
 draw_threshold: 0.4
 max_detections: 100
+
+ema:
+  enabled: true
+  decay: 0.9999
