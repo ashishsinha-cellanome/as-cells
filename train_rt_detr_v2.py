@@ -29,6 +29,7 @@ from models.custom_rt_detr_with_dinov2_backbone import (
     RTDetrV2ForObjectDetectionWithCustomBackbone,
     RTDetrV2ConfigWithCustomBackBone
 )
+from models.rt_detr_v1_model import RTDetrV1Model
 from models.dinov2_backbone_with_fpn import Dinov2BackBoneWithFPN, Dinov2BackBoneWithFPNConfig
 from models.rt_detr_lightning_module import RTDETRLightningModule
 from data.coco_data_module import COCODataModule
@@ -129,10 +130,18 @@ def create_initial_checkpoint(config: DictConfig) -> str:
     overrides = OmegaConf.to_container(model_config.rtdetr, resolve=True)
     for k in ["pretrained_name_or_path", "config_overrides", "model_name", 'name']:
         overrides.pop(k, None)
-    # breakpoint()
-    # import pdb; pdb.set_trace()
-    # print ("*"*20,'breakpoint not working')
-    model = RTDetrV2ForObjectDetection.from_pretrained(
+    
+    if "rtdetr_v2" in model_config.rtdetr.model_name:
+        model_cls = RTDetrV2ForObjectDetection
+        config_cls = RTDetrV2ConfigWithCustomBackBone
+    else:
+        rank_zero_print(f"Detected RT-DETRv1 model: {model_config.rtdetr.model_name}")
+        model_cls = RTDetrV1Model
+        # RTDetrV1Model uses RTDetrConfigWithCustomBackBone internally
+        from models.rt_detr_v1_model import RTDetrConfigWithCustomBackBone 
+        config_cls = RTDetrConfigWithCustomBackBone
+
+    model = model_cls.from_pretrained(
         f"PekingU/{base_model_name}",
         id2label=id2label,
         label2id=label2id,
@@ -147,10 +156,15 @@ def create_initial_checkpoint(config: DictConfig) -> str:
             freeze_backbone_layers(model, freeze_at_stage=model_config.backbone.freeze_at_stage)
     else:
         pretrained_model_config_dict = model.config.to_dict()
-        rt_detr_config = RTDetrV2ConfigWithCustomBackBone(**pretrained_model_config_dict)
+        rt_detr_config = config_cls(**pretrained_model_config_dict)
         rt_detr_config.backbone_config = backbone_config_obj
         model.config = rt_detr_config
-        model.model.backbone = backbone_model
+        # Handle difference in backbone attribute between V1 and V2
+        if hasattr(model, 'model') and hasattr(model.model, 'backbone'):
+            model.model.backbone = backbone_model
+        else: # V1 structure often has direct backbone or wrapped differently, handled by model class usually but here we inject
+             # RTDetrV1Model wraps RTDetrForObjectDetection which has model.backbone
+             model.model.backbone = backbone_model
 
     # Save to Scratch (Always)
     rank_zero_print(f"Saving new model to Scratch: {local_path}")
@@ -206,7 +220,13 @@ def setup_model(config: DictConfig) -> RTDETRLightningModule:
             model_checkpoint_path = create_initial_checkpoint(config)
     
     rank_zero_print(f"\nLoading RT-DETR model from: {model_checkpoint_path}")
-    model = RTDetrV2ForObjectDetectionWithCustomBackbone.from_pretrained(
+    
+    if "rtdetr_v2" in config.model.rtdetr.model_name:
+        model_cls = RTDetrV2ForObjectDetectionWithCustomBackBone
+    else:
+        model_cls = RTDetrV1Model
+
+    model = model_cls.from_pretrained(
         model_checkpoint_path,
     )
     if config.model.backbone.type == "resnet":

@@ -74,12 +74,21 @@ def freeze_backbone_layers(model, freeze_at_stage):
     # model.model.backbone.model -> (conv1, bn1, layer1, layer2, layer3, layer4)
     
     # Locate the actual backbone module
-    if hasattr(model.model.backbone, 'model'):
+    if hasattr(model, 'model') and hasattr(model.model, 'backbone'):
+         # RT-DETR V1 and V2 usually follow this structure in HF
+         backbone_container = model.model.backbone
+    elif hasattr(model, 'backbone'):
+         backbone_container = model.backbone
+    else:
+         print("[WARNING] Could not locate backbone in model structure.")
+         return
+
+    if hasattr(backbone_container, 'model'):
         # If it's wrapped (e.g. TimmBackbone)
-        backbone = model.model.backbone.model
+        backbone = backbone_container.model
     else:
         # If it's native Transformers ResNet
-        backbone = model.model.backbone
+        backbone = backbone_container
 
     print(f"[INFO] Freezing backbone layers up to stage {freeze_at_stage}...")
 

@@ -1,0 +1,38 @@
+import copy
+from collections import OrderedDict
+from torch import nn
+import torch
+
+class ModelEma(nn.Module):
+    """
+    Model Exponential Moving Average from Taming Transformers
+    """
+    def __init__(self, model, decay=0.9999):
+        super().__init__()
+        # make a copy of the model for accumulating moving average of weights
+        self.module = copy.deepcopy(model)
+        self.module.eval()
+        self.decay = decay
+        # self.device = device  # perform ema on different device from model if set
+        # if self.device is not None:
+        #     self.module.to(device=device)
+
+    def _update(self, model, update_fn):
+        with torch.no_grad():
+            for ema_v, model_v in zip(self.module.state_dict().values(), model.state_dict().values()):
+                # if self.device is not None:
+                #     model_v = model_v.to(device=self.device)
+                ema_v.copy_(update_fn(ema_v, model_v))
+
+    def update(self, model):
+        self._update(model, update_fn=lambda e, m: self.decay * e + (1. - self.decay) * m)
+
+    def set(self, model):
+        self._update(model, update_fn=lambda e, m: m)
+
+    def state_dict(self, destination=None, prefix='', keep_vars=False):
+        # TODO: access nested state dicts by the name
+        return self.module.state_dict(destination=destination, prefix=prefix, keep_vars=keep_vars)
+
+    def load_state_dict(self, state_dict, strict=True):
+        self.module.load_state_dict(state_dict, strict=strict)

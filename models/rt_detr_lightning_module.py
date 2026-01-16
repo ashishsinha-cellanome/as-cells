@@ -7,6 +7,7 @@ import pytorch_lightning as pl
 from pycocotools.cocoeval import COCOeval
 from PIL import Image, ImageDraw, ImageFont
 from models.custom_rt_detr_with_dinov2_backbone import RTDetrV2ForObjectDetectionWithCustomBackbone
+from utils.ema import ModelEma
 
 def to_cpu_device(tensor):
     """Move a CUDA torch tensor to CPU memory."""
@@ -93,6 +94,16 @@ class RTDETRLightningModule(pl.LightningModule):
         self.base_lr = self.config.optimizer.optimizer.lr
         self.validation_step_outputs = []
         self.test_step_outputs = []
+        self.ema_model = None
+        if hasattr(self.config.model, 'ema') and self.config.model.ema.enabled:
+            self.ema_model = ModelEma(self.model, decay=self.config.model.ema.decay)
+            self.validation_step_outputs_ema = []
+            self.test_step_outputs_ema = []
+
+    def on_train_batch_end(self, outputs, batch, batch_idx):
+        """Update EMA model after each training step."""
+        if self.ema_model:
+            self.ema_model.update(self.model)
 
     def forward(self, pixel_values, labels=None):
         """Forward pass."""
@@ -186,6 +197,30 @@ class RTDETRLightningModule(pl.LightningModule):
         # return {"predictions": results}
         # breakpoint()
         self.validation_step_outputs.append({"predictions": results, "image_ids": image_ids})
+        if self.ema_model:
+            # EMA model forward pass
+            ema_outputs = self.ema_model.module(pixel_values=pixel_values, labels=None)
+
+            # Post-process EMA predictions
+            post_processed_ema_outputs = self.image_processor.post_process_object_detection(
+                ema_outputs,
+                threshold=self.config.model.detection_threshold,
+                target_sizes=batch_image_sizes
+            )
+
+            # Move EMA predictions to CPU
+            post_processed_ema_outputs = [
+                {k: to_cpu_device(v) for k, v in outputs.items()}
+                for outputs in post_processed_ema_outputs
+            ]
+
+            # Convert to COCO format and store for EMA
+            ema_results = {
+                int(target["image_id"].item()): output
+                for target, output in zip(labels, post_processed_ema_outputs)
+            }
+            self.validation_step_outputs_ema.append({"predictions": ema_results, "image_ids": image_ids})
+
         return {"predictions": results, "image_ids": image_ids}
     
     def on_validation_epoch_end(self):
