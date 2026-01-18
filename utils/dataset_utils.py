@@ -19,6 +19,28 @@ from .json_parser import CellMaskDataset
 MIN_AREA: Final[int] = 16
 MAX_IMAGE_SIDE: Final[int] = 4512
 
+def build_transforms_from_config(transform_list: List[Dict]) -> List[A.BasicTransform]:
+    """Builds a list of Albumentations transforms from a configuration list."""
+    transforms = []
+    for t_config in transform_list:
+        name = t_config['name']
+        params = t_config.get('params', {})
+        
+        # Handle special cases or type conversions if necessary
+        # For example, converting lists to tuples if strictly required by library (though A usually handles lists)
+        
+        if hasattr(A, name):
+            transform_cls = getattr(A, name)
+            # Filter out None params or handle them? usually **params is enough
+            try:
+                transforms.append(transform_cls(**params))
+            except Exception as e:
+                print(f"[ERROR] Failed to initialize transform {name} with params {params}: {e}")
+        else:
+            print(f"[WARN] Transform {name} not found in albumentations.")
+            
+    return transforms
+
 def get_transform(
     model_input_width: int, 
     model_input_height: int,
@@ -26,8 +48,17 @@ def get_transform(
     max_random_scale: float,
     p_noise: float, 
     org_images_in_model_input_size: bool = True,
-    train: bool = True) -> A.core.composition.Compose:
-    if train:
+    train: bool = True,
+    transforms_config: Optional[List[Dict]] = None) -> A.core.composition.Compose:
+    
+    trsfms = []
+    
+    if transforms_config is not None:
+        # Use the provided configuration
+        trsfms = build_transforms_from_config(transforms_config)
+    
+    elif train:
+        # Legacy/Default hardcoded transforms
         # random noise addition and random scale as defined above, 
         # we call these before PILToTensor as these classes 
         # operates on numpy images

@@ -1,6 +1,10 @@
 # configs/data/default.yaml
 # Default (full) dataset configuration
 
+defaults:
+  - transforms
+  - _self_
+
 # data:
 path: "/global/home/ashish.sinha/cellanome/SMALL_TRAINING_DATA2"
 model_input_size: 672

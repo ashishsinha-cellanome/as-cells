@@ -5,6 +5,7 @@ from torch.utils.data import DataLoader
 import pytorch_lightning as pl
 from torchvision.datasets import CocoDetection
 import albumentations as A
+from omegaconf import OmegaConf
 
 from utils.dataset_utils import get_transform
 
@@ -188,6 +189,11 @@ class COCODataModule(pl.LightningDataModule):
             )
             train_remap = self._get_remap_dict(train_coco)
 
+            # Check for transforms config
+            transforms_config_train = None
+            if hasattr(self.config, 'data') and hasattr(self.config.data, 'transforms') and hasattr(self.config.data.transforms, 'train'):
+                transforms_config_train = OmegaConf.to_container(self.config.data.transforms.train, resolve=True)
+
             train_transforms = get_transform(
                 model_input_width=self.model_input_size,
                 model_input_height=self.model_input_size,
@@ -195,7 +201,8 @@ class COCODataModule(pl.LightningDataModule):
                 max_random_scale=self.max_random_scale,
                 p_noise=self.p_noise,
                 org_images_in_model_input_size=self.org_images_in_model_input_size,
-                train=True
+                train=True,
+                transforms_config=transforms_config_train
             )
             
             self.train_dataset = CocoDataset(
@@ -217,6 +224,10 @@ class COCODataModule(pl.LightningDataModule):
             
             val_remap = self._get_remap_dict(val_coco)
 
+            transforms_config_test = None
+            if hasattr(self.config, 'data') and hasattr(self.config.data, 'transforms') and hasattr(self.config.data.transforms, 'test'):
+                 transforms_config_test = OmegaConf.to_container(self.config.data.transforms.test, resolve=True)
+
             val_transforms = get_transform(
                 model_input_width=self.model_input_size,
                 model_input_height=self.model_input_size,
@@ -224,7 +235,8 @@ class COCODataModule(pl.LightningDataModule):
                 max_random_scale=self.max_random_scale,
                 p_noise=self.p_noise,
                 org_images_in_model_input_size=self.org_images_in_model_input_size,
-                train=False
+                train=False,
+                transforms_config=transforms_config_test
             )
             
             self.val_dataset = CocoDataset(
@@ -252,6 +264,10 @@ class COCODataModule(pl.LightningDataModule):
             
             test_remap = self._get_remap_dict(test_coco)
 
+            transforms_config_test = None
+            if hasattr(self.config, 'data') and hasattr(self.config.data, 'transforms') and hasattr(self.config.data.transforms, 'test'):
+                 transforms_config_test = OmegaConf.to_container(self.config.data.transforms.test, resolve=True)
+
             test_transforms = get_transform(
                 model_input_width=self.model_input_size,
                 model_input_height=self.model_input_size,
@@ -259,7 +275,8 @@ class COCODataModule(pl.LightningDataModule):
                 max_random_scale=self.max_random_scale,
                 p_noise=self.p_noise,
                 org_images_in_model_input_size=self.org_images_in_model_input_size,
-                train=False
+                train=False,
+                transforms_config=transforms_config_test
             )
             
             self.test_dataset = CocoDataset(

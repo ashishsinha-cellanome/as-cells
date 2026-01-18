@@ -1,0 +1,39 @@
+# Config for data transforms
+
+transforms:
+  train:
+    - name: RandomScale
+      params:
+        scale_limit: [ -0.3, 0.0 ] 
+        p: 1.0
+    - name: PadIfNeeded
+      params:
+        min_height: 672 
+        min_width: 672  
+        position: 'random'
+    - name: RandomCrop
+      params:
+        height: 672 
+        width: 672  
+        pad_if_needed: False
+        p: 1.0
+    - name: RandomRotate90
+      params: 
+        p: 0.5
+    - name: Perspective
+      params:
+        p: 0.25 
+    - name: RandomBrightnessContrast
+      params:
+        p: 0.25 
+    - name: HueSaturationValue
+      params:
+        p: 0.25 
+    - name: AdditiveNoise
+      params:
+        p: 0.25 
+        spatial_mode: 'per_pixel'
+
+  test:
+    - name: NoOp
+      params: {}
