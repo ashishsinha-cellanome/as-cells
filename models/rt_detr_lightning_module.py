@@ -146,7 +146,8 @@ class RTDETRLightningModule(pl.LightningModule):
         outputs = self.model(pixel_values=pixel_values, labels=None)
         
         # Collect image sizes
-        batch_image_sizes = [to_cpu_device(x["size"]).numpy().tolist() for x in labels]
+        # Use 'orig_size' for accurate mAP calculation when train/test image sizes are different than the selected model input size
+        batch_image_sizes = [to_cpu_device(x["orig_size"]).numpy().tolist() for x in labels]
         # breakpoint()
         # Post-process predictions
         post_processed_outputs = self.image_processor.post_process_object_detection(
@@ -277,7 +278,8 @@ class RTDETRLightningModule(pl.LightningModule):
         outputs = self.model(pixel_values=pixel_values, labels=None)
         
         # Collect image sizes
-        batch_image_sizes = [to_cpu_device(x["size"]).numpy().tolist() for x in labels]
+        # Use 'orig_size' for accurate mAP calculation when train/test image sizes are different than the selected model input size
+        batch_image_sizes = [to_cpu_device(x["orig_size"]).numpy().tolist() for x in labels]
         
         # Post-process predictions
         post_processed_outputs = self.image_processor.post_process_object_detection(
