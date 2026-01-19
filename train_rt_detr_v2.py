@@ -124,7 +124,7 @@ def create_initial_checkpoint(config: DictConfig) -> str:
     #     print(f"✓ Found cached backbone at: {versioned_backbone_path}")
 
     # # Return the specific versioned path
-    # return versioned_rtdetr_path
+    # # return versioned_rtdetr_path
     id2label = {int(k): v for k, v in model_config.label_map.items()}
     label2id = {v: k for k, v in id2label.items()}
     overrides = OmegaConf.to_container(model_config.rtdetr, resolve=True)
@@ -191,7 +191,7 @@ def create_initial_checkpoint(config: DictConfig) -> str:
     #     model.save_pretrained(versioned_rtdetr_path)
     #     print(f"✓ Model saved to {versioned_rtdetr_path}")
 
-    # return versioned_rtdetr_path
+    # # return versioned_rtdetr_path
 
     # Backup to NAS (If available)
     if nas_path:
@@ -445,7 +445,7 @@ def main(config: DictConfig):
         unique_id = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         rank_zero_print(f"⚠️  No shared job ID found. Using timestamp: {unique_id}")
     
-    if config.run_name.startswith("rtdetrv2_dinov2"): 
+    if config.run_name.startswith("rtdetrv2_dinov2"):
         config.run_name = f"rtdetrv2_dinov2_{unique_id}"
     else:
         config.run_name = f"{config.run_name}_{unique_id}"
@@ -603,17 +603,35 @@ def main(config: DictConfig):
         rank_zero_print("="*80 + "\n")
         
         # Test the best model
-        if trainer.checkpoint_callback.best_model_path:
-            best_path = trainer.checkpoint_callback.best_model_path
+        best_path = None
+        best_score = None
+        
+        # 1. Try to find the EMA checkpoint callback first
+        if hasattr(config.model, 'ema') and config.model.ema.enabled:
+            for cb in trainer.callbacks:
+                if isinstance(cb, ModelCheckpoint) and cb.monitor == "val/map_ema":
+                    if cb.best_model_path:
+                        best_path = cb.best_model_path
+                        best_score = cb.best_model_score
+                        rank_zero_print(f"🎯 Selected BEST EMA checkpoint (monitor: {cb.monitor})")
+                    break
+        
+        # 2. Fallback to Regular checkpoint if EMA not found or not enabled
+        if not best_path:
+            for cb in trainer.callbacks:
+                if isinstance(cb, ModelCheckpoint) and cb.monitor == config.checkpointing.monitor:
+                    if cb.best_model_path:
+                        best_path = cb.best_model_path
+                        best_score = cb.best_model_score
+                        rank_zero_print(f"🎯 Selected BEST REGULAR checkpoint (monitor: {cb.monitor})")
+                    break
+
+        if best_path:
             rank_zero_print(f"Best model found at: {best_path}")
-            rank_zero_print(f"Best val_map: {trainer.checkpoint_callback.best_model_score:.4f}")
+            if best_score is not None:
+                rank_zero_print(f"Best score: {best_score:.4f}")
             
-            rank_zero_print("\nLoading BEST checkpoint with strict=False (to handle potential missing EMA keys)...")
-            # Manually load to allow strict=False
-            # We must pass the necessary args that __init__ expects if they aren't saved in hparams correctly,
-            # but usually load_from_checkpoint handles this if hparams were saved.
-            # However, we passed 'model' and 'image_processor' as objects to init, so we might need to reconstruct them
-            # or rely on the fact that we have them in scope.
+            rank_zero_print("\nLoading BEST checkpoint with strict=False...")
             
             # Actually, the safest way is to load state_dict into the CURRENT model structure
             try:
@@ -625,7 +643,7 @@ def main(config: DictConfig):
                 missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)
                 
                 if missing_keys:
-                    rank_zero_print(f"⚠️  Missing keys during load (likely EMA): {missing_keys[:5]} ...")
+                    rank_zero_print(f"⚠️  Missing keys during load: {missing_keys[:5]} ...")
                 if unexpected_keys:
                     rank_zero_print(f"⚠️  Unexpected keys during load: {unexpected_keys[:5]} ...")
                 
