@@ -574,10 +574,36 @@ def main(config: DictConfig):
         
         # Test the best model
         if trainer.checkpoint_callback.best_model_path:
-            rank_zero_print(f"Best model: {trainer.checkpoint_callback.best_model_path}")
+            best_path = trainer.checkpoint_callback.best_model_path
+            rank_zero_print(f"Best model found at: {best_path}")
             rank_zero_print(f"Best val_map: {trainer.checkpoint_callback.best_model_score:.4f}")
-            rank_zero_print("\nRunning test evaluation on BEST checkpoint...")
-            trainer.test(model, datamodule=data_module, ckpt_path='best')
+            
+            rank_zero_print("\nLoading BEST checkpoint with strict=False (to handle potential missing EMA keys)...")
+            # Manually load to allow strict=False
+            # We must pass the necessary args that __init__ expects if they aren't saved in hparams correctly,
+            # but usually load_from_checkpoint handles this if hparams were saved.
+            # However, we passed 'model' and 'image_processor' as objects to init, so we might need to reconstruct them
+            # or rely on the fact that we have them in scope.
+            
+            # Actually, the safest way is to load state_dict into the CURRENT model structure
+            try:
+                checkpoint = torch.load(best_path, map_location=model.device)
+                # If checkpoint has 'state_dict' key (PL format), use it
+                state_dict = checkpoint['state_dict'] if 'state_dict' in checkpoint else checkpoint
+                
+                # Load with strict=False
+                missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)
+                
+                if missing_keys:
+                    rank_zero_print(f"⚠️  Missing keys during load (likely EMA): {missing_keys[:5]} ...")
+                if unexpected_keys:
+                    rank_zero_print(f"⚠️  Unexpected keys during load: {unexpected_keys[:5]} ...")
+                
+                rank_zero_print("\nRunning test evaluation on BEST checkpoint...")
+                trainer.test(model, datamodule=data_module)
+                
+            except Exception as e:
+                rank_zero_print(f"❌ Failed to load best checkpoint: {e}")
         else:
             rank_zero_print("\nNo best model found. Testing disabled.")
     
