@@ -457,8 +457,6 @@ def setup_logger(config: DictConfig):
         config=OmegaConf.to_container(config, resolve=True), # Log full config
         # Hydra changes CWD, so we save logs to the new CWD
         save_dir=os.getcwd(), 
-        reinit=True,
-        
     )
     
     rank_zero_print(f"✓ WandB logger configured - Project: {wandb_config.project}")
@@ -490,15 +488,11 @@ def main(config: DictConfig):
             
     if not unique_id:
         # Fallback to timestamp if no manager/launcher detected
-        # Note: In a raw SSH-loop launch without a shared env var, this might still differ by seconds.
-        # Ideally use torchrun or srun for multi-node.
         unique_id = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         rank_zero_print(f"⚠️  No shared job ID found. Using timestamp: {unique_id}")
     
-    if config.run_name.startswith("rtdetrv2_dinov2"):
-        config.run_name = f"rtdetrv2_dinov2_{unique_id}"
-    else:
-        config.run_name = f"{config.run_name}_{unique_id}"
+    # Standardize run naming: {original_run_name_with_date_from_yaml}_{unique_id}
+    config.run_name = f"{config.run_name}_{unique_id}"
 
     # --- 2. Handle Hydra Sweep Logic ---
     hydra_cfg = HydraConfig.get()
