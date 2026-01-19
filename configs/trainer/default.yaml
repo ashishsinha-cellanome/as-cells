@@ -2,7 +2,7 @@
 # Default configuration for the pl.Trainer object
 # trainer:
   accelerator: "auto"
-  devices: -1
+  devices: "auto"
   precision: "16-mixed"
   strategy: "ddp_find_unused_parameters_true"
   max_epochs: 50

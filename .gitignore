@@ -14,7 +14,9 @@ new/
 benchmark_results/
 ./dataset
 *.json
-
+*logs/
+*log/
+*.out
 .gemini/
 gha-creds-*.json
 logs/

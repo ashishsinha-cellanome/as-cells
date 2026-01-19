@@ -1,10 +1,13 @@
 #!/bin/bash
 #SBATCH --job-name=large_training_job
+#SBATCH --account=aip-robsc
 #SBATCH --nodes=8
+#SBATCH --mail-user=ashish.sinha@amii.ca
+#SBATCH --mail-type=END,FAIL
 #SBATCH --gpus-per-node=4
 #SBATCH --ntasks-per-node=4
 #SBATCH --cpus-per-task=8
-#SBATCH --mem=0
+#SBATCH --mem-per-gpu=32G
 #SBATCH --time=7-00:00:00
 #SBATCH --output=logs/%x-%j.out
 #SBATCH --error=logs/%x-%j.err
@@ -12,7 +15,6 @@
 # --- Account Handling ---
 # If not running under SLURM, submit this script to sbatch
 if [ -z "$SLURM_JOB_ID" ]; then
-    ACCOUNT=${1:-${CC_ACCOUNT:-def-youruser}}
     echo "Submitting job with account: $ACCOUNT"
     sbatch --account=$ACCOUNT "$0"
     exit

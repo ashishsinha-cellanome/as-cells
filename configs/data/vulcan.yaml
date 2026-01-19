@@ -1,0 +1,51 @@
+# @package _global_
+# configs/data/denvr.yaml
+
+defaults:
+  # - /data@data: default
+  - default@data
+
+# 3. OVERRIDE: Data loads from Fast Scratch
+data:
+  path: "/project/aip-robsc/asinha/cellanome/DATA/TRAINING_DATA"
+  val_name: 'valid'
+  test_name: 'test'
+  train_name: 'train'
+
+# 4. OVERRIDE: Checkpoints to NAS
+checkpointing:
+  # 1. WORKING DIRECTORY (Fast Scratch)
+  # We want the code to look for checkpoints HERE first.
+  save_dir: "/project/aip-robsc/asinha/cellanome/DATA/checkpoints/"
+  
+  # The path the code uses to load the initial model:
+  rtdetr_initial_checkpoint: "/project/aip-robsc/asinha/cellanome/DATA/checkpoints/${checkpointing._folder_name}"
+  dinov2_backbone_checkpoint: "/project/aip-robsc/asinha/cellanome/DATA/checkpoints/backbones/dinov2"
+
+  # 2. MASTER STORAGE (Slow NAS)
+  # We defined this new key so the code knows where to check if scratch is empty.
+  # nas_dir: "/mnt/personal/cellanome/checkpoints/"
+  # nas_initial_checkpoint: "${checkpointing.nas_dir}/${checkpointing._folder_name}"
+  
+  # Visuals can go directly to NAS (low bandwidth usage)
+  # val_image_dir: "${checkpointing.nas_initial_checkpoint}/predictions"
+
+  # Backup dir for the callback (from previous step)
+  # backup_dir: "${checkpointing.nas_initial_checkpoint}"
+
+# checkpointing:
+#   save_dir: "/home/ubuntu/scratch/cellanome/checkpoints/"
+  
+#   # _folder_name: "dinov2_backbone_rtdetr"
+#   backup_dir: "/mnt/personal/cellanome/checkpoints/${checkpointing._folder_name}"
+#   rtdetr_initial_checkpoint: "/mnt/personal/cellanome/checkpoints/${checkpointing._folder_name}"
+#   dinov2_backbone_checkpoint: "/mnt/personal/cellanome/checkpoints/backbones/dinov2"
+  
+#   val_image_dir: "/mnt/personal/cellanome/checkpoints/${checkpointing._folder_name}/predictions"
+
+# 5. OVERRIDE: Logs to Scratch
+hydra:
+  run:
+    dir: "/project/aip-robsc/asinha/cellanome/logs/${now:%Y-%m-%d}/${now:%H-%M-%S}"
+  sweep:
+    dir: "/project/aip-robsc/asinha/cellanome/logs/multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}"
