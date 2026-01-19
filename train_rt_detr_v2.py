@@ -35,8 +35,8 @@ if "MASTER_ADDR" not in os.environ and "SLURM_NODELIST" in os.environ:
         pass
 
 # Disable P2P and IB if there are networking issues between nodes
-# os.environ["NCCL_P2P_DISABLE"] = "1" 
-# os.environ["NCCL_IB_DISABLE"] = "1"
+os.environ["NCCL_P2P_DISABLE"] = "1" 
+os.environ["NCCL_IB_DISABLE"] = "1"
 os.environ["NCCL_DEBUG"] = "INFO" # Enable debug logs for distributed initialization
 
 import torch
@@ -599,9 +599,16 @@ def main(config: DictConfig):
     num_nodes = int(os.environ.get("SLURM_NNODES", 1))
     rank_zero_print(f"🌍 Detected Number of Nodes: {num_nodes}")
 
+    # FIX for srun: If we are already in a SLURM task, we should only use 1 device per task
+    # to avoid Lightning trying to spawn sub-processes.
+    devices = trainer_config.devices
+    if "SLURM_PROCID" in os.environ:
+        rank_zero_print(f"🚀 SLURM task detected (Proc ID: {os.environ['SLURM_PROCID']}). Forcing devices=1 per task.")
+        devices = 1
+
     trainer = pl.Trainer(
         accelerator=trainer_config.accelerator,
-        devices=trainer_config.devices,
+        devices=devices,
         num_nodes=num_nodes,
         precision=trainer_config.precision,
         strategy=trainer_config.strategy,
