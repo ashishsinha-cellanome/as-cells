@@ -8,6 +8,16 @@ import os
 import datetime
 import shutil
 import time
+
+# --- Multi-node Stability Fixes ---
+# Use a unique port to avoid collisions with other jobs on the same nodes
+if "MASTER_PORT" not in os.environ:
+    os.environ["MASTER_PORT"] = "29505"
+# Disable P2P and IB if there are networking issues between nodes
+# os.environ["NCCL_P2P_DISABLE"] = "1" 
+# os.environ["NCCL_IB_DISABLE"] = "1"
+os.environ["NCCL_DEBUG"] = "INFO" # Enable debug logs for distributed initialization
+
 import torch
 torch.set_float32_matmul_precision('medium')
 
@@ -546,6 +556,13 @@ def main(config: DictConfig):
     pl.seed_everything(config.seed, workers=True)
     
     # Setup components
+    rank = get_rank()
+    if rank == 0:
+        rank_zero_print("\n--- Distributed Environment ---")
+        for var in ["MASTER_ADDR", "MASTER_PORT", "SLURM_PROCID", "SLURM_NNODES", "SLURM_NTASKS", "LOCAL_RANK", "RANK", "WORLD_SIZE"]:
+            rank_zero_print(f"{var}: {os.environ.get(var, 'NOT SET')}")
+        rank_zero_print("-------------------------------\n")
+
     model, processor = setup_model(config)
     data_module = setup_data(config, processor)
     callbacks = setup_callbacks(config)

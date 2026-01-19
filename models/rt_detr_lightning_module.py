@@ -247,17 +247,22 @@ class RTDETRLightningModule(pl.LightningModule):
             self.print (f"VAL IDs seen this epoch:   {set(validation_image_ids)}")
             self.print ("---------------------\n")
         # Compute COCO metrics
-        metrics = self._compute_coco_metrics(
-            predictions=validation_predictions,
-            image_ids=list(set(validation_image_ids)),
-            coco_gt=self.val_coco_gt
-        )
-        
-        # Log metrics
-        for key, value in metrics.items():
-            self.log(f"val/{key}", value, prog_bar=True, sync_dist=True)
-            if key == 'map':
-                self.log(f"val_{key}", value, prog_bar=False, sync_dist=True)
+        if self.val_coco_gt is not None:
+            metrics = self._compute_coco_metrics(
+                predictions=validation_predictions,
+                image_ids=list(set(validation_image_ids)),
+                coco_gt=self.val_coco_gt
+            )
+            
+            # Log metrics
+            for key, value in metrics.items():
+                self.log(f"val/{key}", value, prog_bar=True, sync_dist=True)
+                if key == 'map':
+                    self.log(f"val_{key}", value, prog_bar=False, sync_dist=True)
+        else:
+            # On non-zero ranks where coco_gt is None, we still need to log something to avoid DDP sync issues if necessary,
+            # but usually sync_dist=True handles it if at least one rank logs.
+            pass
         
         # --- EMA Metrics ---
         if hasattr(self, 'validation_step_outputs_ema') and self.validation_step_outputs_ema:
@@ -390,16 +395,17 @@ class RTDETRLightningModule(pl.LightningModule):
             return
 
         # Compute COCO metrics
-        metrics = self._compute_coco_metrics(
-            predictions=test_predictions,
-            # image_ids=self.test_image_ids,
-            image_ids = list(set(test_image_ids)),
-            coco_gt=self.test_coco_gt  
-        )
-        
-        # Log metrics
-        for key, value in metrics.items():
-            self.log(f"test/{key}", value, prog_bar=True, sync_dist=True)  
+        if self.test_coco_gt is not None:
+            metrics = self._compute_coco_metrics(
+                predictions=test_predictions,
+                # image_ids=self.test_image_ids,
+                image_ids = list(set(test_image_ids)),
+                coco_gt=self.test_coco_gt  
+            )
+            
+            # Log metrics
+            for key, value in metrics.items():
+                self.log(f"test/{key}", value, prog_bar=True, sync_dist=True)  
         
         # --- EMA Metrics ---
         if hasattr(self, 'test_step_outputs_ema') and self.test_step_outputs_ema:
