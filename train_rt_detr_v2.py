@@ -343,28 +343,45 @@ def setup_profiler(config: DictConfig):
 def setup_callbacks(config: DictConfig):
     """Setup training callbacks."""
     checkpoint_config = config.checkpointing
+    callbacks = []
     
-    # Auto-switch monitor if EMA is enabled
-    monitor = checkpoint_config.monitor
-    if hasattr(config.model, 'ema') and config.model.ema.enabled:
-        rank_zero_print("💡 EMA enabled: Switching checkpoint monitor to 'val/map_ema'")
-        monitor = "val/map_ema"
-    
-    callbacks = [
+    # 1. Standard Model Checkpoint
+    # Tracks the standard validation metric (e.g. val/map)
+    rank_zero_print(f"Configure ModelCheckpoint for Standard Model: {checkpoint_config.monitor}")
+    callbacks.append(
         ModelCheckpoint(
-            # dirpath=os.path.join(hydra.utils.to_absolute_path(checkpoint_config.save_dir), config.run_name, 'ckpts'), # Use absolute path
-            dirpath=os.path.join(hydra.utils.to_absolute_path(checkpoint_config.save_dir), 'ckpts'), # Use absolute path
-            filename='rtdetr-{epoch:02d}-{' + monitor.replace('/', '_') + ':.4f}', # Dynamic filename
-            monitor=monitor,
+            dirpath=os.path.join(hydra.utils.to_absolute_path(checkpoint_config.save_dir), 'ckpts'),
+            filename='rtdetr-regular-{epoch:02d}-{' + checkpoint_config.monitor.replace('/', '_') + ':.4f}',
+            monitor=checkpoint_config.monitor,
             mode=checkpoint_config.mode,
             save_top_k=checkpoint_config.save_top_k,
-            save_last=checkpoint_config.save_last,
+            save_last=checkpoint_config.save_last, # 'last.ckpt' will be managed by this one
             every_n_epochs=checkpoint_config.every_n_epochs,
             verbose=True,
-        ),
-        LearningRateMonitor(logging_interval='step'),
-        ModelSummary(max_depth=2),
-    ]
+        )
+    )
+
+    # 2. EMA Model Checkpoint (If enabled)
+    # Tracks the EMA validation metric (val/map_ema)
+    if hasattr(config.model, 'ema') and config.model.ema.enabled:
+        rank_zero_print("💡 EMA enabled: Adding second ModelCheckpoint for 'val/map_ema'")
+        ema_monitor = "val/map_ema"
+        callbacks.append(
+            ModelCheckpoint(
+                dirpath=os.path.join(hydra.utils.to_absolute_path(checkpoint_config.save_dir), 'ckpts'),
+                filename='rtdetr-ema-{epoch:02d}-{' + ema_monitor.replace('/', '_') + ':.4f}',
+                monitor=ema_monitor,
+                mode=checkpoint_config.mode,
+                save_top_k=checkpoint_config.save_top_k,
+                save_last=False, # Don't duplicate 'last.ckpt' logic
+                every_n_epochs=checkpoint_config.every_n_epochs,
+                verbose=True,
+            )
+        )
+
+    callbacks.append(LearningRateMonitor(logging_interval='step'))
+    callbacks.append(ModelSummary(max_depth=2))
+
     if "backup_dir" in checkpoint_config and checkpoint_config.backup_dir:
         # Resolve path (handle ${hydra...} if needed, though usually resolved by now)
         backup_path = hydra.utils.to_absolute_path(checkpoint_config.backup_dir)
