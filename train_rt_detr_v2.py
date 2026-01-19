@@ -11,8 +11,29 @@ import time
 
 # --- Multi-node Stability Fixes ---
 # Use a unique port to avoid collisions with other jobs on the same nodes
+# Derive it from SLURM_JOB_ID if available
 if "MASTER_PORT" not in os.environ:
-    os.environ["MASTER_PORT"] = "29505"
+    job_id = os.environ.get("SLURM_JOB_ID")
+    if job_id:
+        # Use last 4 digits of Job ID + 20000
+        try:
+            port = 20000 + (int(job_id) % 10000)
+            os.environ["MASTER_PORT"] = str(port)
+        except ValueError:
+            os.environ["MASTER_PORT"] = "29505"
+    else:
+        os.environ["MASTER_PORT"] = "29505"
+
+if "MASTER_ADDR" not in os.environ and "SLURM_NODELIST" in os.environ:
+    # Get the first node name from the list
+    import subprocess
+    try:
+        node_list = os.environ["SLURM_NODELIST"]
+        master_node = subprocess.check_output(["scontrol", "show", "hostnames", node_list]).decode().splitlines()[0]
+        os.environ["MASTER_ADDR"] = master_node
+    except Exception:
+        pass
+
 # Disable P2P and IB if there are networking issues between nodes
 # os.environ["NCCL_P2P_DISABLE"] = "1" 
 # os.environ["NCCL_IB_DISABLE"] = "1"
