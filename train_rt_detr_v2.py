@@ -518,9 +518,14 @@ def main(config: DictConfig):
     trainer_config = config.trainer
     data_config = config.data
     
+    # Auto-detect number of nodes (default to 1)
+    num_nodes = int(os.environ.get("SLURM_NNODES", 1))
+    rank_zero_print(f"🌍 Detected Number of Nodes: {num_nodes}")
+
     trainer = pl.Trainer(
         accelerator=trainer_config.accelerator,
         devices=trainer_config.devices,
+        num_nodes=num_nodes,
         precision=trainer_config.precision,
         strategy=trainer_config.strategy,
         max_epochs=trainer_config.max_epochs,
