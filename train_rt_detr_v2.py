@@ -242,6 +242,13 @@ def setup_model(config: DictConfig) -> RTDETRLightningModule:
              if "model.backbone.backbone" in name: # The ViT part
                  param.requires_grad = False
 
+    # Check for EMA keys if EMA is enabled (just a warning)
+    if hasattr(config.model, 'ema') and config.model.ema.enabled:
+        # We can't easily check the checkpoint file here without reloading it, 
+        # but the LightningModule init will set up self.ema_model.
+        # If loading from a PL checkpoint later, strict=False handles it.
+        pass
+
     # breakpoint()
     rtdetr_overrides = OmegaConf.to_container(config.model.rtdetr, resolve=True)
     rtdetr_overrides.pop("pretrained_name_or_path", None)
@@ -337,12 +344,18 @@ def setup_callbacks(config: DictConfig):
     """Setup training callbacks."""
     checkpoint_config = config.checkpointing
     
+    # Auto-switch monitor if EMA is enabled
+    monitor = checkpoint_config.monitor
+    if hasattr(config.model, 'ema') and config.model.ema.enabled:
+        rank_zero_print("💡 EMA enabled: Switching checkpoint monitor to 'val/map_ema'")
+        monitor = "val/map_ema"
+    
     callbacks = [
         ModelCheckpoint(
             # dirpath=os.path.join(hydra.utils.to_absolute_path(checkpoint_config.save_dir), config.run_name, 'ckpts'), # Use absolute path
             dirpath=os.path.join(hydra.utils.to_absolute_path(checkpoint_config.save_dir), 'ckpts'), # Use absolute path
-            filename='rtdetr-{epoch:02d}-{val_map:.4f}',
-            monitor=checkpoint_config.monitor,
+            filename='rtdetr-{epoch:02d}-{' + monitor.replace('/', '_') + ':.4f}', # Dynamic filename
+            monitor=monitor,
             mode=checkpoint_config.mode,
             save_top_k=checkpoint_config.save_top_k,
             save_last=checkpoint_config.save_last,
