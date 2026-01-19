@@ -390,16 +390,30 @@ def main(config: DictConfig):
     # Unlock config to make changes
     OmegaConf.set_struct(config, False)
     # breakpoint()
-    # --- 1. Handle Run Naming (SLURM-aware) ---
-    # Use SLURM_JOB_ID if available to ensure all DDP ranks agree on the name
-    slurm_job_id = os.environ.get("SLURM_JOB_ID")
+    # --- 1. Handle Run Naming (Cluster Agnostic) ---
+    # Try to find a shared ID from common cluster/launcher environment variables
+    # This ensures all ranks in a distributed run agree on the run name/ID.
+    unique_id = None
+    id_candidates = [
+        "SLURM_JOB_ID",          # SLURM
+        "TORCHELASTIC_RUN_ID",   # torchrun / torch.distributed.launch
+        "WANDB_RUN_ID",          # User-provided WandB ID
+        "PBS_JOBID",             # PBS/Torque
+        "LSB_JOBID",             # LSF
+    ]
     
-    if slurm_job_id:
-        unique_id = slurm_job_id
-        rank_zero_print(f"🚀 Running in SLURM Job: {unique_id}")
-    else:
-        # Fallback to timestamp for local runs
+    for var in id_candidates:
+        if os.environ.get(var):
+            unique_id = os.environ.get(var)
+            rank_zero_print(f"🚀 Found Job ID from {var}: {unique_id}")
+            break
+            
+    if not unique_id:
+        # Fallback to timestamp if no manager/launcher detected
+        # Note: In a raw SSH-loop launch without a shared env var, this might still differ by seconds.
+        # Ideally use torchrun or srun for multi-node.
         unique_id = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        rank_zero_print(f"⚠️  No shared job ID found. Using timestamp: {unique_id}")
     
     if config.run_name.startswith("rtdetrv2_dinov2"): 
         config.run_name = f"rtdetrv2_dinov2_{unique_id}"
