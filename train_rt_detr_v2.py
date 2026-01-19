@@ -571,7 +571,7 @@ def main(config: DictConfig):
         overfit_batches = trainer_config.num_overfit_samples,
         limit_test_batches = data_config.limit_test_batches if not config.debug else 10,
         limit_train_batches = data_config.limit_train_batches if not config.debug else 10,
-        limit_val_batches = data_config.limit_val_batches if not config.debug else 10,
+        limit_val_batches = data_config.limit_val_batches,
         profiler = None if config.debug else profiler,
     )
     
