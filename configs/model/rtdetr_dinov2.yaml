@@ -1,4 +1,5 @@
-# configs/model/rtdetr_dinov2.yaml
+defaults:
+  - backbone: dinov2
 
 # model:
   # --- RT-DETR Config ---
