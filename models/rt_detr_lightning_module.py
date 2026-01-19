@@ -259,6 +259,28 @@ class RTDETRLightningModule(pl.LightningModule):
             if key == 'map':
                 self.log(f"val_{key}", value, prog_bar=False, sync_dist=True)
         
+        # --- EMA Metrics ---
+        if hasattr(self, 'validation_step_outputs_ema') and self.validation_step_outputs_ema:
+            ema_predictions = []
+            ema_image_ids = []
+            for output_batch in self.validation_step_outputs_ema:
+                ema_predictions.extend(convert_preds_to_coco(output_batch["predictions"]))
+                ema_image_ids.extend(output_batch["image_ids"])
+            
+            if len(ema_predictions) > 0:
+                ema_metrics = self._compute_coco_metrics(
+                    predictions=ema_predictions,
+                    image_ids=list(set(ema_image_ids)),
+                    coco_gt=self.val_coco_gt
+                )
+                for key, value in ema_metrics.items():
+                    # Log with _ema suffix
+                    self.log(f"val/{key}_ema", value, prog_bar=True, sync_dist=True)
+                    if key == 'map':
+                         self.log(f"val_{key}_ema", value, prog_bar=False, sync_dist=True)
+            
+            self.validation_step_outputs_ema.clear()
+
         # Clear accumulated predictions
         # self.validation_predictions = []
         # self.validation_image_ids = []
@@ -323,6 +345,31 @@ class RTDETRLightningModule(pl.LightningModule):
         # self.test_predictions.extend(results)
         # self.test_image_ids.extend([int(target["image_id"].item()) for target in labels])
         self.test_step_outputs.append({"predictions": results, "image_ids": image_ids})
+
+        if self.ema_model:
+            # EMA model forward pass
+            ema_outputs = self.ema_model.module(pixel_values=pixel_values, labels=None)
+
+            # Post-process EMA predictions
+            post_processed_ema_outputs = self.image_processor.post_process_object_detection(
+                ema_outputs,
+                threshold=self.config.model.detection_threshold,
+                target_sizes=batch_image_sizes
+            )
+
+            # Move EMA predictions to CPU
+            post_processed_ema_outputs = [
+                {k: to_cpu_device(v) for k, v in outputs.items()}
+                for outputs in post_processed_ema_outputs
+            ]
+
+            # Convert to COCO format and store for EMA
+            ema_results = {
+                int(target["image_id"].item()): output
+                for target, output in zip(labels, post_processed_ema_outputs)
+            }
+            self.test_step_outputs_ema.append({"predictions": ema_results, "image_ids": image_ids})
+
         return {"predictions": results, "image_ids": image_ids}
     
     def on_test_epoch_end(self):
@@ -354,6 +401,25 @@ class RTDETRLightningModule(pl.LightningModule):
         for key, value in metrics.items():
             self.log(f"test/{key}", value, prog_bar=True, sync_dist=True)  
         
+        # --- EMA Metrics ---
+        if hasattr(self, 'test_step_outputs_ema') and self.test_step_outputs_ema:
+            ema_predictions = []
+            ema_image_ids = []
+            for output_batch in self.test_step_outputs_ema:
+                ema_predictions.extend(convert_preds_to_coco(output_batch["predictions"]))
+                ema_image_ids.extend(output_batch["image_ids"])
+            
+            if len(ema_predictions) > 0:
+                ema_metrics = self._compute_coco_metrics(
+                    predictions=ema_predictions,
+                    image_ids=list(set(ema_image_ids)),
+                    coco_gt=self.test_coco_gt
+                )
+                for key, value in ema_metrics.items():
+                    self.log(f"test/{key}_ema", value, prog_bar=True, sync_dist=True)
+            
+            self.test_step_outputs_ema.clear()
+
         # Clear accumulated predictions
         self.test_predictions = []
         self.test_image_ids = []
