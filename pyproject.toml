@@ -16,7 +16,6 @@ dependencies = [
     "omegaconf>=2.3.0",
     "onnx>=1.19.1",
     "onnx2torch>=1.5.15",
-    "onnxruntime-gpu>=1.23.0",
     "opencv-python>=4.12.0.88",
     "pandas>=2.3.2",
     "pillow>=11.3.0",

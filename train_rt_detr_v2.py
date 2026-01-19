@@ -7,6 +7,7 @@ Powered by Hydra for flexible configuration.
 import os
 import datetime
 import shutil
+import time
 import torch
 torch.set_float32_matmul_precision('medium')
 
@@ -35,18 +36,39 @@ from data.coco_data_module import COCODataModule
 from models.backbone_factory import build_backbone,freeze_backbone_layers, get_backbone_unique_id
 from utils.train_utils import BackupToNASCallback
 
+def get_rank():
+    """Get the current process rank, checking multiple common cluster/launcher variables."""
+    # 1. Official PyTorch distributed (if already initialized)
+    if dist.is_initialized():
+        return dist.get_rank()
+    
+    # 2. SLURM
+    if "SLURM_PROCID" in os.environ:
+        return int(os.environ["SLURM_PROCID"])
+        
+    # 3. Standard Distributed Launchers (torchrun, accelerate, etc.)
+    if "RANK" in os.environ:
+        return int(os.environ["RANK"])
+        
+    # 4. Other clusters (PBS/Torque, LSF)
+    for var in ["OMPI_COMM_WORLD_RANK", "PMI_RANK", "LSB_RANK"]:
+        if var in os.environ:
+            return int(os.environ[var])
+            
+    return 0
+
 def rank_zero_print(*args, **kwargs):
     """Print only on the main process (Rank 0)."""
-    if not dist.is_initialized() or dist.get_rank() == 0:
+    if get_rank() == 0:
         print(*args, **kwargs)
 
 def create_initial_checkpoint(config: DictConfig) -> str:
     """
     Create initial RT-DETR checkpoint with DINOv2 backbone.
     """
-    print("\n" + "="*80)
-    print(f"Creating initial RT-DETR checkpoint with {config.model.backbone.type.upper()} backbone...")
-    print("="*80 + "\n")
+    rank_zero_print("\n" + "="*80)
+    rank_zero_print(f"Creating initial RT-DETR checkpoint with {config.model.backbone.type.upper()} backbone...")
+    rank_zero_print("="*80 + "\n")
     
     model_config = config.model
     checkpoint_config = config.checkpointing
@@ -67,138 +89,112 @@ def create_initial_checkpoint(config: DictConfig) -> str:
     if nas_base:
         nas_path = f"{hydra.utils.to_absolute_path(nas_base)}{full_suffix}"
 
-    # TODO: remove later. best to be used only on denvr
-    # TODO: change to true, when running on DENVR
-    if False: # os.path.exists(local_path) and len(os.listdir(local_path)) > 0:
-        # print(f"✓ Found weights in SCRATCH: {local_path}")
-        rank_zero_print( f"✓ Found weights in SCRATCH: {local_path}")
+    rank = get_rank()
+    sentinel_file = os.path.join(local_path, ".done")
 
+    # Step 1: Check if already exists (All ranks check)
+    if os.path.exists(local_path) and len(os.listdir(local_path)) > 0:
+        # Check if it was a completed run or just a leftover directory
+        if not os.path.exists(sentinel_file) and rank != 0:
+             # If rank != 0 and folder exists but no sentinel, we might be in the middle of a write
+             rank_zero_print(f"Rank {rank} waiting for Rank 0 to finish writing {local_path}...")
+             while not os.path.exists(sentinel_file):
+                 time.sleep(2)
+        
+        rank_zero_print(f"✓ Found weights in SCRATCH: {local_path}")
         return local_path
 
-    # Only if NAS is configured and file exists there
-    if nas_path and os.path.exists(nas_path) and len(os.listdir(nas_path)) > 0:
-        rank_zero_print(f"✓ Found weights on NAS: {nas_path}")
-        rank_zero_print(f"  -> Copying to scratch...")
-        try:
-            shutil.copytree(nas_path, local_path)
-            rank_zero_print("  -> Copy complete.")
-            return local_path
-        except Exception as e:
-            rank_zero_print(f"  -> Copy failed ({e}). Creating new...")
+    # Step 2: Handle Initialization (Only Rank 0)
+    if rank == 0:
+        os.makedirs(local_path, exist_ok=True)
+        # Check NAS if available
+        if nas_path and os.path.exists(nas_path) and len(os.listdir(nas_path)) > 0:
+            rank_zero_print(f"✓ Found weights on NAS: {nas_path}")
+            rank_zero_print(f"  -> Copying to scratch...")
+            try:
+                shutil.copytree(nas_path, local_path, dirs_exist_ok=True)
+                # Touch sentinel
+                open(sentinel_file, "w").close()
+                rank_zero_print("  -> Copy complete.")
+                return local_path
+            except Exception as e:
+                rank_zero_print(f"  -> Copy failed ({e}). Creating new...")
+
+        rank_zero_print("! Weights not found. Starting Heavy Initialization...")
+
+        backbone_model, backbone_config_obj, _ = build_backbone(
+            model_config.backbone, 
+            model_config.rtdetr.model_name
+        )
         
-    rank_zero_print("! Weights not found. Starting Heavy Initialization...")
-
-    backbone_model, backbone_config_obj, _ = build_backbone(
-        model_config.backbone, 
-        model_config.rtdetr.model_name
-    )
-    
-    if model_config.backbone.type in ["official", "resnet"]:
-         base_model_name = model_config.backbone.name 
-    else:
-         base_model_name = model_config.rtdetr.model_name
-    
-    rank_zero_print(f"Loading Base Weights: PekingU/{base_model_name}")
-
-    # # TODO: remove later
-    # # force ckpt creation for every run 
-    # if True: #not os.path.exists(versioned_backbone_path) or len(os.listdir(versioned_backbone_path)) == 0:
-    #     print(f"\n[INFO] Cached backbone not found. Creating: {versioned_backbone_path}")
-    #     os.makedirs(versioned_backbone_path, exist_ok=True)
-    #     backbone_model.save_pretrained(versioned_backbone_path)
-    #     print(f"✓ Backbone saved.")
-        
-    #     # dinov2_backbone = Dinov2BackBoneWithFPN.from_pretrained(
-    #     #     model_config.dinov2.pretrained_name_or_path,
-    #     #     output_indices_for_fpn=target_indices,
-    #     #     first_layer_dims=first_layer_dims,
-    #     #     fpn_type=model_config.dinov2.fpn_type,
-    #     #     scale_factor=model_config.dinov2.scale_factor,
-    #     #     upscale_method=model_config.dinov2.upscale_method,
-    #     #     intermediate_channel_sizes=intermediate_channel_sizes,
-    #     # )
-    #     # dinov2_backbone.save_pretrained(versioned_backbone_path)
-    #     # print(f"✓ DINOv2 backbone saved.")
-    # else:
-    #     print(f"✓ Found cached backbone at: {versioned_backbone_path}")
-
-    # # Return the specific versioned path
-    # # return versioned_rtdetr_path
-    id2label = {int(k): v for k, v in model_config.label_map.items()}
-    label2id = {v: k for k, v in id2label.items()}
-    overrides = OmegaConf.to_container(model_config.rtdetr, resolve=True)
-    for k in ["pretrained_name_or_path", "config_overrides", "model_name", 'name']:
-        overrides.pop(k, None)
-    
-    if "rtdetr_v2" in model_config.rtdetr.model_name:
-        model_cls = RTDetrV2ForObjectDetection
-        config_cls = RTDetrV2ConfigWithCustomBackBone
-    else:
-        rank_zero_print(f"Detected RT-DETRv1 model: {model_config.rtdetr.model_name}")
-        model_cls = RTDetrForObjectDetection
-        # Use simple RTDetrConfig for v1
-        config_cls = RTDetrConfig
-
-    model = model_cls.from_pretrained(
-        f"PekingU/{base_model_name}",
-        id2label=id2label,
-        label2id=label2id,
-        ignore_mismatched_sizes=True,
-        **overrides
-    )
-    # Inject Backbone
-    if config.model.backbone.type == "resnet":
-        if not model_config.backbone.train_backbone:
-            freeze_backbone_layers(model, freeze_at_stage=5)
+        if model_config.backbone.type in ["official", "resnet"]:
+             base_model_name = model_config.backbone.name 
         else:
-            freeze_backbone_layers(model, freeze_at_stage=model_config.backbone.freeze_at_stage)
-    else:
-        pretrained_model_config_dict = model.config.to_dict()
-        rt_detr_config = config_cls(**pretrained_model_config_dict)
-        rt_detr_config.backbone_config = backbone_config_obj
-        model.config = rt_detr_config
-        # Handle difference in backbone attribute between V1 and V2
-        if hasattr(model, 'model') and hasattr(model.model, 'backbone'):
-            model.model.backbone = backbone_model
-        else: # V1 structure often has direct backbone or wrapped differently, handled by model class usually but here we inject
-             # RTDetrForObjectDetection has model.backbone
-             model.model.backbone = backbone_model
+             base_model_name = model_config.rtdetr.model_name
+        
+        rank_zero_print(f"Loading Base Weights: PekingU/{base_model_name}")
 
-    # Save to Scratch (Always)
-    rank_zero_print(f"Saving new model to Scratch: {local_path}")
-    model.save_pretrained(local_path)
+        id2label = {int(k): v for k, v in model_config.label_map.items()}
+        label2id = {v: k for k, v in id2label.items()}
+        overrides = OmegaConf.to_container(model_config.rtdetr, resolve=True)
+        for k in ["pretrained_name_or_path", "config_overrides", "model_name", 'name']:
+            overrides.pop(k, None)
+        
+        if "rtdetr_v2" in model_config.rtdetr.model_name:
+            model_cls = RTDetrV2ForObjectDetection
+            config_cls = RTDetrV2ConfigWithCustomBackBone
+        else:
+            rank_zero_print(f"Detected RT-DETRv1 model: {model_config.rtdetr.model_name}")
+            model_cls = RTDetrForObjectDetection
+            # Use simple RTDetrConfig for v1
+            config_cls = RTDetrConfig
 
-    #     # --- LOGIC FORK ---
-    #     if  config.model.backbone.type == "resnet":
-    #         # Case A: Official Backbone
-    #         print("✓ Using Official ResNet Backbone")
-    #         # Freeze layers if requested
-    #         if not model_config.backbone.train_backbone:
-    #             freeze_backbone_layers(model, model_config.backbone.freeze_at_stage)
-    #     else:
-    #         # Case B: Custom (DINOv2) Backbone
-    #         print("✓ Injecting Custom Backbone")
-            
-    #         # (Your existing injection logic)
-    #         pretrained_model_config_dict = model.config.to_dict()
-    #         rt_detr_config = RTDetrV2ConfigWithCustomBackBone(**pretrained_model_config_dict)
-    #         rt_detr_config.backbone_config = backbone_config_obj
-    #         model.config = rt_detr_config
-    #         model.model.backbone = backbone_model
-            
-    #     model.save_pretrained(versioned_rtdetr_path)
-    #     print(f"✓ Model saved to {versioned_rtdetr_path}")
+        model = model_cls.from_pretrained(
+            f"PekingU/{base_model_name}",
+            id2label=id2label,
+            label2id=label2id,
+            ignore_mismatched_sizes=True,
+            **overrides
+        )
+        # Inject Backbone
+        if config.model.backbone.type == "resnet":
+            if not model_config.backbone.train_backbone:
+                freeze_backbone_layers(model, freeze_at_stage=5)
+            else:
+                freeze_backbone_layers(model, freeze_at_stage=model_config.backbone.freeze_at_stage)
+        else:
+            pretrained_model_config_dict = model.config.to_dict()
+            rt_detr_config = config_cls(**pretrained_model_config_dict)
+            rt_detr_config.backbone_config = backbone_config_obj
+            model.config = rt_detr_config
+            # Handle difference in backbone attribute between V1 and V2
+            if hasattr(model, 'model') and hasattr(model.model, 'backbone'):
+                model.model.backbone = backbone_model
+            else: # V1 structure often has direct backbone or wrapped differently, handled by model class usually but here we inject
+                 # RTDetrForObjectDetection has model.backbone
+                 model.model.backbone = backbone_model
 
-    # # return versioned_rtdetr_path
+        # Save to Scratch (Always)
+        rank_zero_print(f"Saving new model to Scratch: {local_path}")
+        model.save_pretrained(local_path)
 
     # Backup to NAS (If available)
-    if nas_path:
-        rank_zero_print(f"Mirroring new model to NAS: {nas_path}")
-        try:
-            if not os.path.exists(nas_path):
-                shutil.copytree(local_path, nas_path)
-        except Exception as e:
-            rank_zero_print(f"Warning: Backup to NAS failed: {e}")
+    if rank == 0:
+        # Save sentinel to mark completion
+        open(sentinel_file, "w").close()
+        
+        if nas_path:
+            rank_zero_print(f"Mirroring new model to NAS: {nas_path}")
+            try:
+                if not os.path.exists(nas_path):
+                    shutil.copytree(local_path, nas_path)
+            except Exception as e:
+                rank_zero_print(f"Warning: Backup to NAS failed: {e}")
+    else:
+        # Other ranks wait for the sentinel file to appear
+        rank_zero_print(f"Rank {rank} waiting for Rank 0 to finish initialization...")
+        while not os.path.exists(sentinel_file):
+            time.sleep(2)
 
     return local_path
 
