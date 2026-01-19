@@ -29,10 +29,3 @@ class ModelEma(nn.Module):
 
     def set(self, model):
         self._update(model, update_fn=lambda e, m: m)
-
-    def state_dict(self, destination=None, prefix='', keep_vars=False):
-        # TODO: access nested state dicts by the name
-        return self.module.state_dict(destination=destination, prefix=prefix, keep_vars=keep_vars)
-
-    def load_state_dict(self, state_dict, strict=True):
-        self.module.load_state_dict(state_dict, strict=strict)
