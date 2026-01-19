@@ -62,10 +62,16 @@ def rank_zero_print(*args, **kwargs):
     if get_rank() == 0:
         print(*args, **kwargs)
 
+def rank_print(*args, **kwargs):
+    """Print on all processes, prefixed with rank."""
+    rank = get_rank()
+    print(f"[rank: {rank}] ", *args, **kwargs)
+
 def create_initial_checkpoint(config: DictConfig) -> str:
     """
     Create initial RT-DETR checkpoint with DINOv2 backbone.
     """
+    rank = get_rank()
     rank_zero_print("\n" + "="*80)
     rank_zero_print(f"Creating initial RT-DETR checkpoint with {config.model.backbone.type.upper()} backbone...")
     rank_zero_print("="*80 + "\n")
@@ -89,21 +95,22 @@ def create_initial_checkpoint(config: DictConfig) -> str:
     if nas_base:
         nas_path = f"{hydra.utils.to_absolute_path(nas_base)}{full_suffix}"
 
-    rank = get_rank()
     sentinel_file = os.path.join(local_path, ".done")
 
     # Step 1: Check if already exists (All ranks check)
     if os.path.exists(local_path) and len(os.listdir(local_path)) > 0:
-        # Check if it was a completed run or just a leftover directory
-        if not os.path.exists(sentinel_file) and rank != 0:
-             # If rank != 0 and folder exists but no sentinel, we might be in the middle of a write
-             rank_zero_print(f"Rank {rank} waiting for Rank 0 to finish writing {local_path}...")
-             while not os.path.exists(sentinel_file):
-                 time.sleep(2)
-        
-        rank_zero_print(f"✓ Found weights in SCRATCH: {local_path}")
-        return local_path
-
+        if os.path.exists(sentinel_file):
+            rank_zero_print(f"✓ Found completed weights in SCRATCH: {local_path}")
+            return local_path
+        elif rank != 0:
+            rank_print(f"Waiting for Rank 0 to finish writing {local_path}...")
+            while not os.path.exists(sentinel_file):
+                time.sleep(5)
+            return local_path
+        else:
+            rank_zero_print(f"⚠ Found incomplete weights at {local_path}. Re-initializing...")
+            # Rank 0 continues to Step 2
+    
     # Step 2: Handle Initialization (Only Rank 0)
     if rank == 0:
         os.makedirs(local_path, exist_ok=True)
@@ -137,17 +144,24 @@ def create_initial_checkpoint(config: DictConfig) -> str:
         id2label = {int(k): v for k, v in model_config.label_map.items()}
         label2id = {v: k for k, v in id2label.items()}
         overrides = OmegaConf.to_container(model_config.rtdetr, resolve=True)
+        
+        # Keys to remove that are Hydra-specific or training-specific
         for k in ["pretrained_name_or_path", "config_overrides", "model_name", 'name']:
             overrides.pop(k, None)
-        
+
         if "rtdetr_v2" in model_config.rtdetr.model_name:
             model_cls = RTDetrV2ForObjectDetection
             config_cls = RTDetrV2ConfigWithCustomBackBone
         else:
             rank_zero_print(f"Detected RT-DETRv1 model: {model_config.rtdetr.model_name}")
             model_cls = RTDetrForObjectDetection
-            # Use simple RTDetrConfig for v1
             config_cls = RTDetrConfig
+            # v1 config doesn't have decoder_n_levels
+            overrides.pop("decoder_n_levels", None)
+            overrides.pop("decoder_method", None)
+            # ensure we use 'auxiliary_loss' not 'use_auxiliary_loss' if it slipped in
+            if "use_auxiliary_loss" in overrides:
+                overrides["auxiliary_loss"] = overrides.pop("use_auxiliary_loss")
 
         model = model_cls.from_pretrained(
             f"PekingU/{base_model_name}",
@@ -192,9 +206,10 @@ def create_initial_checkpoint(config: DictConfig) -> str:
                 rank_zero_print(f"Warning: Backup to NAS failed: {e}")
     else:
         # Other ranks wait for the sentinel file to appear
-        rank_zero_print(f"Rank {rank} waiting for Rank 0 to finish initialization...")
-        while not os.path.exists(sentinel_file):
-            time.sleep(2)
+        if not os.path.exists(sentinel_file):
+            rank_print(f"Waiting for Rank 0 to finish initialization...")
+            while not os.path.exists(sentinel_file):
+                time.sleep(5)
 
     return local_path
 
