@@ -21,6 +21,8 @@ _channel_map:
   rtdetr_v2_r34vd: [128, 256, 512]
   rtdetr_v2_r50vd: [512, 1024, 2048]
   rtdetr_v2_r101vd: [512, 1024, 2048]
+  rtdetr_r50vd: [512, 1024, 2048]
+  rtdetr_r101vd: [512, 1024, 2048]
 
 # 2. Use Absolute Interpolation to read the RT-DETR model choice
 # Note: We point to 'model.backbone._channel_map' because this file is loaded into that namespace
