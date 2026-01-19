@@ -390,17 +390,21 @@ def main(config: DictConfig):
     # Unlock config to make changes
     OmegaConf.set_struct(config, False)
     # breakpoint()
-    # --- 1. Handle Run Naming (Datetime) ---
-    # We regenerate the timestamp here so that EVERY job in the sweep 
-    # gets its own unique time-based ID (e.g., job 1 starts at :01, job 2 at :05)
-    timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    # config.run_name = config.run_name.replace(" ", "_")
-    # If the user didn't provide a specific name in CLI, use the timestamp format
-    if config.run_name.startswith("rtdetrv2_dinov2"): 
-        config.run_name = f"rtdetrv2_dinov2_{timestamp}"
+    # --- 1. Handle Run Naming (SLURM-aware) ---
+    # Use SLURM_JOB_ID if available to ensure all DDP ranks agree on the name
+    slurm_job_id = os.environ.get("SLURM_JOB_ID")
+    
+    if slurm_job_id:
+        unique_id = slurm_job_id
+        rank_zero_print(f"🚀 Running in SLURM Job: {unique_id}")
     else:
-        # If user passed a custom name (e.g. "my_sweep"), append timestamp to keep it unique
-        config.run_name = f"{config.run_name}_{timestamp}"
+        # Fallback to timestamp for local runs
+        unique_id = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    
+    if config.run_name.startswith("rtdetrv2_dinov2"): 
+        config.run_name = f"rtdetrv2_dinov2_{unique_id}"
+    else:
+        config.run_name = f"{config.run_name}_{unique_id}"
 
     # --- 2. Handle Hydra Sweep Logic ---
     hydra_cfg = HydraConfig.get()
