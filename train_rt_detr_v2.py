@@ -222,7 +222,7 @@ def setup_model(config: DictConfig) -> RTDETRLightningModule:
     rank_zero_print(f"\nLoading RT-DETR model from: {model_checkpoint_path}")
     
     if "rtdetr_v2" in config.model.rtdetr.model_name:
-        model_cls = RTDetrV2ForObjectDetectionWithCustomBackBone
+        model_cls = RTDetrV2ForObjectDetectionWithCustomBackbone
     else:
         model_cls = RTDetrV1Model
 
