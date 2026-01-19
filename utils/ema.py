@@ -19,10 +19,19 @@ class ModelEma(nn.Module):
 
     def _update(self, model, update_fn):
         with torch.no_grad():
-            for ema_v, model_v in zip(self.module.state_dict().values(), model.state_dict().values()):
-                # if self.device is not None:
-                #     model_v = model_v.to(device=self.device)
-                ema_v.copy_(update_fn(ema_v, model_v))
+            # Use named_parameters and named_buffers to ensure we update by key matching
+            # this handles potential shared parameters correctly and is safer than zip(values)
+            model_params = dict(model.named_parameters())
+            ema_params = dict(self.module.named_parameters())
+            for name, param in ema_params.items():
+                if name in model_params:
+                    param.copy_(update_fn(param, model_params[name]))
+
+            model_buffers = dict(model.named_buffers())
+            ema_buffers = dict(self.module.named_buffers())
+            for name, buffer in ema_buffers.items():
+                if name in model_buffers:
+                    buffer.copy_(update_fn(buffer, model_buffers[name]))
 
     def update(self, model):
         self._update(model, update_fn=lambda e, m: self.decay * e + (1. - self.decay) * m)
