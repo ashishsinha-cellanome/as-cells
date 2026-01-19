@@ -14,7 +14,7 @@ import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor, ModelSummary
 from pytorch_lightning.loggers import WandbLogger
 from lightning.pytorch.profilers import SimpleProfiler, AdvancedProfiler
-from transformers import RTDetrImageProcessor, RTDetrV2ForObjectDetection
+from transformers import RTDetrImageProcessor, RTDetrV2ForObjectDetection, RTDetrForObjectDetection, RTDetrConfig
 from torchvision.datasets import CocoDetection
 import torch.distributed as dist
 
@@ -29,7 +29,6 @@ from models.custom_rt_detr_with_dinov2_backbone import (
     RTDetrV2ForObjectDetectionWithCustomBackbone,
     RTDetrV2ConfigWithCustomBackBone
 )
-from models.rt_detr_v1_model import RTDetrV1Model
 from models.dinov2_backbone_with_fpn import Dinov2BackBoneWithFPN, Dinov2BackBoneWithFPNConfig
 from models.rt_detr_lightning_module import RTDETRLightningModule
 from data.coco_data_module import COCODataModule
@@ -136,10 +135,9 @@ def create_initial_checkpoint(config: DictConfig) -> str:
         config_cls = RTDetrV2ConfigWithCustomBackBone
     else:
         rank_zero_print(f"Detected RT-DETRv1 model: {model_config.rtdetr.model_name}")
-        model_cls = RTDetrV1Model
-        # RTDetrV1Model uses RTDetrConfigWithCustomBackBone internally
-        from models.rt_detr_v1_model import RTDetrConfigWithCustomBackBone 
-        config_cls = RTDetrConfigWithCustomBackBone
+        model_cls = RTDetrForObjectDetection
+        # Use simple RTDetrConfig for v1
+        config_cls = RTDetrConfig
 
     model = model_cls.from_pretrained(
         f"PekingU/{base_model_name}",
@@ -163,7 +161,7 @@ def create_initial_checkpoint(config: DictConfig) -> str:
         if hasattr(model, 'model') and hasattr(model.model, 'backbone'):
             model.model.backbone = backbone_model
         else: # V1 structure often has direct backbone or wrapped differently, handled by model class usually but here we inject
-             # RTDetrV1Model wraps RTDetrForObjectDetection which has model.backbone
+             # RTDetrForObjectDetection has model.backbone
              model.model.backbone = backbone_model
 
     # Save to Scratch (Always)
@@ -224,7 +222,7 @@ def setup_model(config: DictConfig) -> RTDETRLightningModule:
     if "rtdetr_v2" in config.model.rtdetr.model_name:
         model_cls = RTDetrV2ForObjectDetectionWithCustomBackbone
     else:
-        model_cls = RTDetrV1Model
+        model_cls = RTDetrForObjectDetection
 
     model = model_cls.from_pretrained(
         model_checkpoint_path,

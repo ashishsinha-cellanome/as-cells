@@ -2,7 +2,7 @@
 # @package model.backbone
 
 type: "resnet" 
-name: "rtdetr_v2_r34vd" # Matches the supported model names
+name: "${model.rtdetr.model_name}"
 model_name: resnet34
 # Freezing params
 train_backbone: false     # If false, we freeze layers

@@ -1,3 +1,6 @@
+defaults:
+  - backbone: resnet50
+
 rtdetr:
   # RT-DETRv1 Configuration
   model_name: "rtdetr_r50vd" 
@@ -8,7 +11,7 @@ rtdetr:
 
   # --- SWEEP PARAMETERS ---
   config_overrides: 
-  auxiliary_loss: true
+  use_auxiliary_loss: true
   use_focal_loss: true
 
   # hungarian matching
