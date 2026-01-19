@@ -393,6 +393,9 @@ def main():
     config = merge_configs(config, args)
     config['debug'] = args.debug
     config['checkpointing']['save_dir'] = os.path.join(config['checkpointing']['save_dir'], args.wandb_name)
+    
+    # Convert to OmegaConf for dot-notation access required by LightningModule and DataModule
+    config = OmegaConf.create(config)
 
     print(f"Dataset: {config['dataset']['path']}")
     print(f"Batch size: {config['training']['batch_size']}")

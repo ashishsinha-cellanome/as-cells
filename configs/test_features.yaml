@@ -1,0 +1,140 @@
+# RT-DETR with DINOv2 Backbone Training Configuration (TEST FEATURES)
+
+# Dataset Configuration
+dataset:
+  path: "/global/home/ashish.sinha/cellanome/TRAINING_DATA"
+  model_input_size: 672
+  min_random_scale: 0.7
+  max_random_scale: 1.0
+  p_noise: 0.25
+  org_images_in_model_input_size: true
+
+# New Data Section for Transforms
+data:
+  transforms:
+    train:
+      - name: RandomScale
+        params:
+          scale_limit: [ -0.3, 0.0 ] 
+          p: 1.0
+      - name: PadIfNeeded
+        params:
+          min_height: 672 
+          min_width: 672  
+          position: 'random'
+      - name: RandomCrop
+        params:
+          height: 672 
+          width: 672  
+          pad_if_needed: False
+          p: 1.0
+      - name: RandomRotate90
+        params: 
+          p: 0.5
+      - name: Perspective
+        params:
+          p: 0.25 
+      - name: RandomBrightnessContrast
+        params:
+          p: 0.25 
+      - name: HueSaturationValue
+        params:
+          p: 0.25 
+      - name: AdditiveNoise
+        params:
+          p: 0.25 
+          spatial_mode: 'per_pixel'
+  
+    test:
+      - name: NoOp
+        params: {}
+
+# Model Configuration
+model:
+  # EMA Configuration (New)
+  ema:
+    enabled: true
+    decay: 0.9999
+
+  # Label mapping
+  label_map:
+    0: 'cell'
+    1: 'bead'
+    2: 'cell-adhered'
+    3: 'soma'
+  
+  # DINOv2 backbone configuration
+  dinov2_backbone: "facebook/dinov2-base"
+  output_indices_for_fpn: [4, 8, 12]  # Layer indices to use for FPN
+  intermediate_channel_sizes: [128, 256, 512]  # FPN output channels
+  
+  # RT-DETR pretrained checkpoint
+  rtdetr_pretrained: "PekingU/rtdetr_v2_r18vd"
+  
+  # Detection thresholds
+  detection_threshold: 0.05
+  max_detections: 100
+
+# Training Configuration
+training:
+  batch_size: 16 # Lowered for testing
+  num_epochs: 5
+  learning_rate: 5.0e-5
+  weight_decay: 5e-4
+  max_grad_norm: 0.1
+  warmup_steps: 100
+  lr_scheduler_type: "reduce_lr_on_plateau"
+  
+  # DataLoader settings
+  num_workers: 4
+  pin_memory: true
+  
+  # profile
+  profile_dir: 'profiler_logs'
+  profiler: 'simple'
+
+# Checkpoint Configuration
+checkpointing:
+  save_dir: "checkpoints/rt_detr_test_features"
+  save_top_k: 1
+  monitor: "val/map"
+  mode: "max"
+  save_last: true
+  every_n_epochs: 1
+  val_image_dir: ""
+  visualization_dir: "predictions"
+  visualize_every_n_epochs: 1
+  visualize_samples: 10
+  dinov2_backbone_checkpoint: "checkpoints/dinov2_backbone_with_fpn"
+  rtdetr_initial_checkpoint: "checkpoints/custom_rt_detr_with_dinov2_backbone"
+
+# WandB Configuration
+wandb:
+  enabled: true
+  project: "rt-detr-cell-detection"
+  name: "test-features-ema-transforms"
+  tags: ["test", "ema", "transforms"]
+  notes: "Testing EMA and Transforms"
+
+# PyTorch Lightning Trainer Configuration
+trainer:
+  accelerator: "auto"
+  devices: 1
+  precision: "16-mixed"
+  strategy: "auto"
+  max_epochs: 5
+  log_every_n_steps: 10
+  val_check_interval: 1.0
+  gradient_clip_val: 0.1
+  accumulate_grad_batches: 1
+  deterministic: false
+  benchmark: true
+  limit_train_batches: 10 # Limit for quick testing
+  limit_val_batches: 5
+  limit_test_batches: 5
+  profiler: 'simple'
+
+# Initialization
+initialization:
+  create_initial_checkpoint: True
+  load_from_checkpoint: null
