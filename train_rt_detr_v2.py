@@ -10,13 +10,18 @@ import shutil
 import time
 
 # --- Multi-node Stability Fixes ---
-# Use a unique port to avoid collisions with other jobs on the same nodes
-# Derive it from SLURM_JOB_ID if available
+# 1. Map SLURM variables to standard Distributed variables
+if "SLURM_PROCID" in os.environ:
+    os.environ["RANK"] = os.environ["SLURM_PROCID"]
+    os.environ["LOCAL_RANK"] = os.environ.get("SLURM_LOCALID", "0")
+    os.environ["WORLD_SIZE"] = os.environ.get("SLURM_NTASKS", "1")
+
+# 2. Derive MASTER_PORT from SLURM_JOB_ID to avoid collisions
 if "MASTER_PORT" not in os.environ:
     job_id = os.environ.get("SLURM_JOB_ID")
     if job_id:
-        # Use last 4 digits of Job ID + 20000
         try:
+            # Use a deterministic port in the ephemeral range
             port = 20000 + (int(job_id) % 10000)
             os.environ["MASTER_PORT"] = str(port)
         except ValueError:
@@ -24,20 +29,24 @@ if "MASTER_PORT" not in os.environ:
     else:
         os.environ["MASTER_PORT"] = "29505"
 
+# 3. Detect MASTER_ADDR from SLURM_NODELIST
 if "MASTER_ADDR" not in os.environ and "SLURM_NODELIST" in os.environ:
-    # Get the first node name from the list
     import subprocess
     try:
         node_list = os.environ["SLURM_NODELIST"]
-        master_node = subprocess.check_output(["scontrol", "show", "hostnames", node_list]).decode().splitlines()[0]
+        # Use scontrol to get the first node name
+        master_node = subprocess.check_output(["scontrol", "show", "hostnames", node_list], stderr=subprocess.DEVNULL).decode().splitlines()[0]
         os.environ["MASTER_ADDR"] = master_node
     except Exception:
-        pass
+        # Fallback to localhost if scontrol fails (though unlikely on SLURM)
+        if "RANK" in os.environ and os.environ["RANK"] == "0":
+            import socket
+            os.environ["MASTER_ADDR"] = socket.gethostname()
 
-# Disable P2P and IB if there are networking issues between nodes
-os.environ["NCCL_P2P_DISABLE"] = "1" 
+# 4. NCCL stability settings
+os.environ["NCCL_P2P_DISABLE"] = "1"
 os.environ["NCCL_IB_DISABLE"] = "1"
-os.environ["NCCL_DEBUG"] = "INFO" # Enable debug logs for distributed initialization
+os.environ["NCCL_DEBUG"] = "INFO" 
 
 import torch
 torch.set_float32_matmul_precision('medium')
@@ -45,6 +54,7 @@ torch.set_float32_matmul_precision('medium')
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor, ModelSummary
 from pytorch_lightning.loggers import WandbLogger
+from pytorch_lightning.plugins.environments import SLURMEnvironment
 from lightning.pytorch.profilers import SimpleProfiler, AdvancedProfiler
 from transformers import RTDetrImageProcessor, RTDetrV2ForObjectDetection, RTDetrForObjectDetection, RTDetrConfig
 from torchvision.datasets import CocoDetection
@@ -627,6 +637,7 @@ def main(config: DictConfig):
         limit_train_batches = data_config.limit_train_batches if not config.debug else 10,
         limit_val_batches = data_config.limit_val_batches,
         profiler = None if config.debug else profiler,
+        plugins=[SLURMEnvironment(auto_requeue=False)] if "SLURM_JOB_ID" in os.environ else None,
     )
     
     # Handle checkpoint path (must be absolute)
