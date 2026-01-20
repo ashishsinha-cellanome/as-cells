@@ -650,6 +650,10 @@ def main(config: DictConfig):
 
         trainer.fit(model, datamodule=data_module, ckpt_path=ckpt_path)
         
+        rank_zero_print(f"waiting for syncing")
+        #torch.cuda.synchronize()
+        torch.distributed.barrier()
+
         rank_zero_print("\n" + "="*80)
         rank_zero_print("Training Complete!")
         rank_zero_print("="*80 + "\n")
