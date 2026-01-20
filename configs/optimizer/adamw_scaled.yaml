@@ -4,6 +4,9 @@ optimizer:
   lr: 1e-4
   weight_decay: 1e-4 
   
+  # Toggle for fine-grained parameter grouping (Regex based)
+  use_param_groups: true
+  
   # Optional: Fine-grained control over parameter groups using regex
   # Groups are matched in order; first match wins.
   param_groups:

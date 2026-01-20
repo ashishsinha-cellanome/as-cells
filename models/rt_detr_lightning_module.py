@@ -562,25 +562,17 @@ class RTDETRLightningModule(pl.LightningModule):
         sch_config = self.config.scheduler
         
         # 1. Flexible Parameter Grouping
-        # Check if 'param_groups' is defined in the config
+        # Check if 'param_groups' is enabled and defined in the config
+        use_param_groups = opt_config.get('use_param_groups', False)
         param_groups_config = opt_config.get('param_groups', [])
         
-        if not param_groups_config:
-            # Fallback to default simple logic: separate backbone and head
-            backbone_params = []
-            other_params = []
-
-            for name, param in self.model.named_parameters():
-                if not param.requires_grad:
-                    continue
-                if 'backbone' in name:
-                    backbone_params.append(param)
-                else:
-                    other_params.append(param)
-
+        if not use_param_groups or not param_groups_config:
+            # Fallback to uniform LR for the whole model (no grouping)
+            self.print(f"[INFO] Using uniform LR: {opt_config.lr} for all parameters.")
             optimizer_grouped_params = [
-                {'params': other_params, 'lr': opt_config.lr},
-                {'params': backbone_params, 'lr': opt_config.lr}
+                {'params': [p for p in self.model.parameters() if p.requires_grad], 
+                 'lr': opt_config.lr, 
+                 'weight_decay': opt_config.weight_decay}
             ]
         else:
             # Regex-based grouping from config
