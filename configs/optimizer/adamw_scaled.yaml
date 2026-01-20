@@ -1,9 +1,18 @@
 # configs/optimizer/adamw_scaled.yaml
 optimizer:
   _target_: torch.optim.AdamW
-  lr: 1e-4 # 5.0e-5
+  lr: 1e-4
   weight_decay: 1e-4 
-  # max_grad_norm: 5.0
+  
+  # Optional: Fine-grained control over parameter groups using regex
+  # Groups are matched in order; first match wins.
+  param_groups:
+    - params: "backbone"
+      lr: 1e-5
+    # - params: '^(?=.*encoder(?=.*bias|.*norm.*weight)).*$'
+    #   weight_decay: 0.0
+    # - params: '^(?=.*decoder(?=.*bias|.*norm.*weight)).*$'
+    #   weight_decay: 0.0
 
 scheduler:
   type: "reduce_lr_on_plateau"

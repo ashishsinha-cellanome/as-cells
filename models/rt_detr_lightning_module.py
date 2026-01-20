@@ -1,4 +1,5 @@
 import time
+import re
 from typing import Dict, Any, Optional
 import torch
 import torch.nn as nn
@@ -557,38 +558,81 @@ class RTDETRLightningModule(pl.LightningModule):
     def configure_optimizers(self):
         """Configure optimizers and learning rate schedulers."""
         # Read from the optimizer and scheduler config groups
-        # breakpoint()
         opt_config = self.config.optimizer.optimizer
         sch_config = self.config.scheduler
         
-        # Separate parameters: freeze DINOv2, train FPN and rest of model
-        backbone_params = []
-        other_params = []
+        # 1. Flexible Parameter Grouping
+        # Check if 'param_groups' is defined in the config
+        param_groups_config = opt_config.get('param_groups', [])
+        
+        if not param_groups_config:
+            # Fallback to default simple logic: separate backbone and head
+            backbone_params = []
+            other_params = []
 
-        for name, param in self.model.named_parameters():
-            # 1. If it's frozen, SKIP IT entirely. 
-            # This ensures we don't accidentally pass it to the optimizer.
-            if not param.requires_grad:
-                continue
+            for name, param in self.model.named_parameters():
+                if not param.requires_grad:
+                    continue
+                if 'backbone' in name:
+                    backbone_params.append(param)
+                else:
+                    other_params.append(param)
 
-            # 2. Separate Backbone vs Head for different Learning Rates
-            # This check works for both DINO ('model.backbone.backbone...') 
-            # and ResNet ('model.backbone.model...')
-            if 'backbone' in name:
-                backbone_params.append(param)
-            else:
-                other_params.append(param)
+            optimizer_grouped_params = [
+                {'params': other_params, 'lr': opt_config.lr},
+                {'params': backbone_params, 'lr': opt_config.lr}
+            ]
+        else:
+            # Regex-based grouping from config
+            optimizer_grouped_params = []
+            memo = set() # Track assigned parameters
+            
+            # OmegaConf objects might need conversion or careful access
+            for group_cfg in param_groups_config:
+                group_params = []
+                # Handle both string patterns and other attributes
+                pattern = group_cfg.params
+                
+                for name, param in self.model.named_parameters():
+                    if not param.requires_grad or id(param) in memo:
+                        continue
+                    
+                    if re.search(pattern, name):
+                        group_params.append(param)
+                        memo.add(id(param))
+                
+                if group_params:
+                    # Create group dict, excluding the 'params' pattern string
+                    new_group = {k: v for k, v in group_cfg.items() if k != 'params'}
+                    new_group['params'] = group_params
+                    
+                    # Inherit defaults if not specified
+                    if 'lr' not in new_group:
+                        new_group['lr'] = opt_config.lr
+                    if 'weight_decay' not in new_group:
+                        new_group['weight_decay'] = opt_config.weight_decay
+                        
+                    optimizer_grouped_params.append(new_group)
+                    self.print(f"[INFO] Optimizer Group: '{pattern}' matched {len(group_params)} parameters.")
 
-        # Different learning rates for different parts
-        # breakpoint()
-        optimizer = torch.optim.AdamW([
-            {'params': other_params, 'lr': opt_config.lr}, # Lower LR for original wts for rtdetr
-            {'params': backbone_params, 'lr': opt_config.lr}  # slighly higher LR for FPN and other backbone params
-            ], 
-            weight_decay= opt_config.weight_decay
-        )
+            # Catch-all for remaining parameters
+            remaining_params = []
+            for name, param in self.model.named_parameters():
+                if param.requires_grad and id(param) not in memo:
+                    remaining_params.append(param)
+            
+            if remaining_params:
+                optimizer_grouped_params.append({
+                    'params': remaining_params,
+                    'lr': opt_config.lr,
+                    'weight_decay': opt_config.weight_decay
+                })
+                self.print(f"[INFO] Optimizer Group: 'default' matched remaining {len(remaining_params)} parameters.")
 
-        # 2. Get Modular Scheduler Config
+        # Create optimizer
+        optimizer = torch.optim.AdamW(optimizer_grouped_params, weight_decay=opt_config.weight_decay)
+
+        # 2. Setup Scheduler
         # scheduler_config = self._get_scheduler_with_warmup(optimizer, sch_config)
 
         # return [optimizer], scheduler_config
