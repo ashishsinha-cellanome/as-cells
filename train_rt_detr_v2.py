@@ -448,13 +448,18 @@ def setup_logger(config: DictConfig):
         rank_zero_print("✓ WandB logging disabled")
         return None
     
+    wandb_log_config = OmegaConf.to_container(config, resolve=True)
+    # Add top-level keys for easy filtering on WandB dashboard
+    wandb_log_config["model"] = "rtdetrv2" if "v2" in config.model.rtdetr.model_name else "rtdetrv1"
+    wandb_log_config["backbone"] = config.model.backbone.name
+
     logger = WandbLogger(
         project=wandb_config.project,
         name=config.run_name,
         tags=list(wandb_config.tags), # Convert OmegaConf list to plain list
         notes=wandb_config.notes,
         group=wandb_config.get("group"),
-        config=OmegaConf.to_container(config, resolve=True), # Log full config
+        config=wandb_log_config, # Log full config with extra filter keys
         # Hydra changes CWD, so we save logs to the new CWD
         save_dir=os.getcwd(), 
     )

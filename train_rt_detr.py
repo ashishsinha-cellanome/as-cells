@@ -309,12 +309,20 @@ def setup_logger(config: Dict[str, Any]):
         print("✓ WandB logging disabled")
         return None
     
+    # Add top-level keys for easy filtering on WandB dashboard
+    if 'model' in config:
+        if 'rtdetr_pretrained' in config['model']:
+            config["model"] = "rtdetrv2" if "v2" in config['model']['rtdetr_pretrained'] else "rtdetrv1"
+        if 'dinov2_backbone' in config['model']:
+            # Extract backbone name from path or name, e.g., facebook/dinov2-base -> dinov2-base
+            config["backbone"] = config['model']['dinov2_backbone'].split('/')[-1]
+
     logger = WandbLogger(
         project=wandb_config['project'],
         name=wandb_config['name'],
         tags=wandb_config['tags'],
         notes=wandb_config['notes'],
-        config=config,  # Log the full configuration
+        config=config,  # Log the full configuration with extra filter keys
     )
     
     print(f"✓ WandB logger configured - Project: {wandb_config['project']}")
