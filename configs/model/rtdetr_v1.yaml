@@ -1,5 +1,9 @@
+# @package _global_
 defaults:
   - backbone: resnet50
+
+data:
+  model_input_size: 640
 
 rtdetr:
   # RT-DETRv1 Configuration

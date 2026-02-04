@@ -15,9 +15,6 @@ class ModelEma(nn.Module):
         for p in self.module.parameters():
             p.requires_grad = False
         self.decay = decay
-        # self.device = device  # perform ema on different device from model if set
-        # if self.device is not None:
-        #     self.module.to(device=device)
 
     def train(self, mode=True):
         """Always keep the internal module in eval mode."""
