@@ -12,10 +12,17 @@ class ModelEma(nn.Module):
         # make a copy of the model for accumulating moving average of weights
         self.module = copy.deepcopy(model)
         self.module.eval()
+        for p in self.module.parameters():
+            p.requires_grad = False
         self.decay = decay
         # self.device = device  # perform ema on different device from model if set
         # if self.device is not None:
         #     self.module.to(device=device)
+
+    def train(self, mode=True):
+        """Always keep the internal module in eval mode."""
+        super().train(mode)
+        self.module.eval()
 
     def _update(self, model, update_fn):
         with torch.no_grad():

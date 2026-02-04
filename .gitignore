@@ -1,4 +1,7 @@
 **/*.ipynb
+.DS_Store
+.github/
+predictions/
 *.ipynb
 debug*/
 *EVAL*/
