@@ -46,7 +46,7 @@ if "MASTER_ADDR" not in os.environ and "SLURM_NODELIST" in os.environ:
 # 4. NCCL stability settings
 os.environ["NCCL_P2P_DISABLE"] = "1"
 os.environ["NCCL_IB_DISABLE"] = "1"
-os.environ["NCCL_DEBUG"] = "INFO" 
+# os.environ["NCCL_DEBUG"] = "INFO" 
 
 import torch
 torch.set_float32_matmul_precision('medium')
