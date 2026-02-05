@@ -848,21 +848,43 @@ class RTDETRLightningModule(pl.LightningModule):
         
         optimizer.step(closure=optimizer_closure)
 
-    def draw_boxes(self, image, boxes, labels, scores, id2label):
+    def draw_boxes(self, image, boxes, labels, scores=None, id2label=None, color_override=None, label_prefix=""):
         """Draws bounding boxes on a PIL image."""
         draw = ImageDraw.Draw(image)
         threshold = self.config.model.draw_threshold
-        for box, label, score in zip(boxes, labels, scores):
+        
+        # Use default label map if not provided
+        if id2label is None:
+            id2label = self.config.model.label_map
+
+        for i in range(len(boxes)):
+            box = boxes[i]
+            label = labels[i]
+            score = scores[i] if scores is not None else 1.0
+            
             if score < threshold:
                 continue
             
-            box = box.tolist()
-            label_id = label.item()
-            color = self.PALETTE[label_id % len(self.PALETTE)]
+            # Handle both tensor and array-like boxes
+            if torch.is_tensor(box):
+                box = box.tolist()
             
-            draw.rectangle(box, outline=color, width=2)
+            # Handle both tensor and scalar labels
+            label_id = label.item() if torch.is_tensor(label) else int(label)
             
-            label_text = f"{id2label[label_id]}: {score:.2f}"
+            # Color logic: Green for GT, Red for Pred, or Palette default
+            if color_override:
+                color = color_override
+            else:
+                color = self.PALETTE[label_id % len(self.PALETTE)]
+            
+            draw.rectangle(box, outline=color, width=3) # Increased width for better visibility
+            
+            class_name = id2label.get(label_id) or id2label.get(str(label_id)) or f"class_{label_id}"
+            label_text = f"{label_prefix}{class_name}"
+            if scores is not None:
+                label_text += f": {score:.2f}"
+                
             text_box = draw.textbbox((box[0], box[1]), label_text, font=self.font)
             draw.rectangle(text_box, fill=color)
             draw.text((box[0], box[1]), label_text, fill="white", font=self.font)
@@ -870,52 +892,82 @@ class RTDETRLightningModule(pl.LightningModule):
         return image
 
     def _visualize_batch(self, save_dir, post_processed_outputs, pixel_values, labels, counter):
-        """Saves visualizations for a batch."""
+        """Saves visualizations for a batch showing both GT and Predictions."""
         os.makedirs(save_dir, exist_ok=True)
         id2label = self.model.config.id2label
         max_samples = self.config.checkpointing.visualize_samples
+        
+        # Determine which COCO GT to use based on stage
+        coco_gt = self.test_coco_gt if self.trainer.testing else self.val_coco_gt
+        if coco_gt is None:
+            self.print("[WARNING] COCO GT is None, skipping GT visualization.")
+            # Fallback to only drawing predictions if GT is missing
+            pass
+
         # Get mean and std from the processor to un-normalize
         mean = torch.tensor(self.image_processor.image_mean, device=pixel_values.device).view(1, 3, 1, 1)
         std = torch.tensor(self.image_processor.image_std, device=pixel_values.device).view(1, 3, 1, 1)
 
-        # Un-normalize the entire batch at once (faster)
-        # 1. Multiply by std, 2. Add mean, 3. Clamp to [0, 1] range
-        # breakpoint()
+        # Un-normalize the entire batch
         unnormalized_images = torch.clamp((pixel_values * std) + mean, 0, 1)
+        
         for i in range(len(labels)):
             if counter >= max_samples:
                 break
             
-            # Get original image path from COCO GT
+            # Get original image info
             image_id = int(labels[i]["image_id"].item())
             image_tensor = unnormalized_images[i]
             image_np = (image_tensor.permute(1, 2, 0).cpu().numpy() * 255).astype('uint8')
             image = Image.fromarray(image_np)
 
-            img_info = self.val_coco_gt.loadImgs(image_id)[0]
-            # img_path = os.path.join(self.config['checkpointing']['val_image_dir'], img_info['file_name'])
-            # breakpoint()
-            # try:
-            #     image = Image.open(img_path).convert("RGB")
-            # except FileNotFoundError:
-            #     print(f"Warning: Could not find image {img_path} for visualization.")
-            #     continue
+            # Get image metadata from COCO GT for filename
+            if coco_gt:
+                img_info = coco_gt.loadImgs(image_id)[0]
                 
-            # Get predictions for this image
+                # --- 1. Scaled Ground Truth Boxes ---
+                gt_anns = coco_gt.loadAnns(coco_gt.getAnnIds(imgIds=image_id))
+                gt_boxes = []
+                gt_labels = []
+                for ann in gt_anns:
+                    # coco format is [x, y, width, height]
+                    x, y, w, h = ann['bbox']
+                    # Convert to [x1, y1, x2, y2] for draw_boxes
+                    gt_boxes.append([x, y, x + w, y + h])
+                    gt_labels.append(ann['category_id'])
+
+                # Draw Ground Truth in GREEN
+                image = self.draw_boxes(
+                    image, 
+                    gt_boxes, 
+                    gt_labels, 
+                    scores=None, 
+                    id2label=self.config.model.label_map,
+                    color_override=(0, 255, 0), # Green
+                    label_prefix="GT: "
+                )
+            else:
+                # If coco_gt is missing, we might not have the filename easily, 
+                # but we can try to use the image_id
+                img_info = {'file_name': f"image_{image_id}.png"}
+
+            # --- 2. Prediction Boxes ---
             preds = post_processed_outputs[i]
             
-            # Draw boxes
-            drawn_image = self.draw_boxes(
+            # Draw Predictions in RED
+            image = self.draw_boxes(
                 image, 
                 preds['boxes'], 
                 preds['labels'], 
                 preds['scores'], 
-                id2label
+                id2label=id2label,
+                color_override=(255, 0, 0), # Red
+                label_prefix="Pred: "
             )
             
             # Save image
             save_path = os.path.join(save_dir, img_info['file_name'])
-            drawn_image.save(save_path)
+            image.save(save_path)
             
             counter += 1
         
