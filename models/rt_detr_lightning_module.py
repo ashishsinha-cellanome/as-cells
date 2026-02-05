@@ -570,10 +570,9 @@ class RTDETRLightningModule(pl.LightningModule):
                 precisions = coco_evaluator.eval['precision']
                 import numpy as np
                 for i, catId in enumerate(coco_evaluator.params.catIds):
-                    cat_info = coco_gt.cats.get(int(catId))
-                    if cat_info:
-                        cat_name = cat_info['name']
-                    else:
+                    # Use label_map from config for consistent naming
+                    cat_name = self.config.model.label_map.get(int(catId)) or self.config.model.label_map.get(str(catId))
+                    if not cat_name:
                         cat_name = f"class_{catId}"
                     
                     # mAP (average over all IoU thresholds)
