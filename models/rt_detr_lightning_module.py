@@ -579,7 +579,11 @@ class RTDETRLightningModule(pl.LightningModule):
                 precisions = coco_evaluator.eval['precision']
                 import numpy as np
                 for i, catId in enumerate(coco_evaluator.params.catIds):
-                    cat_name = coco_gt.loadCats(catId)[0]['name']
+                    cats = coco_gt.loadCats(catId)
+                    if cats and cats[0] is not None:
+                        cat_name = cats[0]['name']
+                    else:
+                        cat_name = f"class_{catId}"
                     
                     # mAP (average over all IoU thresholds)
                     s = precisions[:, :, i, 0, -1]

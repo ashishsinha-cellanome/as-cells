@@ -17,8 +17,8 @@ class ModelEma(nn.Module):
         self.decay = decay
 
     def train(self, mode=True):
-        """Always keep the internal module in eval mode."""
-        super().train(mode)
+        """Always keep the internal module and the wrapper in eval mode."""
+        super().train(False)
         self.module.eval()
 
     def _update(self, model, update_fn):
