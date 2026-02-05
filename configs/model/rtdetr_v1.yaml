@@ -1,14 +1,11 @@
-# @package _global_
 defaults:
   - backbone: resnet50
-
-data:
-  model_input_size: 640
 
 rtdetr:
   # RT-DETRv1 Configuration
   model_name: "rtdetr_r50vd" 
   pretrained_name_or_path: "PekingU/rtdetr_r50vd_coco_o365"
+  input_size: 640
   
   freeze_backbone_batch_norms: true
   normalize_before: true
