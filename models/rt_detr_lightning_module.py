@@ -570,8 +570,13 @@ class RTDETRLightningModule(pl.LightningModule):
                 precisions = coco_evaluator.eval['precision']
                 import numpy as np
                 for i, catId in enumerate(coco_evaluator.params.catIds):
-                    # Use label_map from config for consistent naming
-                    cat_name = self.config.model.label_map.get(int(catId)) or self.config.model.label_map.get(str(catId))
+                    # Use updated GT categories if remapping is applied, otherwise fallback to config label_map
+                    if getattr(self.config, 'remap_labels', False):
+                        cat_info = coco_gt.cats.get(int(catId))
+                        cat_name = cat_info['name'] if cat_info else None
+                    else:
+                        cat_name = self.config.model.label_map.get(int(catId)) or self.config.model.label_map.get(str(catId))
+                    
                     if not cat_name:
                         cat_name = f"class_{catId}"
                     
