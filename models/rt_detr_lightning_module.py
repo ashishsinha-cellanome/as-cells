@@ -472,11 +472,11 @@ class RTDETRLightningModule(pl.LightningModule):
         
         # 0. Check if remapping is enabled
         if hasattr(self.config, 'remap_labels') and not self.config.remap_labels:
-            return coco_gt
+            return coco_gt, {}
 
         # 1. Get target map from config
         if not self.config or 'model' not in self.config or 'label_map' not in self.config.model:
-            return coco_gt
+            return coco_gt, {}
             
         target_label_map = self.config.model.label_map
         name_to_target_id = {v: int(k) for k, v in target_label_map.items()}
