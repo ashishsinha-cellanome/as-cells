@@ -17,9 +17,11 @@ class ModelEma(nn.Module):
         self.decay = decay
 
     def train(self, mode=True):
-        """Always keep the internal module and the wrapper in eval mode."""
-        super().train(False)
-        self.module.eval()
+        """Force the module and its children to stay in evaluation mode."""
+        self.training = False
+        for module in self.children():
+            module.train(False)
+        return self
 
     def _update(self, model, update_fn):
         with torch.no_grad():
