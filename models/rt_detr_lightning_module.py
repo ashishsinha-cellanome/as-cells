@@ -61,6 +61,7 @@ class RTDETRLightningModule(pl.LightningModule):
         # breakpoint()
         self.save_hyperparameters(ignore=['model', 'config', 'image_processor', 'val_coco_gt', 'test_coco_gt', 'train_coco_gt'])
         self.model = model
+        self.model.train() # Default to train mode for summary correctness
         self.image_processor = image_processor
         self.val_coco_gt = val_coco_gt
         self.test_coco_gt = test_coco_gt
