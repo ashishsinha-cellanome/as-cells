@@ -411,9 +411,13 @@ def setup_callbacks(config: DictConfig):
         )
     )
 
-    # 2. EMA Model Checkpoint (If enabled)
-    # Tracks the EMA validation metric (val/map_ema)
+    # 2. EMA Callback and Checkpoint (If enabled)
     if hasattr(config.model, 'ema') and config.model.ema.enabled:
+        from utils.ema import RTDETREMACallback
+        rank_zero_print(f"💡 EMA enabled: Adding RTDETREMACallback with decay={config.model.ema.decay}")
+        callbacks.append(RTDETREMACallback(decay=config.model.ema.decay))
+
+        # Tracks the EMA validation metric (val/map_ema)
         rank_zero_print("💡 EMA enabled: Adding second ModelCheckpoint for 'val/map_ema'")
         ema_monitor = "val/map_ema"
         callbacks.append(

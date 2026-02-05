@@ -95,16 +95,11 @@ class RTDETRLightningModule(pl.LightningModule):
         self.base_lr = self.config.optimizer.optimizer.lr
         self.validation_step_outputs = []
         self.test_step_outputs = []
-        self.ema_model = None
+        
         if hasattr(self.config.model, 'ema') and self.config.model.ema.enabled:
-            self.ema_model = ModelEma(self.model, decay=self.config.model.ema.decay)
             self.validation_step_outputs_ema = []
             self.test_step_outputs_ema = []
 
-    def on_train_batch_end(self, outputs, batch, batch_idx):
-        """Update EMA model after each training step."""
-        if self.ema_model:
-            self.ema_model.update(self.model)
 
     def forward(self, pixel_values, labels=None):
         """Forward pass."""
@@ -133,18 +128,6 @@ class RTDETRLightningModule(pl.LightningModule):
         
         return loss
     
-    def on_fit_start(self):
-        """Ensure EMA model is synced with model weights at the start of training."""
-        if self.ema_model:
-            self.print("[INFO] Synchronizing EMA weights with model weights...")
-            self.ema_model.set(self.model)
-
-            with torch.no_grad():
-                all_equal = all(torch.equal(p1, p2) for p1, p2 in zip(self.model.parameters(), self.ema_model.module.parameters()))
-                if all_equal:
-                    self.print("[INFO] Verified: Model and EMA weights are identical.")
-                else:
-                    self.print("[WARNING] Model and EMA weights differ after synchronization!")
 
 
     def on_validation_epoch_start(self):
@@ -212,9 +195,13 @@ class RTDETRLightningModule(pl.LightningModule):
         # return {"predictions": results}
         # breakpoint()
         self.validation_step_outputs.append({"predictions": results, "image_ids": image_ids})
-        if self.ema_model:
+        
+        # EMA validation
+        from utils.ema import RTDETREMACallback
+        ema_callback = next((cb for cb in self.trainer.callbacks if isinstance(cb, RTDETREMACallback)), None)
+        if ema_callback and ema_callback.ema_model:
             # EMA model forward pass
-            ema_outputs = self.ema_model.module(pixel_values=pixel_values, labels=None)
+            ema_outputs = ema_callback.ema_model.module(pixel_values=pixel_values, labels=None)
 
             # Post-process EMA predictions
             post_processed_ema_outputs = self.image_processor.post_process_object_detection(
@@ -366,9 +353,12 @@ class RTDETRLightningModule(pl.LightningModule):
         # self.test_image_ids.extend([int(target["image_id"].item()) for target in labels])
         self.test_step_outputs.append({"predictions": results, "image_ids": image_ids})
 
-        if self.ema_model:
+        # EMA validation during test
+        from utils.ema import RTDETREMACallback
+        ema_callback = next((cb for cb in self.trainer.callbacks if isinstance(cb, RTDETREMACallback)), None)
+        if ema_callback and ema_callback.ema_model:
             # EMA model forward pass
-            ema_outputs = self.ema_model.module(pixel_values=pixel_values, labels=None)
+            ema_outputs = ema_callback.ema_model.module(pixel_values=pixel_values, labels=None)
 
             # Post-process EMA predictions
             post_processed_ema_outputs = self.image_processor.post_process_object_detection(

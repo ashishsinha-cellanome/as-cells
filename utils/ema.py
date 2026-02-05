@@ -1,12 +1,17 @@
-import copy
-from collections import OrderedDict
-from torch import nn
 import torch
+import torch.nn as nn
+import copy
+
+def to_cpu_device(data):
+    if isinstance(data, dict):
+        return {k: to_cpu_device(v) for k, v in data.items()}
+    if isinstance(data, list):
+        return [to_cpu_device(v) for v in data]
+    if isinstance(data, torch.Tensor):
+        return data.detach().cpu()
+    return data
 
 class ModelEma(nn.Module):
-    """
-    Model Exponential Moving Average from Taming Transformers
-    """
     def __init__(self, model, decay=0.9999):
         super().__init__()
         # make a copy of the model for accumulating moving average of weights
@@ -25,8 +30,6 @@ class ModelEma(nn.Module):
 
     def _update(self, model, update_fn):
         with torch.no_grad():
-            # Use named_parameters and named_buffers to ensure we update by key matching
-            # this handles potential shared parameters correctly and is safer than zip(values)
             model_params = dict(model.named_parameters())
             ema_params = dict(self.module.named_parameters())
             for name, param in ema_params.items():
@@ -44,3 +47,52 @@ class ModelEma(nn.Module):
 
     def set(self, model):
         self._update(model, update_fn=lambda e, m: m)
+
+import pytorch_lightning as pl
+
+class RTDETREMACallback(pl.Callback):
+    """
+    Exponential Moving Average callback for RT-DETR.
+    Manages a ModelEma instance and handles synchronization and checkpointing.
+    """
+    def __init__(self, decay=0.9999):
+        super().__init__()
+        self.decay = decay
+        self.ema_model = None
+
+    def on_fit_start(self, trainer, pl_module):
+        """Initialize EMA model and sync weights at the start of training."""
+        if self.ema_model is None:
+            pl_module.print(f"[EMA Callback] Initializing EMA with decay={self.decay}")
+            self.ema_model = ModelEma(pl_module.model, decay=self.decay)
+        
+        # Always sync at start of fit to ensure valid state
+        pl_module.print("[EMA Callback] Synchronizing EMA weights with model weights...")
+        self.ema_model.set(pl_module.model)
+
+        # Verification check
+        with torch.no_grad():
+            all_equal = all(torch.equal(p1, p2) for p1, p2 in zip(pl_module.model.parameters(), self.ema_model.module.parameters()))
+            if all_equal:
+                pl_module.print("[EMA Callback] Verified: Model and EMA weights are identical.")
+            else:
+                pl_module.print("[EMA Callback] WARNING: Model and EMA weights differ after synchronization!")
+
+    def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
+        """Update EMA weights after each training step."""
+        if self.ema_model:
+            self.ema_model.update(pl_module.model)
+
+    def on_save_checkpoint(self, trainer, pl_module, checkpoint):
+        """Save EMA state into the main checkpoint."""
+        if self.ema_model:
+            # Save the internal module's state_dict
+            checkpoint['ema_state_dict'] = self.ema_model.module.state_dict()
+
+    def on_load_checkpoint(self, trainer, pl_module, checkpoint):
+        """Restore EMA state from the checkpoint."""
+        if 'ema_state_dict' in checkpoint:
+            if self.ema_model is None:
+                self.ema_model = ModelEma(pl_module.model, decay=self.decay)
+            self.ema_model.module.load_state_dict(checkpoint['ema_state_dict'])
+            pl_module.print("[EMA Callback] Restored EMA state from checkpoint.")
