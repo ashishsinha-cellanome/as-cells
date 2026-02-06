@@ -129,9 +129,6 @@ class RTDETRLightningModule(pl.LightningModule):
                 if has_params and all_frozen:
                     m.eval()
     
-    def on_train_start(self):
-        """Verify model modes at the start of training."""
-        self.print(f"\n[VERIFICATION] Training started. Checking module modes:")
     
     def training_step(self, batch, batch_idx):
         """Training step."""
