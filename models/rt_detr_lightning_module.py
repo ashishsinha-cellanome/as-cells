@@ -128,11 +128,6 @@ class RTDETRLightningModule(pl.LightningModule):
                 
                 if has_params and all_frozen:
                     m.eval()
-                    # Debug print for Decoder
-                    if hasattr(m, '__class__') and 'Decoder' in m.__class__.__name__:
-                         print(f"[DEBUG-TRAIN] Forcing {m.__class__.__name__} to EVAL. Params: {sum(1 for _ in m.parameters())}, All Frozen: {all_frozen}")
-                elif hasattr(m, '__class__') and 'Decoder' in m.__class__.__name__:
-                     print(f"[DEBUG-TRAIN] Leaving {m.__class__.__name__} in TRAIN. Params: {sum(1 for _ in m.parameters())}, All Frozen: {all_frozen}")
     
     def on_train_start(self):
         """Verify model modes at the start of training."""
@@ -140,27 +135,6 @@ class RTDETRLightningModule(pl.LightningModule):
         # This fixes an issue where PL might not call train() if it thinks the model is already in the correct state,
         # or if the sanity check left it in eval mode.
         self.train(True)
-        
-        self.print(f"\n[VERIFICATION] Training started. Checking module modes:")
-        
-        # Check Backbone (Should be EVAL if frozen)
-        if hasattr(self.model, 'model') and hasattr(self.model.model, 'backbone'):
-            backbone = self.model.model.backbone
-            self.print(f"  -> Backbone mode: {'TRAIN' if backbone.training else 'EVAL'}")
-            
-        # Check Decoder (Should be TRAIN)
-        if hasattr(self.model, 'model') and hasattr(self.model.model, 'decoder'):
-            decoder = self.model.model.decoder
-            is_training = decoder.training
-            self.print(f"  -> Decoder mode: {'TRAIN' if is_training else 'EVAL'}")
-            
-            # Additional Debug: Check parameters of decoder
-            trainable_params = sum(p.requires_grad for p in decoder.parameters())
-            total_params = sum(1 for p in decoder.parameters())
-            self.print(f"  -> Decoder Params: {trainable_params}/{total_params} trainable")
-            
-            if trainable_params == 0 and total_params > 0:
-                 self.print("  [WARNING] Decoder parameters are ALL FROZEN! This explains why it is forced to EVAL.")
     
     def training_step(self, batch, batch_idx):
         """Training step."""
