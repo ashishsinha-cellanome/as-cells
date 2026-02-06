@@ -141,7 +141,16 @@ class RTDETRLightningModule(pl.LightningModule):
         # Check Decoder (Should be TRAIN)
         if hasattr(self.model, 'model') and hasattr(self.model.model, 'decoder'):
             decoder = self.model.model.decoder
-            self.print(f"  -> Decoder mode: {'TRAIN' if decoder.training else 'EVAL'}")
+            is_training = decoder.training
+            self.print(f"  -> Decoder mode: {'TRAIN' if is_training else 'EVAL'}")
+            
+            # Additional Debug: Check parameters of decoder
+            trainable_params = sum(p.requires_grad for p in decoder.parameters())
+            total_params = sum(1 for p in decoder.parameters())
+            self.print(f"  -> Decoder Params: {trainable_params}/{total_params} trainable")
+            
+            if trainable_params == 0 and total_params > 0:
+                 self.print("  [WARNING] Decoder parameters are ALL FROZEN! This explains why it is forced to EVAL.")
     
     def training_step(self, batch, batch_idx):
         """Training step."""
