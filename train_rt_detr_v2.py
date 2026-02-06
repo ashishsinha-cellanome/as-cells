@@ -279,6 +279,12 @@ def setup_model(config: DictConfig) -> RTDETRLightningModule:
     model = model_cls.from_pretrained(
         model_checkpoint_path,
     )
+    
+    # Explicitly set model to TRAIN mode initially.
+    # This ensures that when we subsequently freeze the backbone (eval mode),
+    # the rest of the model (decoder, etc.) remains in train mode, creating the correct mixed state.
+    model.train()
+    
     if config.model.backbone.type == "resnet":
         if not config.model.backbone.train_backbone:
             rank_zero_print("[INFO] Re-applying backbone freezing after load...")
