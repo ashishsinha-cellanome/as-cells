@@ -61,7 +61,7 @@ class RTDETRLightningModule(pl.LightningModule):
         # breakpoint()
         self.save_hyperparameters(ignore=['model', 'config', 'image_processor', 'val_coco_gt', 'test_coco_gt', 'train_coco_gt'])
         self.model = model
-        self.model.train() # Default to train mode for summary correctness
+        # self.model.train() # REMOVED: Managed by train() override below
         self.image_processor = image_processor
         self.val_coco_gt = val_coco_gt
         self.test_coco_gt = test_coco_gt
@@ -106,6 +106,18 @@ class RTDETRLightningModule(pl.LightningModule):
         """Forward pass."""
         # breakpoint()
         return self.model(pixel_values=pixel_values, labels=labels)
+
+    def train(self, mode: bool = True):
+        """Override to keep frozen modules in eval mode."""
+        super().train(mode)
+        if mode:
+            # When switching to train mode, we must ensure that any frozen modules stay in eval mode
+            # This is critical for backbones that are partially or fully frozen (e.g. BatchNorm stats)
+            for m in self.modules():
+                # Check if the module itself has parameters and if all of them are frozen
+                params = list(m.parameters(recurse=False))
+                if params and all(not p.requires_grad for p in params):
+                    m.eval()
     
     def training_step(self, batch, batch_idx):
         """Training step."""
