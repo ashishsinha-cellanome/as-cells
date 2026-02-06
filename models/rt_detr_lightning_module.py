@@ -136,6 +136,11 @@ class RTDETRLightningModule(pl.LightningModule):
     
     def on_train_start(self):
         """Verify model modes at the start of training."""
+        # Force the model into training mode using our custom logic.
+        # This fixes an issue where PL might not call train() if it thinks the model is already in the correct state,
+        # or if the sanity check left it in eval mode.
+        self.train(True)
+        
         self.print(f"\n[VERIFICATION] Training started. Checking module modes:")
         
         # Check Backbone (Should be EVAL if frozen)
