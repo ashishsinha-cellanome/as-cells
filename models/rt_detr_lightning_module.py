@@ -114,9 +114,19 @@ class RTDETRLightningModule(pl.LightningModule):
             # When switching to train mode, we must ensure that any frozen modules stay in eval mode
             # This is critical for backbones that are partially or fully frozen (e.g. BatchNorm stats)
             for m in self.modules():
-                # Check if the module itself has parameters and if all of them are frozen
-                params = list(m.parameters(recurse=False))
-                if params and all(not p.requires_grad for p in params):
+                # Robust check: If a module and all its sub-parameters are frozen, force it to eval.
+                # access generator
+                params = m.parameters()
+                # Check if there is at least one param, and if all are frozen
+                has_params = False
+                all_frozen = True
+                for p in params:
+                    has_params = True
+                    if p.requires_grad:
+                        all_frozen = False
+                        break
+                
+                if has_params and all_frozen:
                     m.eval()
     
     def on_train_start(self):
