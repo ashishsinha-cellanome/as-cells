@@ -119,6 +119,20 @@ class RTDETRLightningModule(pl.LightningModule):
                 if params and all(not p.requires_grad for p in params):
                     m.eval()
     
+    def on_train_start(self):
+        """Verify model modes at the start of training."""
+        self.print(f"\n[VERIFICATION] Training started. Checking module modes:")
+        
+        # Check Backbone (Should be EVAL if frozen)
+        if hasattr(self.model, 'model') and hasattr(self.model.model, 'backbone'):
+            backbone = self.model.model.backbone
+            self.print(f"  -> Backbone mode: {'TRAIN' if backbone.training else 'EVAL'}")
+            
+        # Check Decoder (Should be TRAIN)
+        if hasattr(self.model, 'model') and hasattr(self.model.model, 'decoder'):
+            decoder = self.model.model.decoder
+            self.print(f"  -> Decoder mode: {'TRAIN' if decoder.training else 'EVAL'}")
+    
     def training_step(self, batch, batch_idx):
         """Training step."""
         pixel_values = batch["pixel_values"]
