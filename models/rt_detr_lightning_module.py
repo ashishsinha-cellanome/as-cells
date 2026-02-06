@@ -128,6 +128,11 @@ class RTDETRLightningModule(pl.LightningModule):
                 
                 if has_params and all_frozen:
                     m.eval()
+                    # Debug print for Decoder
+                    if hasattr(m, '__class__') and 'Decoder' in m.__class__.__name__:
+                         print(f"[DEBUG-TRAIN] Forcing {m.__class__.__name__} to EVAL. Params: {sum(1 for _ in m.parameters())}, All Frozen: {all_frozen}")
+                elif hasattr(m, '__class__') and 'Decoder' in m.__class__.__name__:
+                     print(f"[DEBUG-TRAIN] Leaving {m.__class__.__name__} in TRAIN. Params: {sum(1 for _ in m.parameters())}, All Frozen: {all_frozen}")
     
     def on_train_start(self):
         """Verify model modes at the start of training."""
