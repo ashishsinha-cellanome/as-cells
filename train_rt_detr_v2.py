@@ -434,7 +434,7 @@ def setup_callbacks(config: DictConfig):
         )
 
     callbacks.append(LearningRateMonitor(logging_interval='step'))
-    callbacks.append(ModelSummary(max_depth=2))
+    callbacks.append(ModelSummary(max_depth=3))
 
     if "backup_dir" in checkpoint_config and checkpoint_config.backup_dir:
         # Resolve path (handle ${hydra...} if needed, though usually resolved by now)
