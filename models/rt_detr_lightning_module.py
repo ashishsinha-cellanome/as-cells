@@ -3,6 +3,7 @@ import re
 from typing import Dict, Any, Optional
 import torch
 import torch.nn as nn
+import torch.distributed as dist
 import os
 import pytorch_lightning as pl
 from pycocotools.cocoeval import COCOeval
@@ -129,7 +130,6 @@ class RTDETRLightningModule(pl.LightningModule):
                 if has_params and all_frozen:
                     m.eval()
     
-    
     def training_step(self, batch, batch_idx):
         """Training step."""
         pixel_values = batch["pixel_values"]
@@ -251,70 +251,75 @@ class RTDETRLightningModule(pl.LightningModule):
     
     def on_validation_epoch_end(self):
         """Compute validation metrics at epoch end."""
-        # breakpoint()
-        if not self.validation_step_outputs:
-            return
         
-        # --- Collate results from all GPUs/steps ---
-        validation_predictions = []
-        validation_image_ids = []
-        for output_batch in self.validation_step_outputs:
-            validation_predictions.extend(convert_preds_to_coco(output_batch["predictions"]))
-            validation_image_ids.extend(output_batch["image_ids"])
-        
-        if len(validation_predictions) == 0:
-            return
-        
-        # breakpoint()
-        if self.config.debug:
-            self.print ("\n--- DEBUGGING IDS ---")
-            self.print (f"TRAIN IDs seen this epoch: {self.debug_train_image_ids}")
-            self.print (f"VAL IDs seen this epoch:   {set(validation_image_ids)}")
-            self.print ("---------------------\n")
+        # Helper to gather outputs from all ranks
+        def gather_all_outputs(local_outputs):
+            if not dist.is_available() or not dist.is_initialized():
+                return local_outputs
             
-        # Compute COCO metrics
-        if self.val_coco_gt is not None:
-            metrics = self._compute_coco_metrics(
-                predictions=validation_predictions,
-                image_ids=list(set(validation_image_ids)),
-                coco_gt=self.val_coco_gt
-            )
-            
-            # Log metrics
-            for key, value in metrics.items():
-                self.log(f"val/{key}", value, prog_bar=True, sync_dist=True)
-                if key == 'map':
-                    self.log(f"val_{key}", value, prog_bar=False, sync_dist=True)
-        else:
-            # On non-zero ranks where coco_gt is None, we still need to log something to avoid DDP sync issues if necessary,
-            # but usually sync_dist=True handles it if at least one rank logs.
-            pass
+            gathered = [None for _ in range(dist.get_world_size())]
+            dist.all_gather_object(gathered, local_outputs)
+            # Flatten list of lists
+            return [item for rank_outputs in gathered for item in rank_outputs]
+
+        # 1. Gather Standard Model Predictions
+        all_outputs = gather_all_outputs(self.validation_step_outputs)
         
-        # --- EMA Metrics ---
+        # Only compute metrics on Rank 0
+        if self.trainer.is_global_zero:
+            validation_predictions = []
+            validation_image_ids = []
+            for output_batch in all_outputs:
+                validation_predictions.extend(convert_preds_to_coco(output_batch["predictions"]))
+                validation_image_ids.extend(output_batch["image_ids"])
+            
+            if len(validation_predictions) > 0:
+                if self.config.debug:
+                    self.print ("\n--- DEBUGGING IDS (Global) ---")
+                    self.print (f"VAL IDs seen this epoch:   {len(set(validation_image_ids))}")
+                    self.print ("---------------------\n")
+                
+                # Compute COCO metrics
+                if self.val_coco_gt is not None:
+                    metrics = self._compute_coco_metrics(
+                        predictions=validation_predictions,
+                        image_ids=list(set(validation_image_ids)),
+                        coco_gt=self.val_coco_gt
+                    )
+                    
+                    # Log metrics (sync_dist=False because we computed on global data already)
+                    for key, value in metrics.items():
+                        self.log(f"val/{key}", value, prog_bar=True, sync_dist=False, rank_zero_only=True)
+                        if key == 'map':
+                            self.log(f"val_{key}", value, prog_bar=False, sync_dist=False, rank_zero_only=True)
+
+        # 2. Gather EMA Model Predictions
         if hasattr(self, 'validation_step_outputs_ema') and self.validation_step_outputs_ema:
-            ema_predictions = []
-            ema_image_ids = []
-            for output_batch in self.validation_step_outputs_ema:
-                ema_predictions.extend(convert_preds_to_coco(output_batch["predictions"]))
-                ema_image_ids.extend(output_batch["image_ids"])
+            # We must gather even if local list is empty (though it shouldn't be if steps ran)
+            all_ema_outputs = gather_all_outputs(self.validation_step_outputs_ema)
             
-            if len(ema_predictions) > 0:
-                ema_metrics = self._compute_coco_metrics(
-                    predictions=ema_predictions,
-                    image_ids=list(set(ema_image_ids)),
-                    coco_gt=self.val_coco_gt
-                )
-                for key, value in ema_metrics.items():
-                    # Log with _ema suffix
-                    self.log(f"val/{key}_ema", value, prog_bar=True, sync_dist=True)
-                    if key == 'map':
-                         self.log(f"val_{key}_ema", value, prog_bar=False, sync_dist=True)
+            if self.trainer.is_global_zero:
+                ema_predictions = []
+                ema_image_ids = []
+                for output_batch in all_ema_outputs:
+                    ema_predictions.extend(convert_preds_to_coco(output_batch["predictions"]))
+                    ema_image_ids.extend(output_batch["image_ids"])
+                
+                if len(ema_predictions) > 0:
+                    ema_metrics = self._compute_coco_metrics(
+                        predictions=ema_predictions,
+                        image_ids=list(set(ema_image_ids)),
+                        coco_gt=self.val_coco_gt
+                    )
+                    for key, value in ema_metrics.items():
+                        # Log with _ema suffix
+                        self.log(f"val/{key}_ema", value, prog_bar=True, sync_dist=False, rank_zero_only=True)
+                        if key == 'map':
+                             self.log(f"val_{key}_ema", value, prog_bar=False, sync_dist=False, rank_zero_only=True)
             
             self.validation_step_outputs_ema.clear()
 
         # Clear accumulated predictions
-        # self.validation_predictions = []
-        # self.validation_image_ids = []
         self.debug_train_image_ids.clear() 
         self.validation_step_outputs.clear()  # free memory
 
