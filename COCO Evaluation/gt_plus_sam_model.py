@@ -2,14 +2,12 @@ import cv2
 import numpy as np
 from PIL import Image
 import torch
-import torchvision
-from torchvision.transforms import functional as F
 import os
 import time
 import logging
 
 from segment_anything import sam_model_registry, SamPredictor
-from typing import Tuple, List, Final, Optional, Dict, Union
+from typing import Tuple, List, Final, Optional, Dict
 
 DEFAULT_CLASS_IDS_TO_CLASSNAMES_MAP: Final[Dict[int, str]] = {1: 'cell', 2: 'bead',  3: 'cage', 5: 'cell-adhered', 6: 'soma'}
 DEFAULT_PERCENTAGE_TO_EXPAND_BBOX_BOUNDARIES: Final[float] = 0.0
@@ -994,8 +992,7 @@ def run_gt_plus_sam(
     if (image_width, image_height) not in RESIZE:
         logging.error(
             "The input image size {} is not supported! Returning no cells!".format(
-                image_width, image_height
-            )
+                image_width, )
         )
         out = {'boxes': np.zeros((0, 4), dtype=int),
                'labels': np.zeros((0,), dtype=int),

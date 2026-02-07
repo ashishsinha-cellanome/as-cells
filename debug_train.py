@@ -8,7 +8,6 @@ uv run debug_train.py debug=True data=debug logging.wandb.project=DEBUG_VFL
 
 import os
 import datetime
-import torch
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor, ModelSummary
 from pytorch_lightning.loggers import WandbLogger
@@ -180,7 +179,7 @@ def setup_model(config: DictConfig) -> RTDETRLightningModule:
         test_coco_gt=val_coco_gt if config.debug else test_coco_gt,
     )
     
-    print(f"✓ Model loaded successfully")
+    print("✓ Model loaded successfully")
     return lightning_model, processor
 
 
@@ -237,7 +236,7 @@ def setup_callbacks(config: DictConfig):
         ModelSummary(max_depth=2),
     ]
     
-    print(f"✓ Callbacks configured")
+    print("✓ Callbacks configured")
     return callbacks
 
 def setup_logger(config: DictConfig):

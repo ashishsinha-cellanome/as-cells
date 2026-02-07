@@ -1,15 +1,11 @@
-import time
 import re
-from typing import Dict, Any, Optional
 import torch
-import torch.nn as nn
 import torch.distributed as dist
 import os
 import pytorch_lightning as pl
 from pycocotools.cocoeval import COCOeval
 from PIL import Image, ImageDraw, ImageFont
 from models.custom_rt_detr_with_dinov2_backbone import RTDetrV2ForObjectDetectionWithCustomBackbone
-from utils.ema import ModelEma
 
 def to_cpu_device(tensor):
     """Move a CUDA torch tensor to CPU memory."""
@@ -567,7 +563,7 @@ class RTDETRLightningModule(pl.LightningModule):
         if self.config.debug:
             self.print(f"DEBUG: COCO GT Categories after remap: {[{c['id']: c['name']} for c in coco_gt.dataset['categories']]}")
             if remap_dict:
-                self.print(f"DEBUG: Applied prediction remapping for evaluation.")
+                self.print("DEBUG: Applied prediction remapping for evaluation.")
         
         metrics = {
             'map': -1.0, 'map_50': -1.0, 'map_75': -1.0,

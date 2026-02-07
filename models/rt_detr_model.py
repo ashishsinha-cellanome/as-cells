@@ -7,15 +7,13 @@ from PIL import Image
 import torch
 from transformers import RTDetrForObjectDetection, RTDetrV2ForObjectDetection, RTDetrImageProcessor
 # RT-DETRv2 with our custom DINOv2 + FPN backbone using output layers 2, 7 and 12
-from models.dinov2_backbone_with_fpn import Dinov2BackBoneWithFPNConfig, Dinov2BackBoneWithFPN
+from models.dinov2_backbone_with_fpn import Dinov2BackBoneWithFPN
 from models.custom_rt_detr_with_dinov2_backbone import RTDetrV2ConfigWithCustomBackBone, RTDetrV2ForObjectDetectionWithCustomBackbone
 # DINOv2 + FPN backbone (the FPN is not trained, and will be loaded with the full model later)
 
 import os
-import time
 import logging
 from typing import Tuple, List, Final, Optional, Dict, Union
-from collections import OrderedDict
 
 
 DEFAULT_DETECTION_CONFIDENCE: Final[float] = 0.4

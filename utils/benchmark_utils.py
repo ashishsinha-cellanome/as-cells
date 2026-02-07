@@ -1,9 +1,9 @@
-from typing import List, Dict, Union, Tuple, Final, Optional
+from typing import List, Dict, Union, Optional
 from utils.json_parser import CellMaskDataset
 from torch.utils.data import ConcatDataset
 from utils.precision_recall_eval import AnnotationFilter
 from utils.dataset_utils import create_dataset_classes
-from tqdm import tqdm, tqdm_notebook
+from tqdm import tqdm
 from models.AbstractVisionModel import run_model
 from utils.pairing_utils import pair_gts_dets_bbox, pair_gts_dets_mask
 import numpy as np

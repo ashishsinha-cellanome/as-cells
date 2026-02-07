@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import numpy as np
 import cv2
-import os
 import time
 import logging
 from PIL import Image
@@ -104,22 +103,22 @@ class VisionModel(ABC):
                     loaded_label_map = saved_model_param["label_map"]
                 else:
                     logging.warning(
-                        f"The weights file should contain the label map but it missing. "
-                        f"This should never happen..."
+                        "The weights file should contain the label map but it missing. "
+                        "This should never happen..."
                     )
                     loaded_label_map = None
 
                 if "model_input_size" in saved_model_param:
                     # resize and crop corners are also provided in the weights file
                     logging.info(
-                        f"The model input size is also provided in the weights file."
+                        "The model input size is also provided in the weights file."
                     )
                     self._model_input_size = saved_model_param["model_input_size"]
                     
                 if ("resize_dict" in saved_model_param and "crop_corners_dict" in saved_model_param):
                     # resize and crop corners are also provided in the weights file
                     logging.info(
-                        f"The resize and crop_corners dictionary are also provided in the weights file."
+                        "The resize and crop_corners dictionary are also provided in the weights file."
                     )
                     self._resize_dict = saved_model_param["resize_dict"]
                     self._crop_corners_dict = saved_model_param["crop_corners_dict"]
@@ -158,15 +157,15 @@ class VisionModel(ABC):
             # check if the label map is provided in the model file
             if loaded_label_map is None:
                 logging.error(
-                    f"The mapping between the class IDs and class names is required for the model and is "
-                    f"neither provided during class instantiation nor available in the weights file! Returning ..."
+                    "The mapping between the class IDs and class names is required for the model and is "
+                    "neither provided during class instantiation nor available in the weights file! Returning ..."
                 )
             else:
-                logging.info(f"The mapping between class IDs and class names is provided in the weights file.")
+                logging.info("The mapping between class IDs and class names is provided in the weights file.")
                 self._label_map: Dict[int, str] = loaded_label_map
         else:
-            logging.info(f"The mapping between class IDs and class names is passed during class instantiation! "
-                        f"It will overwrite the label map passed in the weights file (if provided).")        
+            logging.info("The mapping between class IDs and class names is passed during class instantiation! "
+                        "It will overwrite the label map passed in the weights file (if provided).")        
             self._label_map: Dict[int, str] = label_map
 
         # load the model
@@ -819,8 +818,7 @@ def run_model(
     if crop and (image_width, image_height) not in resize_dict:
         logging.error(
             "The input image size {} is not supported! Returning no cells!".format(
-                image_width, image_height
-            )
+                image_width, )
         )
         out = {'boxes': np.zeros((0, 4), dtype=int),
                'labels': np.zeros((0,), dtype=int),

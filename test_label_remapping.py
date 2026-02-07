@@ -1,5 +1,4 @@
 
-import torch
 from unittest.mock import MagicMock
 from data.coco_data_module import COCODataModule
 from omegaconf import OmegaConf
@@ -41,7 +40,7 @@ def test_remapping():
     print(f"Source COCO Cats: {[(k, v['name']) for k, v in mock_coco.coco.cats.items()]}")
     print(f"Target Label Map: {cfg.model.label_map}")
     print(f"Remapping Rules:  {cfg.data.class_remapping}")
-    print(f"RESULTING REMAP DICT (Source ID -> Target ID):")
+    print("RESULTING REMAP DICT (Source ID -> Target ID):")
     for src_id, tgt_id in remap_dict.items():
         src_name = mock_coco.coco.cats[src_id]['name']
         tgt_name = cfg.model.label_map[tgt_id]

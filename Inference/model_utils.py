@@ -1,8 +1,7 @@
 import numpy as np
-import torch
 import cv2
 
-from typing import List, Tuple, Dict, Final
+from typing import List, Tuple
 
 
 # Utility functions

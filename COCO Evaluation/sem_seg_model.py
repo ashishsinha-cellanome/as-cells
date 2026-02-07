@@ -2,10 +2,8 @@ import cv2
 import numpy as np
 from PIL import Image
 import torch
-import torchvision
 from torchvision.models import segmentation as seg_models
 from torchvision.transforms import functional as F
-import os
 import time
 import logging
 from typing import Tuple, List, Final, Optional, Dict, Union

@@ -71,7 +71,6 @@ from models.custom_rt_detr_with_dinov2_backbone import (
     RTDetrV2ForObjectDetectionWithCustomBackbone,
     RTDetrV2ConfigWithCustomBackBone
 )
-from models.dinov2_backbone_with_fpn import Dinov2BackBoneWithFPN, Dinov2BackBoneWithFPNConfig
 from models.rt_detr_lightning_module import RTDETRLightningModule
 from data.coco_data_module import COCODataModule
 from models.backbone_factory import build_backbone,freeze_backbone_layers, get_backbone_unique_id
@@ -158,7 +157,7 @@ def create_initial_checkpoint(config: DictConfig) -> str:
         # Check NAS if available
         if nas_path and os.path.exists(nas_path) and len(os.listdir(nas_path)) > 0:
             rank_zero_print(f"✓ Found weights on NAS: {nas_path}")
-            rank_zero_print(f"  -> Copying to scratch...")
+            rank_zero_print("  -> Copying to scratch...")
             try:
                 shutil.copytree(nas_path, local_path, dirs_exist_ok=True)
                 # Touch sentinel
@@ -248,7 +247,7 @@ def create_initial_checkpoint(config: DictConfig) -> str:
     else:
         # Other ranks wait for the sentinel file to appear
         if not os.path.exists(sentinel_file):
-            rank_print(f"Waiting for Rank 0 to finish initialization...")
+            rank_print("Waiting for Rank 0 to finish initialization...")
             while not os.path.exists(sentinel_file):
                 time.sleep(5)
 
@@ -359,7 +358,7 @@ def setup_model(config: DictConfig) -> RTDETRLightningModule:
         test_coco_gt=val_coco_gt if config.debug else test_coco_gt,
     )
     
-    rank_zero_print(f"✓ Model loaded successfully")
+    rank_zero_print("✓ Model loaded successfully")
     return lightning_model, processor
 
 
@@ -447,7 +446,7 @@ def setup_callbacks(config: DictConfig):
         backup_path = hydra.utils.to_absolute_path(checkpoint_config.backup_dir)
         callbacks.append(BackupToNASCallback(backup_dir=backup_path))
 
-    rank_zero_print(f"✓ Callbacks configured")
+    rank_zero_print("✓ Callbacks configured")
     return callbacks
 
 def setup_logger(config: DictConfig):
@@ -479,7 +478,6 @@ def setup_logger(config: DictConfig):
 
 @hydra.main(config_path="configs", config_name="config.yaml", version_base=None)
 def main(config: DictConfig):
-    # breakpoint()
     # Unlock config to make changes
     OmegaConf.set_struct(config, False)
     # breakpoint()
@@ -665,7 +663,7 @@ def main(config: DictConfig):
 
         trainer.fit(model, datamodule=data_module, ckpt_path=ckpt_path)
         
-        rank_zero_print(f"waiting for syncing")
+        rank_zero_print("waiting for syncing")
         #torch.cuda.synchronize()
         torch.distributed.barrier()
 

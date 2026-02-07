@@ -1,9 +1,6 @@
 import os
-from typing import Tuple, Union, List, Dict, Final, Optional
 
-from transformers import PreTrainedModel, PretrainedConfig
 from transformers import RTDetrV2ForObjectDetection, RTDetrV2Config
-from safetensors.torch import save_file as safe_save
 from safetensors.torch import load_file as safe_load
 
 from dinov2_backbone_with_fpn import Dinov2BackBoneWithFPNConfig, Dinov2BackBoneWithFPN
@@ -77,8 +74,8 @@ class RTDetrV2ForObjectDetectionWithCustomBackbone(RTDetrV2ForObjectDetection):
 
     def __init__(self, config):
         if isinstance(config.backbone_config, Dinov2BackBoneWithFPNConfig):
-            print(f"[INFO]: The passed config.backbone_config is a custom one of type Dinov2BackBoneWithFPNConfig. "
-                  f"The model and the backbone are instantiated separately as the backbone is not supported by the original model.")
+            print("[INFO]: The passed config.backbone_config is a custom one of type Dinov2BackBoneWithFPNConfig. "
+                  "The model and the backbone are instantiated separately as the backbone is not supported by the original model.")
             # save the backbone config before initializing the model
             backbone_config = config.backbone_config
             num_intermediate_channels = backbone_config.intermediate_channel_sizes
@@ -92,8 +89,8 @@ class RTDetrV2ForObjectDetectionWithCustomBackbone(RTDetrV2ForObjectDetection):
                 # this part may lead to incorrectly built RT-DETRv2 model; this is because the encoder projection convolution layers are
                 # automatically built for the output channel dimensions of the backbone, and the default backbone of RTDetrV2Config() 
                 # may have different dimensions than the intended model
-                print(f"[INFO]: The RT-DETRv2 model is instantiated with the default backbone config! "
-                      f"NOTE: This backbone affects how the rest of the model is built and may lead to incorrect model architecture.")
+                print("[INFO]: The RT-DETRv2 model is instantiated with the default backbone config! "
+                      "NOTE: This backbone affects how the rest of the model is built and may lead to incorrect model architecture.")
                 config.backbone_config = RTDetrV2Config().backbone_config
                 if (len(config.backbone_config.hidden_sizes[1:]) != len(num_intermediate_channels) or 
                    len([s for s in config.backbone_config.hidden_sizes[1:] if s not in num_intermediate_channels]) > 0):

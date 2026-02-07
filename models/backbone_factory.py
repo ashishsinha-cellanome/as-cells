@@ -1,4 +1,3 @@
-import hydra
 from omegaconf import OmegaConf
 from models.dinov2_backbone_with_fpn import Dinov2BackBoneWithFPN
 

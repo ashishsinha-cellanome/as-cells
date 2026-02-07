@@ -1,6 +1,5 @@
 import hydra
 import os
-import json
 import matplotlib.pyplot as plt
 import seaborn as sns
 import pandas as pd

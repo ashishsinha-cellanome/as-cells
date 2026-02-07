@@ -2,52 +2,22 @@
 Run inference on a dataset and evaluate precision and recall.
 """
 import sys
-import torch
-import numpy as np
 import pandas as pd
-import os
 import cv2
 import warnings
-from torch.utils.data import ConcatDataset
-from typing import List, Dict, Union, Tuple, Final, Optional
 from tqdm import tqdm
-from glob import glob
 from pathlib import Path
-from PIL import Image
-from utils.json_parser import CellMaskDataset
-from utils.dataset_utils import create_dataset_classes
 from utils.precision_recall_eval import (
     AnnotationFilter, 
-    evaluate_pr, 
-    calculate_confusion_matrix, 
-    p_r_based_on_c_m, 
-    evaluate_pr_per_image, 
-    evaluate_pr_updated
+    evaluate_pr_per_image
 )
-from utils.model_utils import show_detections, to_numpy, get_crop_corners
-from utils.pairing_utils import pair_gts_dets_bbox, pair_gts_dets_mask
 
-from models.mask_rcnn_model import MaskRCNNInstanceSegmentation
-from models.AbstractVisionModel import run_model
-from models.mask2former_model import Mask2FormerInstanceSegmentation
-from models.deformable_detr_model import DeformableDetrObjectDetector
-from models.rf_detr_model import RfDetrObjectDetector
 from models.rf_detr_model import (
     DEFAULT_LABEL_MAP as RF_DETR_DEFAULT_LABEL_MAP,
     DEFAULT_MODEL_INPUT_SIZE as RF_DETR_DEFAULT_INPUT_SIZE
     )
-from models.rt_detr_model import RtDetrObjectDetector
-from models.yolo_model import (
-    Yolov5ObjectDetector, 
-    DEFAULT_CROP_CORNERS_10x, 
-    DEFAULT_RESIZE_10x, 
-    DEFAULT_CROP_CORNERS_4x, 
-    DEFAULT_RESIZE_4x
-)
 
 from config import (
-    ROOT_DATADIR,
-    MODEL_CKPT_DIR,
     SAVE_PATH,
     MODELS,
     TEST_DATASETS,
@@ -164,7 +134,7 @@ def main(SAVE_PATH):
             
             use_mask = model.get_metadata()['predict_masks']
 
-            print (f'\n[INFO] Computing metrics')
+            print ('\n[INFO] Computing metrics')
             eval_results = evaluate_pr_per_image(
                         predictions=predictions,
                         dataset=test_dataset,

@@ -1,5 +1,4 @@
 from AbstractVisionModel import VisionModel
-from model_utils import to_numpy
 
 import numpy as np
 import cv2
@@ -8,10 +7,8 @@ import torch
 from rfdetr import RFDETRBase
 
 import os
-import time
 import logging
 from typing import Tuple, List, Final, Optional, Dict, Union
-from collections import OrderedDict
 
 DEFAULT_DETECTION_CONFIDENCE: Final[float] = 0.45
 DEFAULT_MODEL_INPUT_SIZE: Final[Tuple[int, int]] = (672, 672)

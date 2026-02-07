@@ -2,7 +2,7 @@ from scipy.optimize import linear_sum_assignment  # for Hungarian algorithm
 
 import numpy as np
 import cv2
-from typing import Dict, List, Tuple, Optional, Final, Union
+from typing import List, Tuple
 
 # Utility functions
 

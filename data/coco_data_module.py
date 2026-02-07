@@ -1,5 +1,5 @@
 import os
-from typing import Optional, Dict, List
+from typing import Optional, Dict
 import torch
 from torch.utils.data import DataLoader
 import pytorch_lightning as pl
@@ -30,7 +30,6 @@ class CocoDataset(torch.utils.data.Dataset):
     
     def __getitem__(self, idx):
         import numpy as np
-        from pycocotools import mask as coco_mask_util
         
         image, annotations = self.dataset_coco[idx]
         

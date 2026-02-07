@@ -1,4 +1,3 @@
-import os
 import time
 import logging
 from typing import Tuple, List, Final, Optional, Dict, Union
@@ -8,8 +7,6 @@ import cv2
 import numpy as np
 from PIL import Image
 import torch
-import torchvision
-from torchvision.transforms import functional as F
 from transformers import RTDetrForObjectDetection, RTDetrImageProcessor
 
 BASE_PATH: Final[str] = '/home/cellareye/Cellanome/dl-mehdi/Mask RCNN/checkpoints'
@@ -241,8 +238,8 @@ class RtDetrObjectDetector:
                     loaded_label_map = saved_model_param["label_map"]
                 else:
                     logging.warning(
-                        f"The weights file should contain the label map but it missing. "
-                        f"This should never happen..."
+                        "The weights file should contain the label map but it missing. "
+                        "This should never happen..."
                     )
                     loaded_label_map = None
 
@@ -250,7 +247,7 @@ class RtDetrObjectDetector:
                 if ("resize_dict" in saved_model_param and "crop_corners_dict" in saved_model_param):
                     # resize and crop corners are also provided in the weights file
                     logging.info(
-                        f"The resize and crop_corners dictionary are also provided in the weights file."
+                        "The resize and crop_corners dictionary are also provided in the weights file."
                     )
                     self._resize_dict = saved_model_param["resize_dict"]
                     self._crop_corners_dict = saved_model_param["crop_corners_dict"]
@@ -278,16 +275,16 @@ class RtDetrObjectDetector:
         if label_map is None:
             if loaded_label_map is None:
                 logging.error(
-                    f"The mapping between the class IDs and class names is required for the model and is "
-                    f"neither provided during class instantiation nor available in the weights file! Returning ..."
+                    "The mapping between the class IDs and class names is required for the model and is "
+                    "neither provided during class instantiation nor available in the weights file! Returning ..."
                 )
                 return 
             else:
-                logging.info(f"Mapping between class IDs and class names is provided in the weights file.") 
+                logging.info("Mapping between class IDs and class names is provided in the weights file.") 
                 self._label_map: Dict[int, str] = loaded_label_map
         else:
-            logging.info(f"Mapping between class IDs and class names is passed during class instantiation! "
-                        f"It will overwrite the label map passed in the weights file (if provided).")        
+            logging.info("Mapping between class IDs and class names is passed during class instantiation! "
+                        "It will overwrite the label map passed in the weights file (if provided).")        
             self._label_map: Dict[int, str] = label_map
 
         

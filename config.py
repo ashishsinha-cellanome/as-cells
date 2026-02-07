@@ -1,4 +1,4 @@
-from typing import Any, Final
+from typing import Final
 import os
 ROOT_DATADIR = '/global/home/ashish.sinha/cellanome/datasets'
 

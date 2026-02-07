@@ -250,18 +250,18 @@ def load_onnx_model_and_metadata(weights_path: str, use_onnx_runtime: bool, clas
     try:
         if use_onnx_runtime:
             logging.info(
-                f"Using ONNX Runtime for running the model."
+                "Using ONNX Runtime for running the model."
             )
 
             net = onnxruntime.InferenceSession(weights_path, providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
                 
             if 'CUDAExecutionProvider' not in onnxruntime.get_available_providers():
                 logging.warning(
-                    f"CUDAExecutionProvider is not available in ONNX Runtime! The model will be run on CPU."
+                    "CUDAExecutionProvider is not available in ONNX Runtime! The model will be run on CPU."
                 )
         else:
             logging.info(
-                f"Using OpenCV dnn for running the model. Setting dnn to use CUDA."
+                "Using OpenCV dnn for running the model. Setting dnn to use CUDA."
             )
             net = cv2.dnn.readNetFromONNX(weights_path)
 
@@ -302,7 +302,7 @@ def load_onnx_model_and_metadata(weights_path: str, use_onnx_runtime: bool, clas
             for field in onnx_model.metadata_props:
                 metadata[field.key] = eval(field.value)
             
-    except Exception as ex:
+    except Exception:
         # try reading from a defualt location
         try: 
             # read class names and create the label map
@@ -1004,8 +1004,7 @@ def run_yolo_plus_sam(
     if (image_width, image_height) not in RESIZE:
         logging.error(
             "The input image size {} is not supported! Returning no cells!".format(
-                image_width, image_height
-            )
+                image_width, )
         )
         out = {'boxes': np.zeros((0, 4), dtype=int),
                'labels': np.zeros((0,), dtype=int),

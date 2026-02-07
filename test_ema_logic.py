@@ -1,7 +1,6 @@
 import torch
 from torch import nn
 import copy
-from collections import OrderedDict
 
 # Mock ModelEma class as in utils/ema.py
 class ModelEma(nn.Module):

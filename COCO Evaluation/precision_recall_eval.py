@@ -1,4 +1,4 @@
-from typing import Dict, List, Tuple, Optional, Final, Union
+from typing import Dict, List, Union
 from pairing_utils import pair_gts_dets_bbox, pair_gts_dets_mask
 from json_parser import enforce_one_to_one_mapping, TestDataSet
 import numpy as np

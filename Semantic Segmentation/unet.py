@@ -8,7 +8,7 @@ from torchvision.transforms import CenterCrop
 from torch.nn import functional as F
 import torch
 
-from typing import Final, List, Tuple, Optional, Dict
+from typing import Final
 
 # default input size to the model
 INPUT_IMAGE_HEIGHT: Final[int] = 1024

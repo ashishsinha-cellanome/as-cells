@@ -1251,8 +1251,8 @@ class MaskDatasetFromMultiAnnotations:
         self.images_path = images_path
         self.annotations_paths = annotations_paths
         if len(annotations_paths) != len(annotation_files_exts):
-            print(f"[ERROR]: Args annotations_paths and annotation_files_exts should have the same length!")
-            print(f"[ERROR]: Class was not instantiated")
+            print("[ERROR]: Args annotations_paths and annotation_files_exts should have the same length!")
+            print("[ERROR]: Class was not instantiated")
             return 
     
         # annotations contain the list of train or test files without extension.

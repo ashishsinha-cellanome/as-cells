@@ -1,17 +1,11 @@
-import time
-import os
 import logging
 
 import cv2
 import numpy as np
-from PIL import Image
 
 import torch
-import torch.nn as nn
 import torchvision
 from torchvision.models import segmentation as seg_models
-from torchvision import transforms as T
-from torchvision.transforms import functional as F
 from typing import List, Dict, Tuple, Union, Final, Optional
 
 # these should go into model configurations included in the weights file (like in Mask R-CNN)
@@ -87,8 +81,8 @@ class SemanticSegmentator:
                     loaded_label_map = saved_model_param["label_map"]
                 else:
                     logging.warning(
-                        f"The weights file should contain the label map but it is missing. "
-                        f"This should never happen..."
+                        "The weights file should contain the label map but it is missing. "
+                        "This should never happen..."
                     )
                     loaded_label_map = None
 
@@ -96,8 +90,8 @@ class SemanticSegmentator:
                     self._model_input_size = saved_model_param["input_size"]
                 else:
                     logging.warning(
-                        f"The weights file should contain the model input size but it is missing. "
-                        f"This should never happen..."
+                        "The weights file should contain the model input size but it is missing. "
+                        "This should never happen..."
                     )
                     # we use the default value here
             else:
@@ -114,16 +108,16 @@ class SemanticSegmentator:
         if label_map is None:
             if loaded_label_map is None:
                 logging.error(
-                    f"The mapping between the class IDs and class names is required for the model and is "
-                    f"neither provided during class instantiation nor available in the weights file! Returning ..."
+                    "The mapping between the class IDs and class names is required for the model and is "
+                    "neither provided during class instantiation nor available in the weights file! Returning ..."
                 )
                 return 
             else:
-                logging.info(f"Mapping between class IDs and class names is provided in the weights file.") 
+                logging.info("Mapping between class IDs and class names is provided in the weights file.") 
                 self._label_map: Dict[int, str] = loaded_label_map
         else:
-            logging.info(f"Mapping between class IDs and class names is passed during class instantiation! "
-                        f"It will overwrite the label map passed in the weights file (if provided).")        
+            logging.info("Mapping between class IDs and class names is passed during class instantiation! "
+                        "It will overwrite the label map passed in the weights file (if provided).")        
             self._label_map: Dict[int, str] = label_map
 
         logging.info(f"Mapping between class IDs and class names: {self._label_map}") 

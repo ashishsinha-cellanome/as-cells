@@ -1,9 +1,7 @@
 import cv2
 import numpy as np
-import os
 import time
 import logging
-import onnxruntime
 from typing import Tuple, List, Final, Optional, Dict
 
 MODEL_WEIGHTS_PATH: Final[str] = '/home/cellareye/Development/darknet/backup/nk92_cells_beads_best.weights'
@@ -213,7 +211,7 @@ class Yolov4ObjectDetector:
             
             self._net = cv2.dnn.readNet(self._weights_path, self._config_path)
              
-            logging.info(f'Setting dnn to use CUDA. ')
+            logging.info('Setting dnn to use CUDA. ')
             try:
                 self._net.setPreferableBackend(cv2.dnn.DNN_BACKEND_CUDA)
                 self._net.setPreferableTarget(cv2.dnn.DNN_TARGET_CUDA_FP16)
@@ -778,8 +776,7 @@ def run_yolo_v4(
     if (image_width, image_height) not in RESIZE:
         logging.error(
             "The input image size {} is not supported! Returning no cells!".format(
-                image_width, image_height
-            )
+                image_width, )
         )
         return (
                 np.zeros((0, 4), dtype=int),

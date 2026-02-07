@@ -6,14 +6,12 @@ Supports COCO format datasets with train/valid/test splits.
 
 import os
 import argparse
-from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 import yaml
-import torch
 import pytorch_lightning as pl
-from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor, EarlyStopping, ModelSummary
+from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor, ModelSummary
 from pytorch_lightning.loggers import WandbLogger
-from transformers import RTDetrImageProcessor, RTDetrV2ForObjectDetection, RTDetrV2Config
+from transformers import RTDetrImageProcessor, RTDetrV2ForObjectDetection
 from torchvision.datasets import CocoDetection
 
 from models.custom_rt_detr_with_dinov2_backbone import (
@@ -195,7 +193,7 @@ def setup_model(config: Dict[str, Any]) -> RTDETRLightningModule:
         val_coco_gt=val_coco_gt,
     )
     
-    print(f"✓ Model loaded successfully")
+    print("✓ Model loaded successfully")
     return lightning_model, processor
 
 
@@ -241,7 +239,7 @@ def setup_callbacks(config: Dict[str, Any]):
         ModelSummary(max_depth=2),
     ]
     
-    print(f"✓ Callbacks configured")
+    print("✓ Callbacks configured")
     return callbacks
 
 

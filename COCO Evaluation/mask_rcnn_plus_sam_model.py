@@ -403,7 +403,7 @@ class MaskRCNNPlusSamInstanceSegmentation:
                 model_state_dict, loaded_label_map = saved_model_param[:2]
                 if len(saved_model_param) >= 3:
                     # anchor sizes is also provided
-                    logging.info(f"The model anchor sizes is provided in the weights file.") 
+                    logging.info("The model anchor sizes is provided in the weights file.") 
                     anchor_sizes = saved_model_param[2]
             else:
                 model_state_dict = saved_model_param
@@ -418,16 +418,16 @@ class MaskRCNNPlusSamInstanceSegmentation:
         if label_map is None:
             if loaded_label_map is None:
                 logging.error(
-                    f"The mapping between the class IDs and class names is required for the model and is "
-                    f"neither provided during class instantiation nor available in the weights file! Returning ..."
+                    "The mapping between the class IDs and class names is required for the model and is "
+                    "neither provided during class instantiation nor available in the weights file! Returning ..."
                 )
                 return 
             else:
-                logging.info(f"Mapping between class IDs and class names is provided in the weights file.") 
+                logging.info("Mapping between class IDs and class names is provided in the weights file.") 
                 self._label_map: Dict[int, str] = loaded_label_map
         else:
-            logging.info(f"Mapping between class IDs and class names is passed during class instantiation! "
-                        f"It will overwrite the label map passed in the weights file (if provided).")        
+            logging.info("Mapping between class IDs and class names is passed during class instantiation! "
+                        "It will overwrite the label map passed in the weights file (if provided).")        
             self._label_map: Dict[int, str] = label_map
 
         
@@ -1187,8 +1187,7 @@ def run_mask_rcnn_plus_sam(
     if (image_width, image_height) not in RESIZE:
         logging.error(
             "The input image size {} is not supported! Returning no cells!".format(
-                image_width, image_height
-            )
+                image_width, )
         )
         out = {'boxes': np.zeros((0, 4), dtype=int),
                'labels': np.zeros((0,), dtype=int),

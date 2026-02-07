@@ -1,10 +1,10 @@
 import os
-from typing import Tuple, Union, List, Dict, Final, Optional
+from typing import Tuple, List
 
 import torch
 import torch.nn as nn
 
-from transformers import PreTrainedModel, PretrainedConfig, Dinov2Model, Dinov2Config
+from transformers import PreTrainedModel, Dinov2Model, Dinov2Config
 from safetensors.torch import save_file as safe_save
 from safetensors.torch import load_file as safe_load
 
@@ -127,7 +127,7 @@ class Dinov2BackBoneWithFPN(PreTrainedModel):
             print(f"[INFO]: DINOv2 parameters loaded from pretrained path: {config.dinov2_pretrained_backbone_name_or_path}")
         else:
             # otherwise, randomly initialize the weights for DINOv2
-            print(f"[WARN]: No path was provided in the config to load DINOv2 parameters. This backbone has to be trained!")
+            print("[WARN]: No path was provided in the config to load DINOv2 parameters. This backbone has to be trained!")
             self.backbone = Dinov2Model(config)
             freeze_dinov2_weights: bool = False
 
