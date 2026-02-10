@@ -278,6 +278,7 @@ class RTDETRLightningModule(pl.LightningModule):
         # 1. Gather Standard Model Predictions
         all_outputs = gather_all_outputs(self.validation_step_outputs)
         
+        metrics = {}
         # Only compute metrics on Rank 0
         if self.trainer.is_global_zero:
             validation_predictions = []
@@ -299,28 +300,31 @@ class RTDETRLightningModule(pl.LightningModule):
                         image_ids=list(set(validation_image_ids)),
                         coco_gt=self.val_coco_gt
                     )
-                    
-                    # Log metrics (sync_dist=False because we computed on global data already)
-                    for key, value in metrics.items():
-                        self.log(f"val/{key}", value, prog_bar=True, sync_dist=False, rank_zero_only=True)
-                        if key == 'map':
-                            self.log(f"val_{key}", value, prog_bar=False, sync_dist=False, rank_zero_only=True)
             else:
                 self.print(f"⚠️  [Val] WARNING: No predictions made! Logging 0.0 metrics.")
                 # Log default metrics to satisfy ModelCheckpoint
                 metrics = {
                     'map': 0.0, 'map_50': 0.0, 'map_75': 0.0,
                 }
-                for key, value in metrics.items():
-                    self.log(f"val/{key}", value, prog_bar=True, sync_dist=False, rank_zero_only=True)
-                    if key == 'map':
-                        self.log(f"val_{key}", value, prog_bar=False, sync_dist=False, rank_zero_only=True)
+
+        # Broadcast metrics to all ranks
+        if dist.is_available() and dist.is_initialized():
+            object_list = [metrics]
+            dist.broadcast_object_list(object_list, src=0)
+            metrics = object_list[0]
+
+        # Log metrics on ALL ranks
+        for key, value in metrics.items():
+            self.log(f"val/{key}", value, prog_bar=True, sync_dist=False)
+            if key == 'map':
+                self.log(f"val_{key}", value, prog_bar=False, sync_dist=False)
 
         # 2. Gather EMA Model Predictions
         if hasattr(self, 'validation_step_outputs_ema') and self.validation_step_outputs_ema:
             # We must gather even if local list is empty (though it shouldn't be if steps ran)
             all_ema_outputs = gather_all_outputs(self.validation_step_outputs_ema)
-
+            
+            ema_metrics = {}
             if self.trainer.is_global_zero:
                 ema_predictions = []
                 ema_image_ids = []
@@ -335,21 +339,24 @@ class RTDETRLightningModule(pl.LightningModule):
                         image_ids=list(set(ema_image_ids)),
                         coco_gt=self.val_coco_gt
                     )
-                    for key, value in ema_metrics.items():
-                        # Log with _ema suffix
-                        self.log(f"val/{key}_ema", value, prog_bar=True, sync_dist=False, rank_zero_only=True)
-                        if key == 'map':
-                             self.log(f"val_{key}_ema", value, prog_bar=False, sync_dist=False, rank_zero_only=True)
                 else:
                     self.print(f"⚠️  [Val] EMA validation FAILED: No predictions collected!")
                     # Log default metrics to satisfy EMA ModelCheckpoint
-                    metrics = {
+                    ema_metrics = {
                         'map': 0.0, 'map_50': 0.0, 'map_75': 0.0,
                     }
-                    for key, value in metrics.items():
-                        self.log(f"val/{key}_ema", value, prog_bar=True, sync_dist=False, rank_zero_only=True)
-                        if key == 'map':
-                            self.log(f"val_{key}_ema", value, prog_bar=False, sync_dist=False, rank_zero_only=True)
+            
+            # Broadcast EMA metrics to all ranks
+            if dist.is_available() and dist.is_initialized():
+                object_list = [ema_metrics]
+                dist.broadcast_object_list(object_list, src=0)
+                ema_metrics = object_list[0]
+
+            # Log EMA metrics on ALL ranks
+            for key, value in ema_metrics.items():
+                self.log(f"val/{key}_ema", value, prog_bar=True, sync_dist=False)
+                if key == 'map':
+                     self.log(f"val_{key}_ema", value, prog_bar=False, sync_dist=False)
 
             self.validation_step_outputs_ema.clear()
         else:
