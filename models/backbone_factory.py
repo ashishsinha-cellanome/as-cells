@@ -60,14 +60,13 @@ def build_backbone(backbone_cfg, rtdetr_model_name):
 
 def freeze_backbone_layers(model, freeze_at_stage):
     """
-    Freezes ResNet backbone layers in an RT-DETR model.
+    Freezes ResNet backbone layers in an RT-DETR model (standard semantics).
     freeze_at_stage:
-      0: Unfrozen
-      1: Freeze Stem (Conv1 + BN)
-      2: Freeze Stem + Layer 1
-      3: Freeze Stem + Layer 1 + Layer 2
-      4: Freeze Stem + Layer 1 + Layer 2 + Layer 3
-      5: Freeze Entire Backbone
+      0: Nothing frozen (full training)
+      1: Freeze Stem + Stage 0 (layer1)
+      2: Freeze Stem + Stage 0-1 (layer1-2)
+      3: Freeze Stem + Stage 0-2 (layer1-3)
+      4: Freeze Entire Backbone (stem + all 4 stages)
     """
     # RT-DETRv2 standard backbone structure in Transformers:
     # model.model.backbone.model -> (conv1, bn1, layer1, layer2, layer3, layer4)
@@ -90,42 +89,50 @@ def freeze_backbone_layers(model, freeze_at_stage):
         backbone = backbone_container
 
     print(f"[INFO] Freezing backbone layers up to stage {freeze_at_stage}...")
+    print(f"[DEBUG] Backbone type: {type(backbone)}")
+    print(f"[DEBUG] Backbone attributes: {[attr for attr in dir(backbone) if not attr.startswith('_')][:20]}")
 
     # Helper to freeze a module
-    def freeze_module(module):
+    def freeze_module(module, name=""):
         # TODO: try training where the batchnorm stats are being updated
         # TODO: comment later
-        
+
         module.eval()  # Set to eval mode
+        num_params = sum(p.numel() for p in module.parameters())
         for param in module.parameters():
             param.requires_grad = False
+        print(f"  → Froze {name}: {num_params:,} params")
 
-    # 1. Stem (Conv1, BN, ReLU, MaxPool) - Always freeze if stage >= 1
+    # 1. Stem (Conv1, BN, ReLU, MaxPool) - Freeze if stage >= 1
     if freeze_at_stage >= 1:
-        if hasattr(backbone, 'conv1'): freeze_module(backbone.conv1)
-        if hasattr(backbone, 'bn1'):   freeze_module(backbone.bn1)
-        if hasattr(backbone, 'embedder'): freeze_module(backbone.embedder) # Alternate name
+        if hasattr(backbone, 'conv1'): freeze_module(backbone.conv1, "conv1")
+        if hasattr(backbone, 'bn1'):   freeze_module(backbone.bn1, "bn1")
+        if hasattr(backbone, 'embedder'): freeze_module(backbone.embedder, "embedder") # Alternate name
 
-    # 2. ResNet Stages
+    # 2. ResNet Stages (Standard semantics: freeze_at_stage=N freezes stages 0 through N-1)
     # Note: layers are usually named 'layer1', 'layer2', etc. or 'encoder.stages.0'
     stages_to_freeze = []
-    
+
     # Identify the stages container
     if hasattr(backbone, 'layer1'):
         # Standard TorchVision/Timm naming
-        if freeze_at_stage >= 2: stages_to_freeze.append(backbone.layer1)
-        if freeze_at_stage >= 3: stages_to_freeze.append(backbone.layer2)
-        if freeze_at_stage >= 4: stages_to_freeze.append(backbone.layer3)
-        if freeze_at_stage >= 5: stages_to_freeze.append(backbone.layer4)
+        if freeze_at_stage >= 1: stages_to_freeze.append(backbone.layer1)
+        if freeze_at_stage >= 2: stages_to_freeze.append(backbone.layer2)
+        if freeze_at_stage >= 3: stages_to_freeze.append(backbone.layer3)
+        if freeze_at_stage >= 4: stages_to_freeze.append(backbone.layer4)
     elif hasattr(backbone, 'encoder') and hasattr(backbone.encoder, 'stages'):
         # Transformers ResNetBackbone naming
         stages = backbone.encoder.stages
-        if freeze_at_stage >= 2: stages_to_freeze.append(stages[0])
-        if freeze_at_stage >= 3: stages_to_freeze.append(stages[1])
-        if freeze_at_stage >= 4: stages_to_freeze.append(stages[2])
-        if freeze_at_stage >= 5: stages_to_freeze.append(stages[3])
+        if freeze_at_stage >= 1: stages_to_freeze.append(stages[0])
+        if freeze_at_stage >= 2: stages_to_freeze.append(stages[1])
+        if freeze_at_stage >= 3: stages_to_freeze.append(stages[2])
+        if freeze_at_stage >= 4: stages_to_freeze.append(stages[3])
 
-    for stage in stages_to_freeze:
-        freeze_module(stage)
-        
+    for i, stage in enumerate(stages_to_freeze):
+        freeze_module(stage, f"stage_{i+1}")
+
+    total_frozen = sum(1 for p in model.parameters() if not p.requires_grad)
+    total_params = sum(p.numel() for p in model.parameters())
+    frozen_params = sum(p.numel() for p in model.parameters() if not p.requires_grad)
     print(f"✓ Frozen {len(stages_to_freeze)} stages + stem.")
+    print(f"✓ Total frozen params: {frozen_params:,} / {total_params:,} ({frozen_params/total_params*100:.2f}%)")

@@ -218,8 +218,8 @@ def create_initial_checkpoint(config: DictConfig) -> str:
         if config.model.backbone.type == "resnet":
             if not model_config.backbone.train_backbone:
                 # Freeze entire backbone
-                rank_zero_print("[INFO] Freezing entire backbone (stage 5)...")
-                freeze_backbone_layers(model, freeze_at_stage=5)
+                rank_zero_print("[INFO] Freezing entire backbone (stage 4)...")
+                freeze_backbone_layers(model, freeze_at_stage=4)
             elif model_config.backbone.freeze_at_stage > 0:
                 # Partial freezing - freeze some stages, train others
                 rank_zero_print(f"[INFO] Applying partial backbone freezing at stage {model_config.backbone.freeze_at_stage}...")
@@ -295,8 +295,8 @@ def setup_model(config: DictConfig) -> RTDETRLightningModule:
     if config.model.backbone.type == "resnet":
         if not config.model.backbone.train_backbone:
             # Freeze entire backbone
-            rank_zero_print("[INFO] Freezing entire backbone (stage 5)...")
-            freeze_backbone_layers(model, freeze_at_stage=5)
+            rank_zero_print("[INFO] Freezing entire backbone (stage 4)...")
+            freeze_backbone_layers(model, freeze_at_stage=4)
         elif config.model.backbone.freeze_at_stage > 0:
             # Partial freezing - freeze some stages, train others
             rank_zero_print(f"[INFO] Applying partial backbone freezing at stage {config.model.backbone.freeze_at_stage}...")
