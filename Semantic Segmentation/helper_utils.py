@@ -1,6 +1,6 @@
 import os
 import pickle
-from typing import Dict, List, Optional, Union, Final, Tuple
+from typing import Dict, List, Final, Tuple
 
 import cv2
 import numpy as np
@@ -17,7 +17,7 @@ import matplotlib.pyplot as plt
 import sys
 sys.path.append("../coco_eval")
 from mask_rcnn_model import run_mask_rcnn, MaskRCNNInstanceSegmentation
-from SemanticSegmentation import SemanticSegmentator, generate_cage_crops
+from SemanticSegmentation import SemanticSegmentator
 
 # threshold to apply on masks
 MASK_THRESHOLD: Final[float] = 0.55

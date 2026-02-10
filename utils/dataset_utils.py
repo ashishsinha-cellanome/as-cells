@@ -9,7 +9,6 @@ from PIL import Image
 import pandas as pd
 
 import torch
-from torchvision.datasets import CocoDetection
 from pycocotools import mask as coco_mask_util
 from torchvision.transforms import functional as F
 import albumentations as A

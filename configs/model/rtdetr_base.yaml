@@ -1,7 +1,11 @@
+defaults:
+  - backbone: dinov2
+
 rtdetr:
   # change this model name to swithc pretrained RT-DETR weights
   model_name: "rtdetr_v2_r18vd" # choices: rtdetr_v2_r18vd/ rtdetr_v2_r34vd/ rtdetr_v2_r50vd/ rtdetr_v2_r101vd
   pretrained_name_or_path: PekingU/${model.rtdetr.model_name}
+  input_size: 672
   
   freeze_backbone_batch_norms: true
   normalize_before: false

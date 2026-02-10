@@ -1,17 +1,12 @@
 import os
-import sys
 import time
 import pickle
-import json
-from typing import Tuple, Union, List, Dict, Final, Optional
+from typing import Tuple, Union, List, Dict, Final
 
 import numpy as np
 from PIL import Image
 import cv2
 import torch
-import torch.nn as nn
-import pycocotools
-from pycocotools.coco import COCO
 from pycocotools import mask as coco_mask_util
 import albumentations as A
 from transformers import AutoImageProcessor
@@ -23,9 +18,6 @@ from torchvision.datasets import CocoDetection
 # ADD profiling support 
 from transformers import TrainingArguments, Trainer
 import torch.profiler
-import wandb
-import glob
-import os
 
 ## Pre-processing configurations
 # The following configurations are used for pre-processing the images during the training. 
@@ -331,7 +323,6 @@ def convert_to_coco_api(images_path: str,
     json_annotations["categories"] = [{"id": i, "name": id2label[i], "supercategory": "biology"} for i in sorted(categories)]
     return True, json_annotations
 
-import json
 
 # success, json_annots = convert_to_coco_api(images_path=CROPPED_TRAIN_IMAGES_PATH, 
 #                                            annotations_path=CROPPED_TRAIN_ANNOTATIONS_PATH, 
@@ -460,7 +451,6 @@ print('Training data includes %d annotated images.' %len(train_dataset))
 print('Test data includes %d annotated images.' %len(test_dataset))
 
 
-import torchvision
 from transformers.image_transforms import center_to_corners_format
 
 def convert_bbox_yolo_to_pascal(boxes, image_size):
@@ -713,7 +703,6 @@ class MAPEvaluator:
 # we should use a very small threshold here to allow MAPEvaluator to use all the predictions with their scores
 eval_compute_metrics_fn = MAPEvaluator(data_loader=test_data_loader, image_processor=hg_preprocessor, threshold=0.05, max_dets=100)
 
-from transformers import TrainingArguments
 
 if __name__ == '__main__':
 

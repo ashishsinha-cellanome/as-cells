@@ -1,7 +1,6 @@
 import cv2
 from PIL import Image
 import numpy as np
-import os
 import time
 import logging
 import onnxruntime
@@ -227,18 +226,18 @@ class Yolov8InstanceSegmentation:
         try:
             if self._use_onnx_runtime:
                 logging.info(
-                    f"Using ONNX Runtime for running the model."
+                    "Using ONNX Runtime for running the model."
                 )
 
                 self._net = onnxruntime.InferenceSession(self._weights_path,
                                                          providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
                 if 'CUDAExecutionProvider' not in onnxruntime.get_available_providers():
                     logging.warning(
-                        f"CUDAExecutionProvider is not available in ONNX Runtime! The model will be run on CPU."
+                        "CUDAExecutionProvider is not available in ONNX Runtime! The model will be run on CPU."
                     )
             else:
                 logging.info(
-                    f"Using OpenCV dnn for running the model. Setting dnn to use CUDA."
+                    "Using OpenCV dnn for running the model. Setting dnn to use CUDA."
                 )
                 self._net = cv2.dnn.readNetFromONNX(self._weights_path)
 
@@ -845,8 +844,7 @@ def run_yolo_v8(input_image: np.ndarray,
     if (image_width, image_height) not in RESIZE:
         logging.error(
             "The input image size {} is not supported! Returning no cells!".format(
-                image_width, image_height
-            )
+                image_width, )
         )
         out = {'boxes': [],
                'labels': [],

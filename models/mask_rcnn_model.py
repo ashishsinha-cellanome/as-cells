@@ -1,7 +1,6 @@
 from models.AbstractVisionModel import VisionModel
 from utils.model_utils import to_numpy
 
-import cv2
 import numpy as np
 from PIL import Image
 import torch
@@ -12,7 +11,6 @@ from torchvision.models.detection.mask_rcnn import MaskRCNNPredictor
 from torchvision.transforms import functional as F
 
 import os
-import time
 import logging
 from collections import OrderedDict
 from typing import Tuple, List, Final, Optional, Dict, Union

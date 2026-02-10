@@ -7,7 +7,7 @@ defaults:
 
 # data:
 path: "/global/home/ashish.sinha/cellanome/SMALL_TRAINING_DATA2"
-model_input_size: 672
+model_input_size: ${model.rtdetr.input_size}
 min_random_scale: 0.7
 max_random_scale: 1.0
 p_noise: 0.25

@@ -8,7 +8,6 @@ Verification script for RT-DETR training setup.
 import argparse
 import yaml
 import torch
-import numpy as np
 import cv2
 import matplotlib.pyplot as plt
 from tqdm import tqdm

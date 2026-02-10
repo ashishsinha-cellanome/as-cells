@@ -1,13 +1,11 @@
-import time
-from typing import Dict, Any, Optional
+import re
 import torch
-import torch.nn as nn
+import torch.distributed as dist
 import os
 import pytorch_lightning as pl
 from pycocotools.cocoeval import COCOeval
 from PIL import Image, ImageDraw, ImageFont
 from models.custom_rt_detr_with_dinov2_backbone import RTDetrV2ForObjectDetectionWithCustomBackbone
-from utils.ema import ModelEma
 
 def to_cpu_device(tensor):
     """Move a CUDA torch tensor to CPU memory."""
@@ -60,6 +58,7 @@ class RTDETRLightningModule(pl.LightningModule):
         # breakpoint()
         self.save_hyperparameters(ignore=['model', 'config', 'image_processor', 'val_coco_gt', 'test_coco_gt', 'train_coco_gt'])
         self.model = model
+        # self.model.train() # REMOVED: Managed by train() override below
         self.image_processor = image_processor
         self.val_coco_gt = val_coco_gt
         self.test_coco_gt = test_coco_gt
@@ -94,21 +93,38 @@ class RTDETRLightningModule(pl.LightningModule):
         self.base_lr = self.config.optimizer.optimizer.lr
         self.validation_step_outputs = []
         self.test_step_outputs = []
-        self.ema_model = None
+        
         if hasattr(self.config.model, 'ema') and self.config.model.ema.enabled:
-            self.ema_model = ModelEma(self.model, decay=self.config.model.ema.decay)
             self.validation_step_outputs_ema = []
             self.test_step_outputs_ema = []
 
-    def on_train_batch_end(self, outputs, batch, batch_idx):
-        """Update EMA model after each training step."""
-        if self.ema_model:
-            self.ema_model.update(self.model)
 
     def forward(self, pixel_values, labels=None):
         """Forward pass."""
         # breakpoint()
         return self.model(pixel_values=pixel_values, labels=labels)
+
+    def train(self, mode: bool = True):
+        """Override to keep frozen modules in eval mode."""
+        super().train(mode)
+        if mode:
+            # When switching to train mode, we must ensure that any frozen modules stay in eval mode
+            # This is critical for backbones that are partially or fully frozen (e.g. BatchNorm stats)
+            for m in self.modules():
+                # Robust check: If a module and all its sub-parameters are frozen, force it to eval.
+                # access generator
+                params = m.parameters()
+                # Check if there is at least one param, and if all are frozen
+                has_params = False
+                all_frozen = True
+                for p in params:
+                    has_params = True
+                    if p.requires_grad:
+                        all_frozen = False
+                        break
+                
+                if has_params and all_frozen:
+                    m.eval()
     
     def training_step(self, batch, batch_idx):
         """Training step."""
@@ -117,9 +133,8 @@ class RTDETRLightningModule(pl.LightningModule):
         labels = [{k: v.to(self.device) for k, v in sample.items()} for sample in batch["labels"]]
         
         outputs = self.model(pixel_values=pixel_values, labels=labels)
-        # breakpoint()
+        
         loss = outputs.loss
-        # batch_size = len(labels)
         for label_dict in labels:
             self.debug_train_image_ids.add(int(label_dict["image_id"].item()))
 
@@ -133,6 +148,8 @@ class RTDETRLightningModule(pl.LightningModule):
         
         return loss
     
+
+
     def on_validation_epoch_start(self):
         """Reset validation visualization counter."""
         self.val_viz_counter = 0
@@ -198,9 +215,30 @@ class RTDETRLightningModule(pl.LightningModule):
         # return {"predictions": results}
         # breakpoint()
         self.validation_step_outputs.append({"predictions": results, "image_ids": image_ids})
-        if self.ema_model:
+        
+        # EMA validation
+        from utils.ema import RTDETREMACallback
+        ema_callback = next((cb for cb in self.trainer.callbacks if isinstance(cb, RTDETREMACallback)), None)
+        if ema_callback and ema_callback.ema_model:
+            # DEBUG: Verify EMA is different from standard model (only log once per epoch)
+            if batch_idx == 0 and self.trainer.is_global_zero:
+                with torch.no_grad():
+                    # Check first few parameters
+                    params_equal = []
+                    for (n1, p1), (n2, p2) in zip(
+                        list(self.model.named_parameters())[:5],
+                        list(ema_callback.ema_model.module.named_parameters())[:5]
+                    ):
+                        params_equal.append(torch.allclose(p1, p2, atol=1e-6))
+
+                    if all(params_equal):
+                        self.print(f"⚠️  [Val] WARNING: EMA weights identical to model weights! EMA may not be updating.")
+                    else:
+                        num_diff = sum(1 for eq in params_equal if not eq)
+                        self.print(f"✓ [Val] EMA weights differ from model ({num_diff}/5 params checked). EMA is working!")
+
             # EMA model forward pass
-            ema_outputs = self.ema_model.module(pixel_values=pixel_values, labels=None)
+            ema_outputs = ema_callback.ema_model.module(pixel_values=pixel_values, labels=None)
 
             # Post-process EMA predictions
             post_processed_ema_outputs = self.image_processor.post_process_object_detection(
@@ -226,64 +264,106 @@ class RTDETRLightningModule(pl.LightningModule):
     
     def on_validation_epoch_end(self):
         """Compute validation metrics at epoch end."""
-        # breakpoint()
-        if not self.validation_step_outputs:
-            return
         
-        # --- Collate results from all GPUs/steps ---
-        validation_predictions = []
-        validation_image_ids = []
-        for output_batch in self.validation_step_outputs:
-            validation_predictions.extend(convert_preds_to_coco(output_batch["predictions"]))
-            validation_image_ids.extend(output_batch["image_ids"])
+        # Helper to gather outputs from all ranks
+        def gather_all_outputs(local_outputs):
+            if not dist.is_available() or not dist.is_initialized():
+                return local_outputs
+            
+            gathered = [None for _ in range(dist.get_world_size())]
+            dist.all_gather_object(gathered, local_outputs)
+            # Flatten list of lists
+            return [item for rank_outputs in gathered for item in rank_outputs]
+
+        # 1. Gather Standard Model Predictions
+        all_outputs = gather_all_outputs(self.validation_step_outputs)
         
-        if len(validation_predictions) == 0:
-            return
-        
-        # breakpoint()
-        if self.config.debug:
-            self.print ("\n--- DEBUGGING IDS ---")
-            self.print (f"TRAIN IDs seen this epoch: {self.debug_train_image_ids}")
-            self.print (f"VAL IDs seen this epoch:   {set(validation_image_ids)}")
-            self.print ("---------------------\n")
-        # Compute COCO metrics
-        metrics = self._compute_coco_metrics(
-            predictions=validation_predictions,
-            image_ids=list(set(validation_image_ids)),
-            coco_gt=self.val_coco_gt
-        )
-        
-        # Log metrics
+        metrics = {}
+        # Only compute metrics on Rank 0
+        if self.trainer.is_global_zero:
+            validation_predictions = []
+            validation_image_ids = []
+            for output_batch in all_outputs:
+                validation_predictions.extend(convert_preds_to_coco(output_batch["predictions"]))
+                validation_image_ids.extend(output_batch["image_ids"])
+            
+            if len(validation_predictions) > 0:
+                if self.config.debug:
+                    self.print ("\n--- DEBUGGING IDS (Global) ---")
+                    self.print (f"VAL IDs seen this epoch:   {len(set(validation_image_ids))}")
+                    self.print ("---------------------\n")
+                
+                # Compute COCO metrics
+                if self.val_coco_gt is not None:
+                    metrics = self._compute_coco_metrics(
+                        predictions=validation_predictions,
+                        image_ids=list(set(validation_image_ids)),
+                        coco_gt=self.val_coco_gt
+                    )
+            else:
+                self.print(f"⚠️  [Val] WARNING: No predictions made! Logging 0.0 metrics.")
+                # Log default metrics to satisfy ModelCheckpoint
+                metrics = {
+                    'map': 0.0, 'map_50': 0.0, 'map_75': 0.0,
+                }
+
+        # Broadcast metrics to all ranks
+        if dist.is_available() and dist.is_initialized():
+            object_list = [metrics]
+            dist.broadcast_object_list(object_list, src=0)
+            metrics = object_list[0]
+
+        # Log metrics on ALL ranks
         for key, value in metrics.items():
-            self.log(f"val/{key}", value, prog_bar=True, sync_dist=True)
+            self.log(f"val/{key}", value, prog_bar=True, sync_dist=False)
             if key == 'map':
-                self.log(f"val_{key}", value, prog_bar=False, sync_dist=True)
-        
-        # --- EMA Metrics ---
+                self.log(f"val_{key}", value, prog_bar=False, sync_dist=False)
+
+        # 2. Gather EMA Model Predictions
         if hasattr(self, 'validation_step_outputs_ema') and self.validation_step_outputs_ema:
-            ema_predictions = []
-            ema_image_ids = []
-            for output_batch in self.validation_step_outputs_ema:
-                ema_predictions.extend(convert_preds_to_coco(output_batch["predictions"]))
-                ema_image_ids.extend(output_batch["image_ids"])
+            # We must gather even if local list is empty (though it shouldn't be if steps ran)
+            all_ema_outputs = gather_all_outputs(self.validation_step_outputs_ema)
             
-            if len(ema_predictions) > 0:
-                ema_metrics = self._compute_coco_metrics(
-                    predictions=ema_predictions,
-                    image_ids=list(set(ema_image_ids)),
-                    coco_gt=self.val_coco_gt
-                )
-                for key, value in ema_metrics.items():
-                    # Log with _ema suffix
-                    self.log(f"val/{key}_ema", value, prog_bar=True, sync_dist=True)
-                    if key == 'map':
-                         self.log(f"val_{key}_ema", value, prog_bar=False, sync_dist=True)
+            ema_metrics = {}
+            if self.trainer.is_global_zero:
+                ema_predictions = []
+                ema_image_ids = []
+                for output_batch in all_ema_outputs:
+                    ema_predictions.extend(convert_preds_to_coco(output_batch["predictions"]))
+                    ema_image_ids.extend(output_batch["image_ids"])
+
+                if len(ema_predictions) > 0:
+                    self.print(f"✓ [Val] EMA validation ran: {len(ema_predictions)} predictions on {len(set(ema_image_ids))} images")
+                    ema_metrics = self._compute_coco_metrics(
+                        predictions=ema_predictions,
+                        image_ids=list(set(ema_image_ids)),
+                        coco_gt=self.val_coco_gt
+                    )
+                else:
+                    self.print(f"⚠️  [Val] EMA validation FAILED: No predictions collected!")
+                    # Log default metrics to satisfy EMA ModelCheckpoint
+                    ema_metrics = {
+                        'map': 0.0, 'map_50': 0.0, 'map_75': 0.0,
+                    }
             
+            # Broadcast EMA metrics to all ranks
+            if dist.is_available() and dist.is_initialized():
+                object_list = [ema_metrics]
+                dist.broadcast_object_list(object_list, src=0)
+                ema_metrics = object_list[0]
+
+            # Log EMA metrics on ALL ranks
+            for key, value in ema_metrics.items():
+                self.log(f"val/{key}_ema", value, prog_bar=True, sync_dist=False)
+                if key == 'map':
+                     self.log(f"val_{key}_ema", value, prog_bar=False, sync_dist=False)
+
             self.validation_step_outputs_ema.clear()
+        else:
+            if self.trainer.is_global_zero:
+                self.print(f"⚠️  [Val] EMA validation SKIPPED: validation_step_outputs_ema not available")
 
         # Clear accumulated predictions
-        # self.validation_predictions = []
-        # self.validation_image_ids = []
         self.debug_train_image_ids.clear() 
         self.validation_step_outputs.clear()  # free memory
 
@@ -346,9 +426,12 @@ class RTDETRLightningModule(pl.LightningModule):
         # self.test_image_ids.extend([int(target["image_id"].item()) for target in labels])
         self.test_step_outputs.append({"predictions": results, "image_ids": image_ids})
 
-        if self.ema_model:
+        # EMA validation during test
+        from utils.ema import RTDETREMACallback
+        ema_callback = next((cb for cb in self.trainer.callbacks if isinstance(cb, RTDETREMACallback)), None)
+        if ema_callback and ema_callback.ema_model:
             # EMA model forward pass
-            ema_outputs = self.ema_model.module(pixel_values=pixel_values, labels=None)
+            ema_outputs = ema_callback.ema_model.module(pixel_values=pixel_values, labels=None)
 
             # Post-process EMA predictions
             post_processed_ema_outputs = self.image_processor.post_process_object_detection(
@@ -390,16 +473,17 @@ class RTDETRLightningModule(pl.LightningModule):
             return
 
         # Compute COCO metrics
-        metrics = self._compute_coco_metrics(
-            predictions=test_predictions,
-            # image_ids=self.test_image_ids,
-            image_ids = list(set(test_image_ids)),
-            coco_gt=self.test_coco_gt  
-        )
-        
-        # Log metrics
-        for key, value in metrics.items():
-            self.log(f"test/{key}", value, prog_bar=True, sync_dist=True)  
+        if self.test_coco_gt is not None:
+            metrics = self._compute_coco_metrics(
+                predictions=test_predictions,
+                # image_ids=self.test_image_ids,
+                image_ids = list(set(test_image_ids)),
+                coco_gt=self.test_coco_gt  
+            )
+            
+            # Log metrics
+            for key, value in metrics.items():
+                self.log(f"test/{key}", value, prog_bar=True, sync_dist=True)  
         
         # --- EMA Metrics ---
         if hasattr(self, 'test_step_outputs_ema') and self.test_step_outputs_ema:
@@ -444,18 +528,18 @@ class RTDETRLightningModule(pl.LightningModule):
     def _remap_coco_gt(self, coco_gt):
         """In-place remap of COCO GT categories to match remapped classes."""
         if not coco_gt:
-            return None
+            return None, {}
             
         if hasattr(coco_gt, '_remapped'):
-            return coco_gt
+            return coco_gt, getattr(coco_gt, '_remap_dict', {})
         
         # 0. Check if remapping is enabled
         if hasattr(self.config, 'remap_labels') and not self.config.remap_labels:
-            return coco_gt
+            return coco_gt, {}
 
         # 1. Get target map from config
         if not self.config or 'model' not in self.config or 'label_map' not in self.config.model:
-            return coco_gt
+            return coco_gt, {}
             
         target_label_map = self.config.model.label_map
         name_to_target_id = {v: int(k) for k, v in target_label_map.items()}
@@ -503,8 +587,9 @@ class RTDETRLightningModule(pl.LightningModule):
         # 5. Re-index
         coco_gt.createIndex()
         coco_gt._remapped = True
+        coco_gt._remap_dict = remap_dict
         self.print(f"[INFO] Remapped Validation GT classes using: {remap_dict}")
-        return coco_gt
+        return coco_gt, remap_dict
 
     def _compute_coco_metrics(self, predictions, image_ids, coco_gt):
         """Compute COCO mAP and mAR metrics."""
@@ -513,11 +598,20 @@ class RTDETRLightningModule(pl.LightningModule):
 	
         if self.config.debug:
             self.print(f"DEBUG: COCO GT Categories before remap: {[{c['id']: c['name']} for c in coco_gt.dataset['categories']]}")
-        coco_gt = self._remap_coco_gt(coco_gt)
         
+        coco_gt, remap_dict = self._remap_coco_gt(coco_gt)
+        
+        # Remap predictions if remapping rules were applied
+        if remap_dict:
+            for p in predictions:
+                if p['category_id'] in remap_dict:
+                    p['category_id'] = remap_dict[p['category_id']]
+
         # Debug: Verify remapping
         if self.config.debug:
             self.print(f"DEBUG: COCO GT Categories after remap: {[{c['id']: c['name']} for c in coco_gt.dataset['categories']]}")
+            if remap_dict:
+                self.print("DEBUG: Applied prediction remapping for evaluation.")
         
         metrics = {
             'map': -1.0, 'map_50': -1.0, 'map_75': -1.0,
@@ -525,7 +619,7 @@ class RTDETRLightningModule(pl.LightningModule):
             'mar_1': -1.0, 'mar_10': -1.0, f'mar_{self.config.model.max_detections}': -1.0,
             'mar_small': -1.0, 'mar_medium': -1.0, 'mar_large': -1.0
         }
-        # breakpoint()
+        
         try:
             # Initialize COCO evaluation
             coco_dt = coco_gt.loadRes(predictions)
@@ -537,52 +631,114 @@ class RTDETRLightningModule(pl.LightningModule):
             coco_evaluator.accumulate()
             coco_evaluator.summarize()
             
-            # Extract metrics
-            #TODO: check here
+            # Extract aggregate metrics
             metric_keys = list(metrics.keys())
             for i, key in enumerate(metric_keys):
-                # if i < len(coco_evaluator.stats):
-                metrics[key] = round(coco_evaluator.stats[i], 4)
+                if i < len(coco_evaluator.stats):
+                    metrics[key] = round(coco_evaluator.stats[i], 4)
+                    
+            # Extract per-category metrics from the internal COCOeval precision tensor
+            if hasattr(coco_evaluator, 'eval') and 'precision' in coco_evaluator.eval:
+                precisions = coco_evaluator.eval['precision']
+                import numpy as np
+                for i, catId in enumerate(coco_evaluator.params.catIds):
+                    # Use updated GT categories if remapping is applied, otherwise fallback to config label_map
+                    if getattr(self.config, 'remap_labels', False):
+                        cat_info = coco_gt.cats.get(int(catId))
+                        cat_name = cat_info['name'] if cat_info else None
+                    else:
+                        cat_name = self.config.model.label_map.get(int(catId)) or self.config.model.label_map.get(str(catId))
+                    
+                    if not cat_name:
+                        cat_name = f"class_{catId}"
+                    
+                    # mAP (average over all IoU thresholds)
+                    s = precisions[:, :, i, 0, -1]
+                    if len(s[s > -1]) > 0:
+                        metrics[f'map_{cat_name}'] = round(float(np.mean(s[s > -1])), 4)
+                        
+                    # mAP-50 (IoU threshold 0.5)
+                    s_50 = precisions[0, :, i, 0, -1]
+                    if len(s_50[s_50 > -1]) > 0:
+                        metrics[f'map_50_{cat_name}'] = round(float(np.mean(s_50[s_50 > -1])), 4)
+                        
         except Exception as e:
             self.print(f"Error computing COCO metrics: {e}")
+            import traceback
+            self.print(traceback.format_exc())
         
         return metrics
     
     def configure_optimizers(self):
         """Configure optimizers and learning rate schedulers."""
         # Read from the optimizer and scheduler config groups
-        # breakpoint()
         opt_config = self.config.optimizer.optimizer
         sch_config = self.config.scheduler
         
-        # Separate parameters: freeze DINOv2, train FPN and rest of model
-        backbone_params = []
-        other_params = []
+        # 1. Flexible Parameter Grouping
+        # Check if 'param_groups' is enabled and defined in the config
+        use_param_groups = opt_config.get('use_param_groups', False)
+        param_groups_config = opt_config.get('param_groups', [])
+        
+        if not use_param_groups or not param_groups_config:
+            # Fallback to uniform LR for the whole model (no grouping)
+            self.print(f"[INFO] Using uniform LR: {opt_config.lr} for all parameters.")
+            optimizer_grouped_params = [
+                {'params': [p for p in self.model.parameters() if p.requires_grad], 
+                 'lr': opt_config.lr, 
+                 'weight_decay': opt_config.weight_decay}
+            ]
+        else:
+            # Regex-based grouping from config
+            optimizer_grouped_params = []
+            memo = set() # Track assigned parameters
+            
+            # OmegaConf objects might need conversion or careful access
+            for group_cfg in param_groups_config:
+                group_params = []
+                # Handle both string patterns and other attributes
+                pattern = group_cfg.params
+                
+                for name, param in self.model.named_parameters():
+                    if not param.requires_grad or id(param) in memo:
+                        continue
+                    
+                    if re.search(pattern, name):
+                        group_params.append(param)
+                        memo.add(id(param))
+                
+                if group_params:
+                    # Create group dict, excluding the 'params' pattern string
+                    new_group = {k: v for k, v in group_cfg.items() if k != 'params'}
+                    new_group['params'] = group_params
+                    
+                    # Inherit defaults if not specified
+                    if 'lr' not in new_group:
+                        new_group['lr'] = opt_config.lr
+                    if 'weight_decay' not in new_group:
+                        new_group['weight_decay'] = opt_config.weight_decay
+                        
+                    optimizer_grouped_params.append(new_group)
+                    self.print(f"[INFO] Optimizer Group: '{pattern}' matched {len(group_params)} parameters.")
 
-        for name, param in self.model.named_parameters():
-            # 1. If it's frozen, SKIP IT entirely. 
-            # This ensures we don't accidentally pass it to the optimizer.
-            if not param.requires_grad:
-                continue
+            # Catch-all for remaining parameters
+            remaining_params = []
+            for name, param in self.model.named_parameters():
+                if param.requires_grad and id(param) not in memo:
+                    remaining_params.append(param)
+            
+            if remaining_params:
+                optimizer_grouped_params.append({
+                    'params': remaining_params,
+                    'lr': opt_config.lr,
+                    'weight_decay': opt_config.weight_decay
+                })
+                self.print(f"[INFO] Optimizer Group: 'default' matched remaining {len(remaining_params)} parameters.")
 
-            # 2. Separate Backbone vs Head for different Learning Rates
-            # This check works for both DINO ('model.backbone.backbone...') 
-            # and ResNet ('model.backbone.model...')
-            if 'backbone' in name:
-                backbone_params.append(param)
-            else:
-                other_params.append(param)
+        # Create optimizer
+        optimizer = torch.optim.AdamW(optimizer_grouped_params, weight_decay=opt_config.weight_decay)
 
-        # Different learning rates for different parts
-        # breakpoint()
-        optimizer = torch.optim.AdamW([
-            {'params': other_params, 'lr': opt_config.lr}, # Lower LR for original wts for rtdetr
-            {'params': backbone_params, 'lr': opt_config.lr}  # slighly higher LR for FPN and other backbone params
-            ], 
-            weight_decay= opt_config.weight_decay
-        )
-
-        # 2. Get Modular Scheduler Config
+        # 2. Setup Scheduler
         # scheduler_config = self._get_scheduler_with_warmup(optimizer, sch_config)
 
         # return [optimizer], scheduler_config
@@ -764,21 +920,43 @@ class RTDETRLightningModule(pl.LightningModule):
         
         optimizer.step(closure=optimizer_closure)
 
-    def draw_boxes(self, image, boxes, labels, scores, id2label):
+    def draw_boxes(self, image, boxes, labels, scores=None, id2label=None, color_override=None, label_prefix=""):
         """Draws bounding boxes on a PIL image."""
         draw = ImageDraw.Draw(image)
         threshold = self.config.model.draw_threshold
-        for box, label, score in zip(boxes, labels, scores):
+        
+        # Use default label map if not provided
+        if id2label is None:
+            id2label = self.config.model.label_map
+
+        for i in range(len(boxes)):
+            box = boxes[i]
+            label = labels[i]
+            score = scores[i] if scores is not None else 1.0
+            
             if score < threshold:
                 continue
             
-            box = box.tolist()
-            label_id = label.item()
-            color = self.PALETTE[label_id % len(self.PALETTE)]
+            # Handle both tensor and array-like boxes
+            if torch.is_tensor(box):
+                box = box.tolist()
             
-            draw.rectangle(box, outline=color, width=2)
+            # Handle both tensor and scalar labels
+            label_id = label.item() if torch.is_tensor(label) else int(label)
             
-            label_text = f"{id2label[label_id]}: {score:.2f}"
+            # Color logic: Green for GT, Red for Pred, or Palette default
+            if color_override:
+                color = color_override
+            else:
+                color = self.PALETTE[label_id % len(self.PALETTE)]
+            
+            draw.rectangle(box, outline=color, width=3) # Increased width for better visibility
+            
+            class_name = id2label.get(label_id) or id2label.get(str(label_id)) or f"class_{label_id}"
+            label_text = f"{label_prefix}{class_name}"
+            if scores is not None:
+                label_text += f": {score:.2f}"
+                
             text_box = draw.textbbox((box[0], box[1]), label_text, font=self.font)
             draw.rectangle(text_box, fill=color)
             draw.text((box[0], box[1]), label_text, fill="white", font=self.font)
@@ -786,52 +964,82 @@ class RTDETRLightningModule(pl.LightningModule):
         return image
 
     def _visualize_batch(self, save_dir, post_processed_outputs, pixel_values, labels, counter):
-        """Saves visualizations for a batch."""
+        """Saves visualizations for a batch showing both GT and Predictions."""
         os.makedirs(save_dir, exist_ok=True)
         id2label = self.model.config.id2label
         max_samples = self.config.checkpointing.visualize_samples
+        
+        # Determine which COCO GT to use based on stage
+        coco_gt = self.test_coco_gt if self.trainer.testing else self.val_coco_gt
+        if coco_gt is None:
+            self.print("[WARNING] COCO GT is None, skipping GT visualization.")
+            # Fallback to only drawing predictions if GT is missing
+            pass
+
         # Get mean and std from the processor to un-normalize
         mean = torch.tensor(self.image_processor.image_mean, device=pixel_values.device).view(1, 3, 1, 1)
         std = torch.tensor(self.image_processor.image_std, device=pixel_values.device).view(1, 3, 1, 1)
 
-        # Un-normalize the entire batch at once (faster)
-        # 1. Multiply by std, 2. Add mean, 3. Clamp to [0, 1] range
-        # breakpoint()
+        # Un-normalize the entire batch
         unnormalized_images = torch.clamp((pixel_values * std) + mean, 0, 1)
+        
         for i in range(len(labels)):
             if counter >= max_samples:
                 break
             
-            # Get original image path from COCO GT
+            # Get original image info
             image_id = int(labels[i]["image_id"].item())
             image_tensor = unnormalized_images[i]
             image_np = (image_tensor.permute(1, 2, 0).cpu().numpy() * 255).astype('uint8')
             image = Image.fromarray(image_np)
 
-            img_info = self.val_coco_gt.loadImgs(image_id)[0]
-            # img_path = os.path.join(self.config['checkpointing']['val_image_dir'], img_info['file_name'])
-            # breakpoint()
-            # try:
-            #     image = Image.open(img_path).convert("RGB")
-            # except FileNotFoundError:
-            #     print(f"Warning: Could not find image {img_path} for visualization.")
-            #     continue
+            # Get image metadata from COCO GT for filename
+            if coco_gt:
+                img_info = coco_gt.loadImgs(image_id)[0]
                 
-            # Get predictions for this image
+                # --- 1. Scaled Ground Truth Boxes ---
+                gt_anns = coco_gt.loadAnns(coco_gt.getAnnIds(imgIds=image_id))
+                gt_boxes = []
+                gt_labels = []
+                for ann in gt_anns:
+                    # coco format is [x, y, width, height]
+                    x, y, w, h = ann['bbox']
+                    # Convert to [x1, y1, x2, y2] for draw_boxes
+                    gt_boxes.append([x, y, x + w, y + h])
+                    gt_labels.append(ann['category_id'])
+
+                # Draw Ground Truth in GREEN
+                image = self.draw_boxes(
+                    image, 
+                    gt_boxes, 
+                    gt_labels, 
+                    scores=None, 
+                    id2label=self.config.model.label_map,
+                    color_override=(0, 255, 0), # Green
+                    label_prefix="GT: "
+                )
+            else:
+                # If coco_gt is missing, we might not have the filename easily, 
+                # but we can try to use the image_id
+                img_info = {'file_name': f"image_{image_id}.png"}
+
+            # --- 2. Prediction Boxes ---
             preds = post_processed_outputs[i]
             
-            # Draw boxes
-            drawn_image = self.draw_boxes(
+            # Draw Predictions in RED
+            image = self.draw_boxes(
                 image, 
                 preds['boxes'], 
                 preds['labels'], 
                 preds['scores'], 
-                id2label
+                id2label=id2label,
+                color_override=(255, 0, 0), # Red
+                label_prefix="Pred: "
             )
             
             # Save image
             save_path = os.path.join(save_dir, img_info['file_name'])
-            drawn_image.save(save_path)
+            image.save(save_path)
             
             counter += 1
         

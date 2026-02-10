@@ -5,6 +5,7 @@ rtdetr:
   # change this model name to swithc pretrained RT-DETR weights
   model_name: "rtdetr_v2_r18vd" # choices: rtdetr_v2_r18vd/ rtdetr_v2_r34vd/ rtdetr_v2_r50vd/ rtdetr_v2_r101vd
   pretrained_name_or_path: PekingU/${model.rtdetr.model_name}
+  input_size: 672
   
   freeze_backbone_batch_norms: true
   normalize_before: false
@@ -55,5 +56,17 @@ label_map:
   3: 'soma'
 
 detection_threshold: 0.05
+
 draw_threshold: 0.4
+
 max_detections: 100
+
+
+
+ema:
+
+  enabled: true
+
+  decay: 0.9999
+
+  warmup_steps: 2000  # Skip EMA updates for first N steps (early training has noisy gradients)

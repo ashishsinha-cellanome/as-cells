@@ -4,7 +4,7 @@ from .json_parser import CellMaskDataset
 import numpy as np
 import pandas as pd
 
-from typing import Dict, List, Tuple, Optional, Final, Union
+from typing import Dict, List, Tuple, Optional
 from tqdm import tqdm
 
 class AnnotationFilter:

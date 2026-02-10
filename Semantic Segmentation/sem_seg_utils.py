@@ -3,16 +3,15 @@ import os
 
 import numpy as np
 import cv2
-from PIL import Image
 from tqdm.auto import tqdm
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset
 from torchvision import transforms as T
 
-from typing import List, Dict, Tuple, Union, Final
+from typing import List, Tuple, Final
 
 # module-level variables and constants
 OPEN_CV_BLACK: Final[Tuple[int, int, int]] = (0, 0, 0)

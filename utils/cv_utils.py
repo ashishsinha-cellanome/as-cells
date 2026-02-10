@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 from PIL import Image
-from typing import Tuple, List, Final, Optional, Dict, Union
+from typing import Tuple, List, Dict, Union
 # from .precision_recall_eval import AnnotationFilter
 # from .pairing_utils import pair_gts_dets_bbox, pair_gts_dets_mask
 

@@ -1,8 +1,6 @@
 import hydra
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig
 from data.coco_data_module import COCODataModule
-from torchvision.datasets import CocoDetection
-import os
 
 @hydra.main(config_path="configs", config_name="config.yaml", version_base=None)
 def verify_on_real_data(cfg: DictConfig):

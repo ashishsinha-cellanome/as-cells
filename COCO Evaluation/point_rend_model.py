@@ -7,7 +7,6 @@ import torch
 import cv2
 import numpy as np
 from PIL import Image
-import os
 import time
 import logging
 from typing import Tuple, List, Final, Optional, Dict, Union
@@ -860,8 +859,7 @@ def run_point_rend(
     if crop and (image_width, image_height) not in RESIZE:
         logging.error(
             "The input image size {} is not supported! Returning no cells!".format(
-                image_width, image_height
-            )
+                image_width, )
         )
         out = {'boxes': np.zeros((0, 4), dtype=int),
                'labels': np.zeros((0,), dtype=int),

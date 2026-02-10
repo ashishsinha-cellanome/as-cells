@@ -1,5 +1,3 @@
-import math
-import sys
 import time
 import torch
 import numpy as np
@@ -7,7 +5,7 @@ import numpy as np
 from pycocotools.coco import COCO
 from pycocotools import mask as coco_mask
 from coco_eval import CocoEvaluator
-from typing import Union, Dict, Final, List
+from typing import Union, Dict, List
 
 import utils
 

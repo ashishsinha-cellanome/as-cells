@@ -12,6 +12,13 @@ data:
   test_name: 'test'
   train_name: 'train'
 
+  # override more params for debugging purpose
+  limit_train_batches: 0.1
+  limit_val_batches: 0.1
+  limit_test_batches: 0.1
+
+
+
 # 4. OVERRIDE: Checkpoints to NAS
 checkpointing:
   # 1. WORKING DIRECTORY (Fast Scratch)

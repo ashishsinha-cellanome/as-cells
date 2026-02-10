@@ -3,7 +3,6 @@
 
 defaults:
   - model: rtdetr_base
-  - model/backbone: dinov2
   - optimizer: adamw_scaled
   - scheduler: cosine_warmup
   - trainer: default

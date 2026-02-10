@@ -8,10 +8,8 @@ import torch
 from transformers import Dinov2Config, Dinov2Model, Mask2FormerConfig, Mask2FormerForUniversalSegmentation, Mask2FormerImageProcessor
 
 import os
-import time
 import logging
 from typing import Tuple, List, Final, Optional, Dict, Union
-from collections import OrderedDict
 
 
 # constants and default values

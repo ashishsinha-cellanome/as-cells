@@ -1,27 +1,19 @@
 import os
-import sys
 import cv2
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
-import supervision as sv
 
-from PIL import Image
-from glob import glob
 from tqdm import tqdm
 from pathlib import Path
-from typing import Dict, Tuple, List, Final
+from typing import Dict, List
 
 from utils.json_parser import (
-    CellMaskDataset,
-    parse_json_annotations,
-    parse_json_annotations_2p0,
-    create_overlaid_img
+    CellMaskDataset
 )
 from utils.cv_utils import (
-    get_crop_corners,
     show_detections
 )
 
