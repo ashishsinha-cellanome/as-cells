@@ -217,8 +217,12 @@ def create_initial_checkpoint(config: DictConfig) -> str:
         # Inject Backbone
         if config.model.backbone.type == "resnet":
             if not model_config.backbone.train_backbone:
+                # Freeze entire backbone
+                rank_zero_print("[INFO] Freezing entire backbone (stage 5)...")
                 freeze_backbone_layers(model, freeze_at_stage=5)
-            else:
+            elif model_config.backbone.freeze_at_stage > 0:
+                # Partial freezing - freeze some stages, train others
+                rank_zero_print(f"[INFO] Applying partial backbone freezing at stage {model_config.backbone.freeze_at_stage}...")
                 freeze_backbone_layers(model, freeze_at_stage=model_config.backbone.freeze_at_stage)
         else:
             pretrained_model_config_dict = model.config.to_dict()
@@ -287,10 +291,15 @@ def setup_model(config: DictConfig) -> RTDETRLightningModule:
     # This ensures that when we subsequently freeze the backbone (eval mode),
     # the rest of the model (decoder, etc.) remains in train mode, creating the correct mixed state.
     model.train()
-    
+
     if config.model.backbone.type == "resnet":
         if not config.model.backbone.train_backbone:
-            rank_zero_print("[INFO] Re-applying backbone freezing after load...")
+            # Freeze entire backbone
+            rank_zero_print("[INFO] Freezing entire backbone (stage 5)...")
+            freeze_backbone_layers(model, freeze_at_stage=5)
+        elif config.model.backbone.freeze_at_stage > 0:
+            # Partial freezing - freeze some stages, train others
+            rank_zero_print(f"[INFO] Applying partial backbone freezing at stage {config.model.backbone.freeze_at_stage}...")
             freeze_backbone_layers(model, config.model.backbone.freeze_at_stage)
     
     elif config.model.backbone.type == "dinov2":
