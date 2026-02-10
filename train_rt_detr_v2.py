@@ -184,24 +184,28 @@ def create_initial_checkpoint(config: DictConfig) -> str:
         id2label = {int(k): v for k, v in model_config.label_map.items()}
         label2id = {v: k for k, v in id2label.items()}
         overrides = OmegaConf.to_container(model_config.rtdetr, resolve=True)
-        
+
         # Keys to remove that are Hydra-specific or training-specific
-        for k in ["pretrained_name_or_path", "config_overrides", "model_name", 'name']:
+        for k in ["pretrained_name_or_path", "config_overrides", "model_name", 'name', 'freeze_backbone_batch_norms', 'normalize_before']:
             overrides.pop(k, None)
 
         if "rtdetr_v2" in model_config.rtdetr.model_name:
             model_cls = RTDetrV2ForObjectDetection
             config_cls = RTDetrV2ConfigWithCustomBackBone
+            # v2 supports input_size, keep it in overrides
         else:
             rank_zero_print(f"Detected RT-DETRv1 model: {model_config.rtdetr.model_name}")
             model_cls = RTDetrForObjectDetection
             config_cls = RTDetrConfig
-            # v1 config doesn't have decoder_n_levels
+            # v1 config doesn't support these parameters - remove them
+            overrides.pop("input_size", None)
             overrides.pop("decoder_n_levels", None)
             overrides.pop("decoder_method", None)
+            overrides.pop("num_feature_levels", None)  # This is derived from decoder_n_levels
             # ensure we use 'auxiliary_loss' not 'use_auxiliary_loss' if it slipped in
             if "use_auxiliary_loss" in overrides:
                 overrides["auxiliary_loss"] = overrides.pop("use_auxiliary_loss")
+            rank_zero_print(f"Cleaned overrides for v1: {list(overrides.keys())}")
 
         model = model_cls.from_pretrained(
             f"PekingU/{base_model_name}",
