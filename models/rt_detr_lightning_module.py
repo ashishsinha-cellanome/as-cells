@@ -220,6 +220,23 @@ class RTDETRLightningModule(pl.LightningModule):
         from utils.ema import RTDETREMACallback
         ema_callback = next((cb for cb in self.trainer.callbacks if isinstance(cb, RTDETREMACallback)), None)
         if ema_callback and ema_callback.ema_model:
+            # DEBUG: Verify EMA is different from standard model (only log once per epoch)
+            if batch_idx == 0 and self.trainer.is_global_zero:
+                with torch.no_grad():
+                    # Check first few parameters
+                    params_equal = []
+                    for (n1, p1), (n2, p2) in zip(
+                        list(self.model.named_parameters())[:5],
+                        list(ema_callback.ema_model.module.named_parameters())[:5]
+                    ):
+                        params_equal.append(torch.allclose(p1, p2, atol=1e-6))
+
+                    if all(params_equal):
+                        self.print(f"⚠️  [Val] WARNING: EMA weights identical to model weights! EMA may not be updating.")
+                    else:
+                        num_diff = sum(1 for eq in params_equal if not eq)
+                        self.print(f"✓ [Val] EMA weights differ from model ({num_diff}/5 params checked). EMA is working!")
+
             # EMA model forward pass
             ema_outputs = ema_callback.ema_model.module(pixel_values=pixel_values, labels=None)
 
@@ -293,15 +310,16 @@ class RTDETRLightningModule(pl.LightningModule):
         if hasattr(self, 'validation_step_outputs_ema') and self.validation_step_outputs_ema:
             # We must gather even if local list is empty (though it shouldn't be if steps ran)
             all_ema_outputs = gather_all_outputs(self.validation_step_outputs_ema)
-            
+
             if self.trainer.is_global_zero:
                 ema_predictions = []
                 ema_image_ids = []
                 for output_batch in all_ema_outputs:
                     ema_predictions.extend(convert_preds_to_coco(output_batch["predictions"]))
                     ema_image_ids.extend(output_batch["image_ids"])
-                
+
                 if len(ema_predictions) > 0:
+                    self.print(f"✓ [Val] EMA validation ran: {len(ema_predictions)} predictions on {len(set(ema_image_ids))} images")
                     ema_metrics = self._compute_coco_metrics(
                         predictions=ema_predictions,
                         image_ids=list(set(ema_image_ids)),
@@ -312,8 +330,13 @@ class RTDETRLightningModule(pl.LightningModule):
                         self.log(f"val/{key}_ema", value, prog_bar=True, sync_dist=False, rank_zero_only=True)
                         if key == 'map':
                              self.log(f"val_{key}_ema", value, prog_bar=False, sync_dist=False, rank_zero_only=True)
-            
+                else:
+                    self.print(f"⚠️  [Val] EMA validation FAILED: No predictions collected!")
+
             self.validation_step_outputs_ema.clear()
+        else:
+            if self.trainer.is_global_zero:
+                self.print(f"⚠️  [Val] EMA validation SKIPPED: validation_step_outputs_ema not available")
 
         # Clear accumulated predictions
         self.debug_train_image_ids.clear() 
