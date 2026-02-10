@@ -90,7 +90,7 @@ def plot_combined_distributions(all_label_data, all_size_data, output_dir):
     # --- 1. Combined Label Distribution ---
     if all_label_data:
         df_label = pd.DataFrame(all_label_data)
-        plt.figure(figsize=(12, 6))
+        plt.figure(figsize=(12, 8))
         
         hue_order = ['Train', 'Valid', 'Test']
         hue_order = [h for h in hue_order if h in df_label['Split'].unique()]
@@ -119,7 +119,7 @@ def plot_combined_distributions(all_label_data, all_size_data, output_dir):
     # --- 2. Combined Size Distribution ---
     if all_size_data:
         df_size = pd.DataFrame(all_size_data)
-        plt.figure(figsize=(10, 6))
+        plt.figure(figsize=(10, 8))
         
         hue_order = ['Train', 'Valid', 'Test']
         hue_order = [h for h in hue_order if h in df_size['Split'].unique()]
