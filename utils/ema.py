@@ -54,18 +54,27 @@ class RTDETREMACallback(pl.Callback):
     """
     Exponential Moving Average callback for RT-DETR.
     Manages a ModelEma instance and handles synchronization and checkpointing.
+
+    Args:
+        decay: EMA decay rate (default: 0.9999)
+        warmup_steps: Number of training steps before EMA updates start (default: 0)
+                     Early training has noisy gradients, warmup lets model stabilize first
     """
-    def __init__(self, decay=0.9999):
+    def __init__(self, decay=0.9999, warmup_steps=0):
         super().__init__()
         self.decay = decay
+        self.warmup_steps = warmup_steps
         self.ema_model = None
+        self.warmup_completed = False
 
     def on_fit_start(self, trainer, pl_module):
         """Initialize EMA model and sync weights at the start of training."""
         if self.ema_model is None:
             pl_module.print(f"[EMA Callback] Initializing EMA with decay={self.decay}")
+            if self.warmup_steps > 0:
+                pl_module.print(f"[EMA Callback] Warmup enabled: EMA updates will start after {self.warmup_steps} steps")
             self.ema_model = ModelEma(pl_module.model, decay=self.decay)
-        
+
         # Always sync at start of fit to ensure valid state
         pl_module.print("[EMA Callback] Synchronizing EMA weights with model weights...")
         self.ema_model.set(pl_module.model)
@@ -79,9 +88,22 @@ class RTDETREMACallback(pl.Callback):
                 pl_module.print("[EMA Callback] WARNING: Model and EMA weights differ after synchronization!")
 
     def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
-        """Update EMA weights after each training step."""
-        if self.ema_model:
-            self.ema_model.update(pl_module.model)
+        """Update EMA weights after each training step (after warmup period)."""
+        if not self.ema_model:
+            return
+
+        # Check if warmup period has passed
+        if trainer.global_step < self.warmup_steps:
+            return  # Skip EMA update during warmup
+
+        # Log when warmup completes (once)
+        if not self.warmup_completed and trainer.global_step >= self.warmup_steps:
+            self.warmup_completed = True
+            if self.warmup_steps > 0:
+                pl_module.print(f"[EMA Callback] Warmup completed at step {trainer.global_step}. Starting EMA updates...")
+
+        # Update EMA model
+        self.ema_model.update(pl_module.model)
 
     def on_save_checkpoint(self, trainer, pl_module, checkpoint):
         """Save EMA state into the main checkpoint."""

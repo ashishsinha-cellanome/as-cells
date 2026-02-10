@@ -68,3 +68,5 @@ ema:
   enabled: true
 
   decay: 0.9999
+
+  warmup_steps: 2000  # Skip EMA updates for first N steps (early training has noisy gradients)
