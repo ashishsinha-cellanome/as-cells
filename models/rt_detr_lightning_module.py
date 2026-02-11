@@ -315,9 +315,9 @@ class RTDETRLightningModule(pl.LightningModule):
 
         # Log metrics on ALL ranks
         for key, value in metrics.items():
-            self.log(f"val/{key}", value, prog_bar=True, sync_dist=False)
+            self.log(f"val/{key}", value, prog_bar=True, sync_dist=True)
             if key == 'map':
-                self.log(f"val_{key}", value, prog_bar=False, sync_dist=False)
+                self.log(f"val_{key}", value, prog_bar=False, sync_dist=True)
 
         # 2. Gather EMA Model Predictions
         if hasattr(self, 'validation_step_outputs_ema') and self.validation_step_outputs_ema:
@@ -354,9 +354,9 @@ class RTDETRLightningModule(pl.LightningModule):
 
             # Log EMA metrics on ALL ranks
             for key, value in ema_metrics.items():
-                self.log(f"val/{key}_ema", value, prog_bar=True, sync_dist=False)
+                self.log(f"val/{key}_ema", value, prog_bar=True, sync_dist=True)
                 if key == 'map':
-                     self.log(f"val_{key}_ema", value, prog_bar=False, sync_dist=False)
+                     self.log(f"val_{key}_ema", value, prog_bar=False, sync_dist=True)
 
             self.validation_step_outputs_ema.clear()
         else:
