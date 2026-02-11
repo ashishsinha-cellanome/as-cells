@@ -739,18 +739,19 @@ class RTDETRLightningModule(pl.LightningModule):
         optimizer = torch.optim.AdamW(optimizer_grouped_params, weight_decay=opt_config.weight_decay)
 
         # 2. Setup Scheduler
-        # scheduler_config = self._get_scheduler_with_warmup(optimizer, sch_config)
+        total_steps = self.trainer.estimated_stepping_batches
+        # Ensure total_steps is at least 1 to avoid division by zero or weird logic
+        total_steps = max(1, total_steps)
 
-        # return [optimizer], scheduler_config
-    
-        warmup_scheduler = torch.optim.lr_scheduler.LinearLR(
-            optimizer,
-            start_factor= 0.01 , # 1% of target LR
-            total_iters= sch_config.warmup_steps
-        )
-        milestones = [sch_config.warmup_steps]
+        if total_steps < sch_config.warmup_steps:
+             # If total steps is less than requested warmup, reduce warmup to 10% of total
+             warmup_steps = int(0.1 * total_steps)
+             self.print(f"[WARN] Total steps ({total_steps}) < Warmup steps ({sch_config.warmup_steps}). Adjusting warmup to {warmup_steps}.")
+        else:
+             warmup_steps = sch_config.warmup_steps
         
-        total_steps = self.trainer.estimated_stepping_batches + 100
+        # Save effective warmup steps for optimizer_step
+        self.effective_warmup_steps = warmup_steps
         
         # Configure scheduler
         if sch_config.type == "reduce_lr_on_plateau":
@@ -767,10 +768,12 @@ class RTDETRLightningModule(pl.LightningModule):
                 # 'verbose': Trueq
             }
         elif sch_config.type == "cosine":
+            # Ensure T_max is positive
+            t_max = max(1, total_steps - warmup_steps)
             scheduler = {
                 'scheduler': torch.optim.lr_scheduler.CosineAnnealingLR(
                     optimizer,
-                    T_max= total_steps - max(sch_config.warmup_steps, int(0.1 * total_steps)),
+                    T_max=t_max,
                     eta_min=sch_config.eta_min
                 ),
                 'interval': 'step'
@@ -779,8 +782,8 @@ class RTDETRLightningModule(pl.LightningModule):
         elif sch_config.type == "lambda":
             # Linear warmup + constant
             def lr_lambda(step):
-                if step < sch_config.warmup_steps:
-                    return step / sch_config.warmup_steps
+                if step < warmup_steps:
+                    return step / max(1, warmup_steps)
                 return 1.0
             scheduler = {
                 'scheduler': torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda),
@@ -900,16 +903,19 @@ class RTDETRLightningModule(pl.LightningModule):
         
     def optimizer_step(self, epoch, batch_idx, optimizer, optimizer_closure):
         # --- 1. Warmup Logic (Apply BEFORE step) ---
-        total_steps = self.trainer.estimated_stepping_batches + 100
-        warmup_steps = max(self.config.scheduler.warmup_steps, int(0.1 * total_steps))
-        # update the hparams
-        # self.logger.experiment.config.update({'warmup_steps':warmup_steps}, allow_val_change=True)
+        
+        # Use effective_warmup_steps if set in configure_optimizers, else default logic
+        if hasattr(self, 'effective_warmup_steps'):
+            warmup_steps = self.effective_warmup_steps
+        else:
+            total_steps = self.trainer.estimated_stepping_batches + 100
+            warmup_steps = max(self.config.scheduler.warmup_steps, int(0.1 * total_steps))
         
         is_one_cycle = self.config.scheduler.type == "onecycle"
         
         if self.trainer.global_step < warmup_steps and not is_one_cycle:
             # Calculate linear scale (0.0 to 1.0)
-            lr_scale = min(1.0, float(self.trainer.global_step + 1) / float(warmup_steps))
+            lr_scale = min(1.0, float(self.trainer.global_step + 1) / float(max(1, warmup_steps)))
             
             # Get the base LR from config to ensure we always scale from the correct starting point
             # (Avoids issues where pg['lr'] might be modified by other schedulers or restarts)
