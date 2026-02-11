@@ -995,8 +995,14 @@ class RTDETRLightningModule(pl.LightningModule):
             # Get original image info
             image_id = int(labels[i]["image_id"].item())
             image_tensor = unnormalized_images[i]
+            # Get original size for this image
+            original_h, original_w = batch_image_sizes[i] 
+
+            # Resize the unnormalized image tensor back to its original dimensions
+            # Permute dimensions for resizing: (C, H, W) -> (H, W, C) for numpy conversion
             image_np = (image_tensor.permute(1, 2, 0).cpu().numpy() * 255).astype('uint8')
-            image = Image.fromarray(image_np)
+            resized_image_np = cv2.resize(image_np, (original_w, original_h), interpolation=cv2.INTER_LINEAR)
+            image = Image.fromarray(resized_image_np)
 
             # Get image metadata from COCO GT for filename
             if coco_gt:
