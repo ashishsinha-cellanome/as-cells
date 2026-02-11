@@ -262,21 +262,27 @@ class RTDETRLightningModule(pl.LightningModule):
 
         return {"predictions": results, "image_ids": image_ids}
     
+    def _gather_all_outputs(self, local_outputs):
+        """Gather outputs from all devices in a distributed setting."""
+        if not dist.is_available() or not dist.is_initialized():
+            return local_outputs
+        
+        world_size = dist.get_world_size()
+        if world_size <= 1:
+            return local_outputs
+
+        # Gather the list of objects from all ranks
+        gathered = [None for _ in range(world_size)]
+        dist.all_gather_object(gathered, local_outputs)
+        
+        # Flatten the list of lists into a single list
+        return [item for rank_outputs in gathered for item in rank_outputs]
+
     def on_validation_epoch_end(self):
         """Compute validation metrics at epoch end."""
         
-        # Helper to gather outputs from all ranks
-        def gather_all_outputs(local_outputs):
-            if not dist.is_available() or not dist.is_initialized():
-                return local_outputs
-            
-            gathered = [None for _ in range(dist.get_world_size())]
-            dist.all_gather_object(gathered, local_outputs)
-            # Flatten list of lists
-            return [item for rank_outputs in gathered for item in rank_outputs]
-
-        # 1. Gather Standard Model Predictions
-        all_outputs = gather_all_outputs(self.validation_step_outputs)
+        # 1. Gather Standard Model Predictions from all ranks
+        all_outputs = self._gather_all_outputs(self.validation_step_outputs)
         
         metrics = {}
         # Only compute metrics on Rank 0
@@ -302,12 +308,9 @@ class RTDETRLightningModule(pl.LightningModule):
                     )
             else:
                 self.print(f"⚠️  [Val] WARNING: No predictions made! Logging 0.0 metrics.")
-                # Log default metrics to satisfy ModelCheckpoint
-                metrics = {
-                    'map': 0.0, 'map_50': 0.0, 'map_75': 0.0,
-                }
+                metrics = {'map': 0.0, 'map_50': 0.0, 'map_75': 0.0}
 
-        # Broadcast metrics to all ranks
+        # Broadcast metrics from Rank 0 to all other ranks
         if dist.is_available() and dist.is_initialized():
             object_list = [metrics]
             dist.broadcast_object_list(object_list, src=0)
@@ -319,11 +322,11 @@ class RTDETRLightningModule(pl.LightningModule):
             if key == 'map':
                 self.log(f"val_{key}", value, prog_bar=False, sync_dist=True)
 
-        # 2. Gather EMA Model Predictions
-        if hasattr(self, 'validation_step_outputs_ema') and self.validation_step_outputs_ema:
-            # We must gather even if local list is empty (though it shouldn't be if steps ran)
-            all_ema_outputs = gather_all_outputs(self.validation_step_outputs_ema)
-            
+        # 2. Gather EMA Model Predictions from all ranks
+        # We call this on all ranks to avoid hangs, even if local list is empty
+        all_ema_outputs = self._gather_all_outputs(getattr(self, 'validation_step_outputs_ema', []))
+        
+        if hasattr(self, 'validation_step_outputs_ema'):
             ema_metrics = {}
             if self.trainer.is_global_zero:
                 ema_predictions = []
@@ -341,10 +344,7 @@ class RTDETRLightningModule(pl.LightningModule):
                     )
                 else:
                     self.print(f"⚠️  [Val] EMA validation FAILED: No predictions collected!")
-                    # Log default metrics to satisfy EMA ModelCheckpoint
-                    ema_metrics = {
-                        'map': 0.0, 'map_50': 0.0, 'map_75': 0.0,
-                    }
+                    ema_metrics = {'map': 0.0, 'map_50': 0.0, 'map_75': 0.0}
             
             # Broadcast EMA metrics to all ranks
             if dist.is_available() and dist.is_initialized():
@@ -359,19 +359,18 @@ class RTDETRLightningModule(pl.LightningModule):
                      self.log(f"val_{key}_ema", value, prog_bar=False, sync_dist=True)
 
             self.validation_step_outputs_ema.clear()
-        else:
-            if self.trainer.is_global_zero:
-                self.print(f"⚠️  [Val] EMA validation SKIPPED: validation_step_outputs_ema not available")
 
         # Clear accumulated predictions
         self.debug_train_image_ids.clear() 
-        self.validation_step_outputs.clear()  # free memory
+        self.validation_step_outputs.clear()
 
     def on_test_epoch_start(self):
         """Reset test visualization counter."""
         self.test_viz_counter = 0
 
     def test_step(self, batch, batch_idx):
+        # ... (no changes needed here) ...
+
         """Test step (same as validation)."""
         pixel_values = batch["pixel_values"]
         labels = batch["labels"]
