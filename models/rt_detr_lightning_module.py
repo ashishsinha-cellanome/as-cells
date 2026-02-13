@@ -101,7 +101,6 @@ class RTDETRLightningModule(pl.LightningModule):
 
     def forward(self, pixel_values, labels=None):
         """Forward pass."""
-        # breakpoint()
         return self.model(pixel_values=pixel_values, labels=labels)
 
     def train(self, mode: bool = True):
@@ -165,7 +164,6 @@ class RTDETRLightningModule(pl.LightningModule):
         # Collect image sizes
         # Use 'orig_size' for accurate mAP calculation when train/test image sizes are different than the selected model input size
         batch_image_sizes = [to_cpu_device(x["orig_size"]).numpy().tolist() for x in labels]
-        # breakpoint()
         # Post-process predictions
         post_processed_outputs = self.image_processor.post_process_object_detection(
             outputs,
@@ -191,7 +189,6 @@ class RTDETRLightningModule(pl.LightningModule):
                 f"epoch_{(self.current_epoch+1):03d}", 
                 "val"
             )
-            # breakpoint()
             self.val_viz_counter = self._visualize_batch(
                 save_dir, 
                 post_processed_outputs, 
@@ -369,8 +366,6 @@ class RTDETRLightningModule(pl.LightningModule):
         self.test_viz_counter = 0
 
     def test_step(self, batch, batch_idx):
-        # ... (no changes needed here) ...
-
         """Test step (same as validation)."""
         pixel_values = batch["pixel_values"]
         labels = batch["labels"]
@@ -1021,7 +1016,7 @@ class RTDETRLightningModule(pl.LightningModule):
                     scores=None, 
                     id2label=self.config.model.label_map,
                     color_override=(0, 255, 0), # Green
-                    label_prefix="GT: "
+                    label_prefix=""
                 )
             else:
                 # If coco_gt is missing, we might not have the filename easily, 
@@ -1039,7 +1034,7 @@ class RTDETRLightningModule(pl.LightningModule):
                 preds['scores'], 
                 id2label=id2label,
                 color_override=(255, 0, 0), # Red
-                label_prefix="Pred: "
+                label_prefix=""
             )
             
             # Save image

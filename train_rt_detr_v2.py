@@ -62,6 +62,7 @@ import torch.distributed as dist
 
 from omegaconf import DictConfig, OmegaConf
 OmegaConf.register_new_resolver("extract_name", lambda path: path.split("/")[-1])
+OmegaConf.register_new_resolver("oc.eval", eval)
 import hydra
 from hydra.core.hydra_config import HydraConfig
 from hydra.types import RunMode

@@ -1,12 +1,12 @@
 #!/bin/bash
 #SBATCH --job-name=large_training_job
 #SBATCH --account=aip-robsc
-#SBATCH --nodes=3
+#SBATCH --nodes=1
 #SBATCH --mail-user=ashish.sinha@amii.ca
 #SBATCH --mail-type=END,FAIL,BEGIN
 #SBATCH --gpus-per-node=4
 #SBATCH --ntasks-per-node=4
-#SBATCH --cpus-per-task=2
+#SBATCH --cpus-per-task=4
 ##SBATCH --exclusive
 #SBATCH --mem-per-gpu=32G
 #SBATCH --time=7-00:00:00
@@ -33,5 +33,9 @@ export PATH="$HOME/.cargo/bin:$PATH"
 echo "Job started at: $(date)"
 echo "Account used: $SLURM_JOB_ACCOUNT"
 
+# srun uv run train_rt_detr_v2.py -m data=vulcan model=rtdetr_v1 model/backbone=resnet50 model.ema.enabled=True model.backbone.train_backbone=True model.backbone.freeze_at_stage=0 optimizer.optimizer.use_param_groups=True scheduler=onecycle,cosine_warmup optimizer.optimizer.lr=3e-4,1e-4
+
+srun uv run train_rt_detr_v2.py -m data=vulcan model=rtdetr_v2 model/backbone=resnet50 model.ema.enabled=True model.backbone.train_backbone=True model.backbone.freeze_at_stage=1 optimizer.optimizer.use_param_groups=True scheduler=onecycle,cosine_warmup optimizer.optimizer.lr=3e-4,1e-4
+
 # srun -o logs/%x-%j-%t.out -e logs/%x-%j-%t.err uv run train_rt_detr.py -m model=rtdetr_v1 model.ema.enabled=True,False model.backbone.train_backbone=True 
-srun  uv run train_rt_detr_v2.py -m data=vulcan   trainer.max_epochs=50  model=rtdetr_v1,rtdetr_v2 model/backbone=resnet50  model.ema.enabled=True,False model.backbone.train_backbone=True,False model.backbone.freeze_at_stage=0,1 optimizer.optimizer.use_param_groups=true,false
+# srun  uv run train_rt_detr_v2.py -m data=vulcan   trainer.max_epochs=50  model=rtdetr_v1,rtdetr_v2 model/backbone=resnet50  model.ema.enabled=True,False model.backbone.train_backbone=True,False model.backbone.freeze_at_stage=0,1 optimizer.optimizer.use_param_groups=true,false
