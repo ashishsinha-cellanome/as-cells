@@ -2,6 +2,7 @@ import re
 import torch
 import torch.distributed as dist
 import os
+import cv2
 import pytorch_lightning as pl
 from pycocotools.cocoeval import COCOeval
 from PIL import Image, ImageDraw, ImageFont
@@ -995,8 +996,10 @@ class RTDETRLightningModule(pl.LightningModule):
             # Get original image info
             image_id = int(labels[i]["image_id"].item())
             image_tensor = unnormalized_images[i]
-            # Get original size for this image
-            original_h, original_w = batch_image_sizes[i] 
+            
+            # Get original size for this image from the label metadata
+            orig_size = labels[i]["orig_size"]
+            original_h, original_w = int(orig_size[0].item()), int(orig_size[1].item())
 
             # Resize the unnormalized image tensor back to its original dimensions
             # Permute dimensions for resizing: (C, H, W) -> (H, W, C) for numpy conversion
