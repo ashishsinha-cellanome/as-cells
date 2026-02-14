@@ -1,10 +1,12 @@
 **/*.ipynb
+
 test_ema_safety.py
 GEMINI.md
 ClAUDE.md
 .DS_Store
 .github/
-predictions/
+preds*/
+predictions*/
 *.ipynb
 debug*/
 *EVAL*/
