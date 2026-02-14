@@ -13,9 +13,9 @@ data:
   train_name: 'train'
 
   # override more params for debugging purpose
-  limit_train_batches: 10
-  limit_val_batches: 10
-  limit_test_batches: 10
+  limit_train_batches: 0.001
+  limit_val_batches: 0.01
+  limit_test_batches: 0.01
 
 
 
