@@ -162,9 +162,16 @@ class RTDETRLightningModule(pl.LightningModule):
         # Forward pass
         outputs = self.model(pixel_values=pixel_values, labels=None)
         
-        # Collect image sizes
-        # Use 'orig_size' for accurate mAP calculation when train/test image sizes are different than the selected model input size
-        batch_image_sizes = [to_cpu_device(x["orig_size"]).numpy().tolist() for x in labels]
+        # Collect true original image sizes from COCO metadata for accurate scaling
+        batch_image_sizes = []
+        for x in labels:
+            image_id = int(x["image_id"].item())
+            if self.val_coco_gt and image_id in self.val_coco_gt.imgs:
+                img_info = self.val_coco_gt.imgs[image_id]
+                batch_image_sizes.append([img_info["height"], img_info["width"]])
+            else:
+                batch_image_sizes.append(to_cpu_device(x["orig_size"]).numpy().tolist())
+
         # Post-process predictions
         post_processed_outputs = self.image_processor.post_process_object_detection(
             outputs,
@@ -195,6 +202,7 @@ class RTDETRLightningModule(pl.LightningModule):
                 post_processed_outputs, 
                 pixel_values,
                 labels, 
+                batch_image_sizes,
                 self.val_viz_counter
             )
 
@@ -374,9 +382,15 @@ class RTDETRLightningModule(pl.LightningModule):
         # Forward pass
         outputs = self.model(pixel_values=pixel_values, labels=None)
         
-        # Collect image sizes
-        # Use 'orig_size' for accurate mAP calculation when train/test image sizes are different than the selected model input size
-        batch_image_sizes = [to_cpu_device(x["orig_size"]).numpy().tolist() for x in labels]
+        # Collect true original image sizes from COCO metadata
+        batch_image_sizes = []
+        for x in labels:
+            image_id = int(x["image_id"].item())
+            if self.test_coco_gt and image_id in self.test_coco_gt.imgs:
+                img_info = self.test_coco_gt.imgs[image_id]
+                batch_image_sizes.append([img_info["height"], img_info["width"]])
+            else:
+                batch_image_sizes.append(to_cpu_device(x["orig_size"]).numpy().tolist())
         
         # Post-process predictions
         post_processed_outputs = self.image_processor.post_process_object_detection(
@@ -406,6 +420,7 @@ class RTDETRLightningModule(pl.LightningModule):
                 post_processed_outputs, 
                 pixel_values,
                 labels, 
+                batch_image_sizes,
                 self.test_viz_counter
             )
 
@@ -964,7 +979,7 @@ class RTDETRLightningModule(pl.LightningModule):
             
         return image
 
-    def _visualize_batch(self, save_dir, post_processed_outputs, pixel_values, labels, counter):
+    def _visualize_batch(self, save_dir, post_processed_outputs, pixel_values, labels, batch_image_sizes, counter):
         """Saves visualizations for a batch showing both GT and Predictions."""
         os.makedirs(save_dir, exist_ok=True)
         id2label = self.model.config.id2label
@@ -992,19 +1007,21 @@ class RTDETRLightningModule(pl.LightningModule):
             image_id = int(labels[i]["image_id"].item())
             image_tensor = unnormalized_images[i]
             
-            # Get original size for this image from the label metadata
-            orig_size = labels[i]["orig_size"]
-            original_h, original_w = int(orig_size[0].item()), int(orig_size[1].item())
+            # Get true original size for this image (e.g., 672, 672)
+            orig_h, orig_w = batch_image_sizes[i]
 
-            # Resize the unnormalized image tensor back to its original dimensions
-            # Permute dimensions for resizing: (C, H, W) -> (H, W, C) for numpy conversion
+            # Resize the unnormalized model-input-sized image tensor (e.g., 640x640)
+            # back to its original resolution (e.g., 672x672) so it matches the boxes.
             image_np = (image_tensor.permute(1, 2, 0).cpu().numpy() * 255).astype('uint8')
-            resized_image_np = cv2.resize(image_np, (original_w, original_h), interpolation=cv2.INTER_LINEAR)
+            resized_image_np = cv2.resize(image_np, (int(orig_w), int(orig_h)), interpolation=cv2.INTER_LINEAR)
             image = Image.fromarray(resized_image_np)
 
             # Get image metadata from COCO GT for filename
             if coco_gt:
-                img_info = coco_gt.loadImgs(image_id)[0]
+                try:
+                    img_info = coco_gt.loadImgs(image_id)[0]
+                except (IndexError, AttributeError, KeyError):
+                    img_info = {'file_name': f"image_{image_id}.png"}
                 
                 # --- 1. Scaled Ground Truth Boxes ---
                 gt_anns = coco_gt.loadAnns(coco_gt.getAnnIds(imgIds=image_id))
