@@ -42,3 +42,15 @@ data:
 training:
   profiler:
     type: 'simple'
+
+inference:
+  mode: dataset        # dataset | folder | single
+  image_path: null     # for mode=single
+  folder_path: null    # for mode=folder
+  gt_json: _annotations.coco.json
+  output_dir: predictions
+  max_viz: -1          # -1 = save all, otherwise cap at this number
+  sliding_window:
+    overlap_x: 80
+    overlap_y: 80
+    nms_threshold: 0.15
