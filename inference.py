@@ -81,7 +81,7 @@ def run_dataset_mode(config: DictConfig, model, processor):
     )
     data_module.setup(stage="test")
     test_loader = data_module.test_dataloader()
-    coco_gt = data_module.test_dataset.coco
+    coco_gt = data_module.test_dataset.dataset_coco.coco
 
     label_map = {int(k): v for k, v in config.model.label_map.items()}
     class_ids = list(label_map.keys())
