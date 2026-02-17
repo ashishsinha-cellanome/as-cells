@@ -79,7 +79,9 @@ def run_dataset_mode(config: DictConfig, model, processor):
         org_images_in_model_input_size=config.data.org_images_in_model_input_size,
         config=config,
     )
+    
     data_module.setup(stage="test")
+    breakpoint()
     test_loader = data_module.test_dataloader()
     coco_gt = data_module.test_dataset.coco
 
