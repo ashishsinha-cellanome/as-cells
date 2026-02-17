@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import os
 import sys
 import torch
@@ -21,6 +22,8 @@ from transformers import RTDetrImageProcessor
 from pycocotools.coco import COCO
 from pycocotools.cocoeval import COCOeval
 from utils.pairing_utils import pair_gts_dets_bbox
+from torch.utils.data import ConcatDataset
+from utils.dataset_utils import create_dataset_classes
 
 # Import sliding window utility from the Inference package
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'Inference'))
@@ -173,29 +176,13 @@ def run_dataset_mode(config: DictConfig, model, processor):
 # ---------------------------------------------------------------------------
 # MODE: folder  — reads images from a folder, sliding-window inference
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# MODE: folder   — sliding window on images in folder (flat or Cellanome dataset)
+# ---------------------------------------------------------------------------
 def run_folder_mode(config: DictConfig, model, processor):
     folder_path = hydra.utils.to_absolute_path(config.inference.folder_path)
-    gt_json_name = config.inference.gt_json
-    gt_json_path = os.path.join(folder_path, gt_json_name)
-
-    if not os.path.isdir(folder_path):
-        raise FileNotFoundError(f"Folder not found: {folder_path}")
-
-    has_gt = os.path.isfile(gt_json_path)
-    coco_gt = COCO(gt_json_path) if has_gt else None
-    if has_gt:
-        print(f"[folder mode] Loaded GT from {gt_json_path}")
-    else:
-        print(f"[folder mode] No GT file found at {gt_json_path}, skipping evaluation")
-
-    label_map = {int(k): v for k, v in config.model.label_map.items()}
-    class_ids = list(label_map.keys())
-    detection_threshold = config.model.detection_threshold
-    model_input_size = config.data.model_input_size
-    sw_cfg = config.inference.sliding_window
-    max_viz = config.inference.max_viz
-
-    output_dir = config.inference.output_dir
+    output_dir = hydra.utils.to_absolute_path(config.inference.output_dir)
+    os.makedirs(output_dir, exist_ok=True)
     viz_dir = os.path.join(output_dir, "visualizations")
     metrics_dir = os.path.join(output_dir, "metrics")
     if os.path.exists(viz_dir):
@@ -203,152 +190,305 @@ def run_folder_mode(config: DictConfig, model, processor):
     os.makedirs(viz_dir, exist_ok=True)
     os.makedirs(metrics_dir, exist_ok=True)
 
-    # Collect image files
-    if coco_gt is not None:
-        img_infos = list(coco_gt.imgs.values())
+    # Check for Cellanome dataset structure
+    csv_path = os.path.join(folder_path, 'annotation_images_mapping.csv')
+    is_cellanome_dataset = os.path.exists(csv_path)
+
+    # Prepare sliding window parameters
+    sliding_window_cfg = config.inference.sliding_window
+    overlap_x = sliding_window_cfg.overlap_x
+    overlap_y = sliding_window_cfg.overlap_y
+    nms_threshold = sliding_window_cfg.nms_threshold
+    
+    # Model input size from config (default to 640 if missing)
+    input_size = (640, 640)
+    if hasattr(config.model, 'val_image_size'):
+         sz = config.model.val_image_size
+         input_size = (sz, sz)
+
+    # Sliding window crops generator
+    corners_generator = lambda img_h, img_w: get_crop_corners(
+        image_width=img_w,
+        image_height=img_h,
+        input_size=input_size,
+        overlap_in_x=overlap_x,
+        overlap_in_y=overlap_y
+    )
+
+    # Setup COCO GT object strictly for evaluation at the end
+    coco_gt = COCO()
+    coco_gt.dataset = {"images": [], "annotations": [], "categories": []}
+    coco_gt.createIndex()
+    
+    # Categories
+    label_map = dict(config.model.label_map) # id -> name
+    # Ensure keys are ints
+    label_map = {int(k): v for k, v in label_map.items()}
+    class_ids = list(label_map.keys())
+    categories = [{"id": k, "name": v} for k, v in label_map.items()]
+    coco_gt.dataset["categories"] = categories
+
+    dataset_iterator = []
+    
+    if is_cellanome_dataset:
+        print(f"[folder mode] Found annotation_images_mapping.csv. Using Cellanome dataset loader...")
+        # Invert label map for create_dataset_classes (name -> id)
+        class_name_to_id = {v: k for k, v in label_map.items()}
+        
+        # Use a large max_side to avoid resizing during loading (we want full res for sliding window)
+        train_ds, test_ds = create_dataset_classes(
+            dataset_path=folder_path,
+            class_names_to_class_ids_map=class_name_to_id,
+            max_larger_side=10000, 
+            max_smaller_side=10000
+        )
+        try:
+             # Combine both splits to run on everything in the folder
+             dataset = ConcatDataset([train_ds, test_ds])
+        except Exception:
+             dataset = train_ds if len(train_ds) > 0 else test_ds
+        
+        print(f"[folder mode] Loaded {len(dataset)} images from Cellanome dataset.")
+        
+        # Helper to yield from dataset
+        def cellanome_generator():
+            for i in range(len(dataset)):
+                sample = dataset[i]
+                # sample is a dict: {'name': str, 'image': np.ndarray, 'annotations': DataFrame, ...}
+                img_name = sample['name']
+                img_rgb = sample['image'] # Already RGB (or grayscale converted)
+                if len(img_rgb.shape) == 2:
+                    img_rgb = cv2.cvtColor(img_rgb, cv2.COLOR_GRAY2RGB)
+                
+                # Parse annotations to standard format: list of [x1, y1, x2, y2] (xyxy) and labels
+                gt_boxes = []
+                gt_labels = []
+                
+                if 'annotations' in sample and not sample['annotations'].empty:
+                    df = sample['annotations']
+                    for _, row in df.iterrows():
+                        x1, y1, x2, y2 = row['xtl'], row['ytl'], row['xbr'], row['ybr']
+                        label = row['label']
+                        gt_boxes.append([x1, y1, x2, y2])
+                        gt_labels.append(int(label))
+                
+                yield i + 1, img_name, img_rgb, gt_boxes, gt_labels
+
+        dataset_iterator = cellanome_generator()
+
     else:
-        exts = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"}
-        img_infos = []
-        for fname in sorted(os.listdir(folder_path)):
-            if os.path.splitext(fname)[1].lower() in exts:
-                img_infos.append({"id": len(img_infos) + 1, "file_name": fname})
-
-    predictions_coco = []
-    per_image_analysis = []
-    viz_count = 0
-    gt_remap = _build_gt_label_remap(coco_gt, config)
-
-    print(f"[folder mode] Processing {len(img_infos)} images with sliding window (crop={model_input_size}x{model_input_size}) ...")
-
-    with torch.no_grad():
-        for img_info in tqdm(img_infos, desc="Folder inference"):
-            image_id = img_info["id"]
-            file_name = img_info["file_name"]
-            img_path = os.path.join(folder_path, file_name)
-            if not os.path.isfile(img_path):
-                logging.warning(f"Image file not found: {img_path}, skipping")
-                continue
-
-            img_bgr = cv2.imread(img_path, cv2.IMREAD_UNCHANGED)
-            if img_bgr is None:
-                logging.warning(f"Could not read image: {img_path}, skipping")
-                continue
-
-            # Convert to 8-bit grayscale → RGB (images are already 8-bit per user)
-            if len(img_bgr.shape) == 2:
-                img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_GRAY2RGB)
-            elif img_bgr.shape[2] == 1:
-                img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_GRAY2RGB)
-            else:
-                img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
-
-            H, W = img_rgb.shape[:2]
-
-            # Sliding-window crop corners
-            crop_size = (model_input_size, model_input_size)
-            crop_corners = get_crop_corners(
-                image_width=W,
-                image_height=H,
-                overlap_in_x=sw_cfg.overlap_x,
-                overlap_in_y=sw_cfg.overlap_y,
-                input_size=crop_size,
-            )
-            logging.info(f"Image {file_name} ({W}x{H}): {len(crop_corners)} crops")
-
-            # Run model on each crop, accumulate detections in image coords
-            all_boxes, all_scores, all_labels = [], [], []
-            confidence_threshold = detection_threshold
-
-            for corners in crop_corners:
-                x1c, y1c, x2c, y2c = corners
-                crop_img = img_rgb[y1c:y2c, x1c:x2c]
-                crop_h, crop_w = crop_img.shape[:2]
-
-                inputs = processor(images=crop_img, return_tensors="pt")
-                pixel_values = inputs["pixel_values"].to(model.device)
-                outputs = model.model(pixel_values=pixel_values, labels=None)
-                post = processor.post_process_object_detection(
-                    outputs, threshold=confidence_threshold, target_sizes=[(crop_h, crop_w)]
-                )
-                pred = post[0]
-                boxes_crop = to_cpu(pred["boxes"]).numpy()
-                scores_crop = to_cpu(pred["scores"]).numpy()
-                labels_crop = to_cpu(pred["labels"]).numpy()
-
-                if len(scores_crop) == 0:
+        # Standard flat folder mode
+        print(f"[folder mode] Using flat folder structure (no csv found).")
+        valid_exts = ('.jpg', '.jpeg', '.png', '.tif', '.tiff', '.bmp')
+        image_files = sorted([f for f in os.listdir(folder_path) if f.lower().endswith(valid_exts)])
+        
+        # Load COCO GT if available
+        gt_lookup = {}
+        coco_json_path = config.inference.gt_json
+        gt_coco_obj = None
+        if coco_json_path and os.path.exists(os.path.join(folder_path, coco_json_path)):
+             gt_coco_obj = COCO(os.path.join(folder_path, coco_json_path))
+             # Map image filename to annotations
+             for img_id in gt_coco_obj.getImgIds():
+                 img_info = gt_coco_obj.loadImgs(img_id)[0]
+                 fname = img_info['file_name']
+                 ann_ids = gt_coco_obj.getAnnIds(imgIds=img_id)
+                 anns = gt_coco_obj.loadAnns(ann_ids)
+                 gt_lookup[fname] = anns
+        
+        def flat_folder_generator():
+            for i, img_name in enumerate(image_files):
+                img_path = os.path.join(folder_path, img_name)
+                # Load image
+                img_bgr = cv2.imread(img_path, cv2.IMREAD_UNCHANGED)
+                if img_bgr is None:
                     continue
 
-                # Reduce scores for boundary detections (same logic as detect_by_cropping)
-                boundary_mask = (
-                    (boxes_crop[:, 0] < 4)
-                    | (boxes_crop[:, 1] < 4)
-                    | (boxes_crop[:, 2] > crop_w - 4)
-                    | (boxes_crop[:, 3] > crop_h - 4)
-                )
-                scores_crop[boundary_mask] = confidence_threshold
+                if len(img_bgr.shape) == 2:
+                    img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_GRAY2RGB)
+                elif img_bgr.shape[2] == 1:
+                    img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_GRAY2RGB)
+                else:
+                    img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+                
+                gt_boxes = []
+                gt_labels = []
+                
+                if img_name in gt_lookup:
+                    anns = gt_lookup[img_name]
+                    for ann in anns:
+                        bbox = ann['bbox'] # xywh
+                        # Convert to xyxy
+                        gt_boxes.append([bbox[0], bbox[1], bbox[0]+bbox[2], bbox[1]+bbox[3]])
+                        gt_labels.append(ann['category_id'])
+                        
+                yield i + 1, img_name, img_rgb, gt_boxes, gt_labels
 
-                # Shift to image coords
-                boxes_crop[:, [0, 2]] += x1c
-                boxes_crop[:, [1, 3]] += y1c
+        dataset_iterator = flat_folder_generator()
 
-                all_boxes.append(boxes_crop)
-                all_scores.append(scores_crop)
-                all_labels.append(labels_crop)
+    # Shared processing loop
+    results_coco = [] # For COCOeval
+    per_image_metrics = []
+    
+    # Global accumulator for creating the final COCO GT object for evaluation
+    coco_gt_images = []
+    coco_gt_annotations = []
+    ann_id_counter = 1
+    
+    gt_remap = _build_gt_label_remap(coco_gt, config) 
 
-            # Merge with cross-crop NMS
-            if len(all_boxes) > 0:
-                merged_boxes, merged_scores, merged_labels = _cross_crop_nms(
-                    all_boxes, all_scores, all_labels, sw_cfg.nms_threshold
-                )
-            else:
-                merged_boxes = np.zeros((0, 4))
-                merged_scores = np.zeros((0,))
-                merged_labels = np.zeros((0,), dtype=int)
+    print(f"[folder mode] Starting inference on images...")
+    
+    for image_id, img_name, img_rgb, gt_boxes_list, gt_labels_list in tqdm(dataset_iterator, desc="Processing"):
+        
+        h, w = img_rgb.shape[:2]
+        
+        # Add to COCO GT for final eval
+        coco_gt_images.append({
+            "id": image_id, 
+            "width": w, 
+            "height": h, 
+            "file_name": img_name
+        })
+        
+        # Add GT annotations
+        gt_boxes_xyxy = []
+        gt_labels_np = []
+        
+        for box, lbl in zip(gt_boxes_list, gt_labels_list):
+            # box is xyxy from generator
+            bx1, by1, bx2, by2 = box
+            gt_boxes_xyxy.append([bx1, by1, bx2, by2])
+            gt_labels_np.append(lbl)
+            
+            coco_gt_annotations.append({
+                "id": ann_id_counter,
+                "image_id": image_id,
+                "category_id": int(lbl),
+                "bbox": [bx1, by1, bx2 - bx1, by2 - by1], # xywh for COCO
+                "area": (bx2 - bx1) * (by2 - by1),
+                "iscrowd": 0
+            })
+            ann_id_counter += 1
+            
+        gt_boxes_xyxy = np.array(gt_boxes_xyxy) if gt_boxes_xyxy else np.zeros((0, 4))
+        gt_labels_np = np.array(gt_labels_np) if gt_labels_np else np.zeros((0,))
+        
+        # SLIDING WINDOW INFERENCE
+        crops = corners_generator(h, w)
+        all_pred_boxes = []
+        all_pred_scores = []
+        all_pred_labels = []
+        
+        for crop_id, (cx1, cy1, cx2, cy2) in enumerate(crops):
+            crop_img = img_rgb[cy1:cy2, cx1:cx2]
+            crop_h, crop_w = crop_img.shape[:2]
 
-            # COCO predictions
-            for b, s, l in zip(merged_boxes, merged_scores, merged_labels):
-                x1, y1, x2, y2 = b
-                predictions_coco.append({
-                    "image_id": image_id,
-                    "category_id": int(l),
-                    "bbox": [float(x1), float(y1), float(x2 - x1), float(y2 - y1)],
-                    "score": float(s),
-                })
+            inputs = processor(images=crop_img, return_tensors="pt").to(model.device)
+            with torch.no_grad():
+                outputs = model.model(pixel_values=inputs['pixel_values'], labels=None)
+            
+            # Post-process
+            target_sizes = torch.tensor([[crop_h, crop_w]], device=model.device)
+            results = processor.post_process_object_detection(
+                outputs, 
+                target_sizes=target_sizes, 
+                threshold=0.0 # Get all, filter later
+            )[0]
+            
+            boxes = results["boxes"].cpu().numpy()
+            scores = results["scores"].cpu().numpy()
+            labels = results["labels"].cpu().numpy()
+            
+            # Filter by score
+            mask = scores >= config.model.detection_threshold
+            boxes = boxes[mask]
+            scores = scores[mask]
+            labels = labels[mask]
+            
+            # Shift boxes to global coordinates
+            if len(boxes) > 0:
+                boxes[:, [0, 2]] += cx1
+                boxes[:, [1, 3]] += cy1
+                
+                all_pred_boxes.append(boxes)
+                all_pred_scores.append(scores)
+                all_pred_labels.append(labels)
+                
+        # Merge crops with NMS
+        if all_pred_boxes:
+            final_boxes, final_scores, final_labels = _cross_crop_nms(
+                all_pred_boxes, 
+                all_pred_scores, 
+                all_pred_labels, 
+                nms_threshold
+            )
+        else:
+            final_boxes, final_scores, final_labels = np.zeros((0, 4)), np.zeros((0,)), np.zeros((0,), dtype=int)
+            
+        # VISUALIZATION
+        if config.inference.max_viz == -1 or len(per_image_metrics) < config.inference.max_viz:
+            viz_img = img_rgb.copy()
+            pil_viz = Image.fromarray(viz_img)
 
-            # Per-image analysis (if GT available)
-            image_stats = {"image_id": image_id, "file_name": file_name}
-            if coco_gt is not None:
-                ann_ids = coco_gt.getAnnIds(imgIds=image_id)
-                anns = coco_gt.loadAnns(ann_ids)
-                gt_boxes_all = np.array([[a["bbox"][0], a["bbox"][1], a["bbox"][0] + a["bbox"][2], a["bbox"][1] + a["bbox"][3]] for a in anns]) if anns else np.zeros((0, 4))
-                gt_labels_all = np.array([a["category_id"] for a in anns]) if anns else np.array([])
+            # Draw GT (Green)
+            if len(gt_boxes_xyxy) > 0:
+                draw_boxes_on_image(pil_viz, gt_boxes_xyxy, gt_labels_np, label_map, color=(0, 255, 0), prefix="GT: ")
+            
+            # Draw Pred (Red)
+            draw_boxes_on_image(
+                pil_viz, final_boxes, final_labels, label_map,
+                color=(255, 0, 0), scores=final_scores, prefix="Pred: ",
+            )
+            stem = os.path.splitext(os.path.basename(img_name))[0]
+            pil_viz.save(os.path.join(viz_dir, f"{stem}_viz.jpg"))
 
-                for cls_id in class_ids:
-                    cls_name = label_map[cls_id]
-                    tp, fp, fn = _compute_tp_fp_fn(gt_boxes_all, gt_labels_all, merged_boxes, merged_labels, cls_id, gt_remap=gt_remap)
-                    image_stats[f"{cls_name}_TP"] = tp
-                    image_stats[f"{cls_name}_FP"] = fp
-                    image_stats[f"{cls_name}_FN"] = fn
-            per_image_analysis.append(image_stats)
+        # METRICS (Per Image)
+        # Compute TP/FP/FN
+        image_stats = {"image_id": image_id, "file_name": img_name}
+        for cls_id in class_ids:
+            cls_name = label_map[cls_id]
+            tp, fp, fn = _compute_tp_fp_fn(gt_boxes_xyxy, gt_labels_np, final_boxes, final_labels, cls_id, gt_remap=gt_remap)
+            image_stats[f"{cls_name}_TP"] = tp
+            image_stats[f"{cls_name}_FP"] = fp
+            image_stats[f"{cls_name}_FN"] = fn
+        per_image_metrics.append(image_stats)
+        
+        # Add to COCO results
+        for box, sc, lbl in zip(final_boxes, final_scores, final_labels):
+            results_coco.append({
+                "image_id": image_id,
+                "category_id": int(lbl),
+                "bbox": [float(box[0]), float(box[1]), float(box[2]-box[0]), float(box[3]-box[1])],
+                "score": float(sc)
+            })
 
-            # Visualization
-            if max_viz == -1 or viz_count < max_viz:
-                pil_img = Image.fromarray(img_rgb)
-                if coco_gt is not None:
-                    ann_ids = coco_gt.getAnnIds(imgIds=image_id)
-                    anns = coco_gt.loadAnns(ann_ids)
-                    gt_boxes_viz = [[a["bbox"][0], a["bbox"][1], a["bbox"][0] + a["bbox"][2], a["bbox"][1] + a["bbox"][3]] for a in anns]
-                    gt_labels_viz = [a["category_id"] for a in anns]
-                    draw_boxes_on_image(pil_img, gt_boxes_viz, gt_labels_viz, label_map, color=(0, 255, 0), prefix="GT: ")
-                draw_boxes_on_image(
-                    pil_img, merged_boxes, merged_labels, label_map,
-                    color=(255, 0, 0), scores=merged_scores, prefix="Pred: ",
-                )
-                stem = os.path.splitext(file_name)[0]
-                pil_img.save(os.path.join(viz_dir, f"{stem}_viz.jpg"))
-                viz_count += 1
-
-    _save_results(predictions_coco, per_image_analysis, coco_gt, label_map, class_ids, metrics_dir, viz_dir)
+    # Save Per-Image CSV
+    pd.DataFrame(per_image_metrics).to_csv(os.path.join(output_dir, "per_image_stats.csv"), index=False)
+    
+    # Run COCO Eval
+    if results_coco and coco_gt_annotations:
+        print("[folder mode] Running COCO evaluation...")
+        coco_gt.dataset["images"] = coco_gt_images
+        coco_gt.dataset["annotations"] = coco_gt_annotations
+        coco_gt.createIndex()
+        
+        coco_dt = coco_gt.loadRes(results_coco)
+        coco_eval = COCOeval(coco_gt, coco_dt, 'bbox')
+        coco_eval.evaluate()
+        coco_eval.accumulate()
+        coco_eval.summarize()
+        
+        # Save metrics
+        stats = {
+            "mAP_50_95": coco_eval.stats[0],
+            "mAP_50": coco_eval.stats[1],
+            "mAP_75": coco_eval.stats[2],
+        }
+        with open(os.path.join(output_dir, "metrics.json"), "w") as f:
+            json.dump(stats, f, indent=2)
+            
+    print(f"[folder mode] Done. Output saved to {output_dir}")
 
 
 # ---------------------------------------------------------------------------
