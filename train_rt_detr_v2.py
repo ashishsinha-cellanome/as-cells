@@ -476,6 +476,7 @@ def setup_logger(config: DictConfig):
     # Add top-level keys for easy filtering on WandB dashboard
     wandb_log_config["model"] = "rtdetrv2" if "v2" in config.model.rtdetr.model_name else "rtdetrv1"
     wandb_log_config["backbone"] = config.model.backbone.name
+    wandb_log_config["backbone_type"] = config.model.backbone.type
 
     logger = WandbLogger(
         project=wandb_config.project,
