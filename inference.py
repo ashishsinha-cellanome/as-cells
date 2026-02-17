@@ -851,16 +851,41 @@ def main(config: DictConfig):
         raise FileNotFoundError(f"Checkpoint not found at: {ckpt_path}")
 
     print(f"Loading model from: {ckpt_path}")
-    model = RTDETRLightningModule.load_from_checkpoint(ckpt_path, config=config)
+
+    # Build model architecture first (same as training)
+    from models.custom_rt_detr_with_dinov2_backbone import (
+        RTDetrV2ForObjectDetectionWithCustomBackbone,
+        RTDetrV2ConfigWithCustomBackBone
+    )
+
+    model_checkpoint_path = config.model.rtdetr.pretrained_name_or_path
+    model = RTDetrV2ForObjectDetectionWithCustomBackbone.from_pretrained(
+        model_checkpoint_path,
+    )
     model.eval()
-    model.cuda()
 
     # Setup processor
     processor = RTDetrImageProcessor.from_pretrained(config.model.rtdetr.pretrained_name_or_path)
     processor.do_normalize = True
     processor.resample = 3
     processor.size = {"height": config.data.model_input_size, "width": config.data.model_input_size}
-    model.image_processor = processor
+
+    # Create LightningModule and load checkpoint weights
+    lightning_module = RTDETRLightningModule(
+        model=model,
+        image_processor=processor,
+        config=config
+    )
+
+    # Load only the state dict (not the full checkpoint which expects __init__ args)
+    checkpoint = torch.load(ckpt_path, map_location='cpu')
+    if 'state_dict' in checkpoint:
+        lightning_module.load_state_dict(checkpoint['state_dict'], strict=False)
+    else:
+        lightning_module.load_state_dict(checkpoint, strict=False)
+
+    lightning_module.eval()
+    lightning_module.cuda()
 
     mode = config.inference.mode
     print(f"\n{'='*60}")
@@ -868,11 +893,11 @@ def main(config: DictConfig):
     print(f"{'='*60}\n")
 
     if mode == "dataset":
-        run_dataset_mode(config, model, processor)
+        run_dataset_mode(config, lightning_module, processor)
     elif mode == "folder":
-        run_folder_mode(config, model, processor)
+        run_folder_mode(config, lightning_module, processor)
     elif mode == "single":
-        run_single_mode(config, model, processor)
+        run_single_mode(config, lightning_module, processor)
     else:
         raise ValueError(f"Unknown inference mode: '{mode}'. Use 'dataset', 'folder', or 'single'.")
 

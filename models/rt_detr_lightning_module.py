@@ -45,11 +45,11 @@ def convert_preds_to_coco(predictions):
 
 class RTDETRLightningModule(pl.LightningModule):
     """PyTorch Lightning Module for RT-DETR with DINOv2 backbone."""
-    
+
     def __init__(
         self,
-        model: RTDetrV2ForObjectDetectionWithCustomBackbone,
-        image_processor,
+        model: RTDetrV2ForObjectDetectionWithCustomBackbone = None,
+        image_processor = None,
         val_coco_gt=None,
         test_coco_gt = None,
         train_coco_gt = None,
