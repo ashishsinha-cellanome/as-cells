@@ -850,18 +850,53 @@ def main(config: DictConfig):
     if not os.path.exists(ckpt_path):
         raise FileNotFoundError(f"Checkpoint not found at: {ckpt_path}")
 
-    print(f"Loading model from: {ckpt_path}")
+    print(f"Loading checkpoint from: {ckpt_path}")
 
-    # Build model architecture first (same as training)
+    # First load checkpoint to get the saved config
+    checkpoint = torch.load(ckpt_path, map_location='cpu')
+
+    # Extract config from checkpoint if available
+    if 'hyper_parameters' in checkpoint:
+        ckpt_config = checkpoint['hyper_parameters'].get('config')
+        if ckpt_config is not None:
+            print("Using config from checkpoint (override any CLI args)")
+            # Merge checkpoint config with current config (checkpoint takes priority)
+            config = OmegaConf.merge(config, ckpt_config)
+
+    # Build model architecture based on the (possibly merged) config
     from models.custom_rt_detr_with_dinov2_backbone import (
         RTDetrV2ForObjectDetectionWithCustomBackbone,
         RTDetrV2ConfigWithCustomBackBone
     )
+    from transformers import RTDetrV2ForObjectDetection
 
     model_checkpoint_path = config.model.rtdetr.pretrained_name_or_path
-    model = RTDetrV2ForObjectDetectionWithCustomBackbone.from_pretrained(
-        model_checkpoint_path,
-    )
+    print(f"Loading base model from: {model_checkpoint_path}")
+
+    # Determine model class based on config
+    if hasattr(config.model, 'backbone') and hasattr(config.model.backbone, 'type'):
+        model_cls = RTDetrV2ForObjectDetectionWithCustomBackbone
+    else:
+        model_cls = RTDetrV2ForObjectDetection
+
+    # First, determine the number of classes from the checkpoint
+    # by inspecting the shape of classification head weights
+    state_dict = checkpoint.get('state_dict', checkpoint)
+    num_classes = None
+    for key in state_dict.keys():
+        if 'class_embed.0.weight' in key or 'enc_score_head.weight' in key:
+            num_classes = state_dict[key].shape[0]
+            print(f"Detected {num_classes} classes from checkpoint")
+            break
+
+    # Load config and modify num_labels before building model
+    model_config = RTDetrV2ConfigWithCustomBackBone.from_pretrained(model_checkpoint_path)
+    if num_classes is not None:
+        print(f"Setting model num_labels to {num_classes}")
+        model_config.num_labels = num_classes
+
+    # Build model with correct number of classes
+    model = model_cls.from_pretrained(model_checkpoint_path, config=model_config)
     model.eval()
 
     # Setup processor
@@ -877,8 +912,7 @@ def main(config: DictConfig):
         config=config
     )
 
-    # Load only the state dict (not the full checkpoint which expects __init__ args)
-    checkpoint = torch.load(ckpt_path, map_location='cpu')
+    # Load state dict from checkpoint
     if 'state_dict' in checkpoint:
         lightning_module.load_state_dict(checkpoint['state_dict'], strict=False)
     else:
