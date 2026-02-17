@@ -35,7 +35,10 @@ echo "Account used: $SLURM_JOB_ACCOUNT"
 
 # srun uv run train_rt_detr_v2.py -m data=vulcan model=rtdetr_v1 model/backbone=resnet50 model.ema.enabled=True model.backbone.train_backbone=True model.backbone.freeze_at_stage=0 optimizer.optimizer.use_param_groups=True scheduler=onecycle,cosine_warmup optimizer.optimizer.lr=3e-4,1e-4
 
-srun uv run train_rt_detr_v2.py -m data=vulcan model=rtdetr_v2 model/backbone=resnet50 model.ema.enabled=True model.backbone.train_backbone=True model.backbone.freeze_at_stage=1 optimizer.optimizer.use_param_groups=True scheduler=onecycle,cosine_warmup optimizer.optimizer.lr=3e-4,1e-4
+# srun uv run train_rt_detr_v2.py -m data=vulcan model=rtdetr_v2 model/backbone=resnet50 model.ema.enabled=True model.backbone.train_backbone=True model.backbone.freeze_at_stage=1 optimizer.optimizer.use_param_groups=True scheduler=onecycle,cosine_warmup optimizer.optimizer.lr=3e-4,1e-4
+
+srun uv run train_rt_detr_v2.py -m data=vulcan model=rtdetr_v2 model/backbone=resnet50 model.ema.enabled=True model.backbone.train_backbone=True model.backbone.freeze_at_stage=2 optimizer.optimizer.use_param_groups=True,False scheduler=onecycle optimizer.optimizer.lr=3e-4
+
 
 # srun -o logs/%x-%j-%t.out -e logs/%x-%j-%t.err uv run train_rt_detr.py -m model=rtdetr_v1 model.ema.enabled=True,False model.backbone.train_backbone=True 
 # srun  uv run train_rt_detr_v2.py -m data=vulcan   trainer.max_epochs=50  model=rtdetr_v1,rtdetr_v2 model/backbone=resnet50  model.ema.enabled=True,False model.backbone.train_backbone=True,False model.backbone.freeze_at_stage=0,1 optimizer.optimizer.use_param_groups=true,false

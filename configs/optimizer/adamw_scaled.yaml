@@ -5,7 +5,7 @@ optimizer:
   weight_decay: 1e-6
   
   # Toggle for fine-grained parameter grouping (Regex based)
-  use_param_groups: true
+  use_param_groups: false
   
   # Optional: Fine-grained control over parameter groups using regex
   # Groups are matched in order; first match wins.

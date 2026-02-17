@@ -187,7 +187,7 @@ def create_initial_checkpoint(config: DictConfig) -> str:
         overrides = OmegaConf.to_container(model_config.rtdetr, resolve=True)
 
         # Keys to remove that are Hydra-specific or training-specific
-        for k in ["pretrained_name_or_path", "config_overrides", "model_name", 'name', 'freeze_backbone_batch_norms', 'normalize_before']:
+        for k in ["pretrained_name_or_path", "config_overrides", "model_name", 'name', 'freeze_backbone_batch_norms', 'normalize_before', 'input_size']:
             overrides.pop(k, None)
 
         if "rtdetr_v2" in model_config.rtdetr.model_name:
