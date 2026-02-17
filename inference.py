@@ -672,6 +672,7 @@ def run_single_mode(config: DictConfig, model, processor):
 def _build_gt_label_remap(coco_gt, config) -> Dict[int, int]:
     """Build a dict mapping GT category IDs to model class IDs, applying class_remapping.
 
+    Only applies remapping when config.remap_labels is True.
     For example, if GT has category 'cell-adhered' (id=4) and config says
     class_remapping: {'cell-adhered': 'cell'}, and model label_map says {0: 'cell'},
     then the remap will be {4: 0} — GT annotations with cat_id=4 will be treated as
@@ -680,12 +681,22 @@ def _build_gt_label_remap(coco_gt, config) -> Dict[int, int]:
     if coco_gt is None:
         return {}
 
-    model_label_map = {int(k): v for k, v in config.model.label_map.items()}
-    name_to_model_id = {v: k for k, v in model_label_map.items()}
+    # Only apply remapping if explicitly enabled
+    if not getattr(config, 'remap_labels', False):
+        return {}
 
+    # Check if class_remapping is configured
     remapping_rules = {}
     if hasattr(config, 'data') and config.data and 'class_remapping' in config.data:
-        remapping_rules = dict(config.data.class_remapping)
+        class_remap = config.data.class_remapping
+        if class_remap is not None:
+            remapping_rules = dict(class_remap)
+
+    if not remapping_rules:
+        return {}
+
+    model_label_map = {int(k): v for k, v in config.model.label_map.items()}
+    name_to_model_id = {v: k for k, v in model_label_map.items()}
 
     remap = {}
     for cat_id, cat_info in coco_gt.cats.items():
