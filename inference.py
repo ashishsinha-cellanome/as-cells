@@ -161,8 +161,13 @@ def run_dataset_mode(config: DictConfig, model, processor):
                 gt_labels_all = np.array([a["category_id"] for a in anns]) if anns else np.array([])
                 pred_boxes_np = boxes.numpy()
                 pred_labels_np = pred_labels.numpy()
+                
+                # Fetch filename if available
+                file_name = f"image_{image_id}"
+                if image_id in coco_gt.imgs:
+                    file_name = coco_gt.imgs[image_id]["file_name"]
 
-                image_stats = {"image_id": image_id}
+                image_stats = {"image_id": image_id, "file_name": file_name}
                 for cls_id in class_ids:
                     cls_name = label_map[cls_id]
                     tp, fp, fn = _compute_tp_fp_fn(gt_boxes_all, gt_labels_all, pred_boxes_np, pred_labels_np, cls_id, gt_remap=gt_remap)
