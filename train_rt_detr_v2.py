@@ -288,6 +288,15 @@ def setup_model(config: DictConfig) -> RTDETRLightningModule:
         model_checkpoint_path,
     )
     
+    # Ensure model is on CUDA before casting to half
+    if torch.cuda.is_available():
+        model.to("cuda")
+        rank_zero_print("[INFO] Moved base model to CUDA device.")
+        
+    if config.trainer.precision == "16-mixed":
+        model.half()
+        rank_zero_print("[INFO] Explicitly cast base model to Half precision for AMP compatibility.")
+
     # Explicitly set model to TRAIN mode initially.
     # This ensures that when we subsequently freeze the backbone (eval mode),
     # the rest of the model (decoder, etc.) remains in train mode, creating the correct mixed state.
@@ -480,6 +489,7 @@ def setup_logger(config: DictConfig):
 
     logger = WandbLogger(
         project=wandb_config.project,
+	reinit=True,
         name=config.run_name,
         tags=list(wandb_config.tags), # Convert OmegaConf list to plain list
         notes=wandb_config.notes,

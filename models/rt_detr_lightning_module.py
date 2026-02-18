@@ -519,6 +519,40 @@ class RTDETRLightningModule(pl.LightningModule):
         self.test_image_ids = []
         self.test_step_outputs.clear()
         
+    def on_test_start(self):
+        """
+        Ensures the model (and its internal HuggingFace model) are in the correct
+        precision (HalfTensor) and on the correct device after the checkpoint
+        has been loaded by the Trainer and before testing begins.
+        This handles cases where the state_dict might overwrite float16 weights with float32.
+        """
+        if self.trainer.precision == "16-mixed":
+            # Ensure on CUDA
+            if next(self.parameters()).device.type == 'cpu':
+                self.to("cuda")
+                self.print(f"[INFO] Forcing LightningModule to CUDA on test start.")
+
+            # Ensure float16 precision
+            if next(self.parameters()).dtype != torch.float16:
+                self.half()
+                # Also ensure the underlying HuggingFace model (self.model) is half()
+                # as Lightning's .half() might only apply to the LightningModule's direct params.
+                if hasattr(self, 'model') and next(self.model.parameters(), torch.tensor(0.0)).dtype != torch.float16:
+                    self.model.half()
+                self.print(f"[INFO] Forcing LightningModule to Half precision (float16) on test start.")
+            
+            # Add similar explicit checks for bf16-mixed if you intend to use it.
+            # elif self.trainer.precision == "bf16-mixed":
+            #     if next(self.parameters()).device.type == 'cpu':
+            #         self.to("cuda")
+            #     if next(self.parameters()).dtype != torch.bfloat16:
+            #         self.to(torch.bfloat16)
+            #         if hasattr(self, 'model') and next(self.model.parameters(), torch.tensor(0.0)).dtype != torch.bfloat16:
+            #             self.model.to(torch.bfloat16)
+            #         self.print(f"[INFO] Forcing LightningModule to BFloat16 precision on test start.")
+
+
+        
     def on_load_checkpoint(self, checkpoint: dict) -> None:
         """
         Force the scheduler to accept a larger total_steps when resuming.
