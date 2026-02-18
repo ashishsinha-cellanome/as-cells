@@ -57,7 +57,7 @@ class RTDETRLightningModule(pl.LightningModule):
     ):
         super().__init__()
         # breakpoint()
-        self.save_hyperparameters(ignore=['model', 'config', 'image_processor', 'val_coco_gt', 'test_coco_gt', 'train_coco_gt'])
+        self.save_hyperparameters(ignore=['image_processor', 'val_coco_gt', 'test_coco_gt', 'train_coco_gt'])
         self.model = model
         # self.model.train() # REMOVED: Managed by train() override below
         self.image_processor = image_processor
