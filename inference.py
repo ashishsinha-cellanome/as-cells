@@ -290,6 +290,9 @@ def run_folder_mode(config: DictConfig, model, processor):
         gt_coco_obj = None
         if coco_json_path and os.path.exists(os.path.join(folder_path, coco_json_path)):
              gt_coco_obj = COCO(os.path.join(folder_path, coco_json_path))
+             # Ensure 'info' key exists
+             if 'info' not in gt_coco_obj.dataset:
+                 gt_coco_obj.dataset['info'] = []
              # Map image filename to annotations
              for img_id in gt_coco_obj.getImgIds():
                  img_info = gt_coco_obj.loadImgs(img_id)[0]
