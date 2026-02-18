@@ -780,6 +780,10 @@ def _save_results(predictions_coco, per_image_analysis, coco_gt, label_map, clas
     """Save COCO metrics, per-image CSV, and aggregate JSON (shared by dataset and folder modes)."""
     metrics_summary = {}
 
+    # Ensure coco_gt has 'info' key to avoid KeyError
+    if coco_gt is not None and 'info' not in coco_gt.dataset:
+        coco_gt.dataset['info'] = []
+
     if len(predictions_coco) > 0 and coco_gt is not None:
         print("\nComputing COCO Metrics...")
         coco_dt = coco_gt.loadRes(predictions_coco)
