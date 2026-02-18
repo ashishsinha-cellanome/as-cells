@@ -945,6 +945,12 @@ def main(config: DictConfig):
     lightning_module.eval()
     lightning_module.cuda()
 
+    # Update output_dir to include checkpoint name (sanitized)
+    ckpt_stem = os.path.splitext(os.path.basename(ckpt_path))[0]
+    sanitized_stem = ckpt_stem.replace('=', '-')
+    base_output = config.inference.output_dir
+    config.inference.output_dir = os.path.join(base_output, sanitized_stem)
+    
     mode = config.inference.mode
     print(f"\n{'='*60}")
     print(f"Inference mode: {mode}")
