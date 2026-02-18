@@ -81,7 +81,6 @@ def run_dataset_mode(config: DictConfig, model, processor):
     )
     
     data_module.setup(stage="test")
-    breakpoint()
     test_loader = data_module.test_dataloader()
     coco_gt = data_module.test_dataset.dataset_coco.coco
 
