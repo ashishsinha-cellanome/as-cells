@@ -219,7 +219,7 @@ def run_folder_mode(config: DictConfig, model, processor):
 
     # Setup COCO GT object strictly for evaluation at the end
     coco_gt = COCO()
-    coco_gt.dataset = {"images": [], "annotations": [], "categories": []}
+    coco_gt.dataset = {"images": [], "annotations": [], "categories": [], "info": []}
     coco_gt.createIndex()
     
     # Categories
