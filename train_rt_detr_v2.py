@@ -670,7 +670,6 @@ def main(config: DictConfig):
         rank_zero_print("="*80 + "\n")
         if not ckpt_path:
             raise ValueError("Must provide a checkpoint path via 'initialization.load_from_checkpoint' for test-only mode.")
-        
         trainer.test(model, datamodule=data_module, ckpt_path=ckpt_path)
     else:
         rank_zero_print("\n" + "="*80)
