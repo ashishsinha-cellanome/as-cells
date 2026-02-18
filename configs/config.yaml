@@ -54,3 +54,4 @@ inference:
     overlap_x: 80
     overlap_y: 80
     nms_threshold: 0.15
+  use_ema: false       # if true, try to load 'ema_state_dict' from checkpoint

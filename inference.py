@@ -932,9 +932,14 @@ def main(config: DictConfig):
     )
 
     # Load state dict from checkpoint
-    if 'state_dict' in checkpoint:
+    if config.inference.get("use_ema", False) and 'ema_state_dict' in checkpoint:
+        print("[EMA] Loading EMA weights from checkpoint...")
+        lightning_module.model.load_state_dict(checkpoint['ema_state_dict'])
+    elif 'state_dict' in checkpoint:
+        print("[Weights] Loading standard weights from checkpoint...")
         lightning_module.load_state_dict(checkpoint['state_dict'], strict=False)
     else:
+        print("[Weights] Loading weights directly from checkpoint object...")
         lightning_module.load_state_dict(checkpoint, strict=False)
 
     lightning_module.eval()
