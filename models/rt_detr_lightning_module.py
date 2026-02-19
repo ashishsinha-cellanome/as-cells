@@ -65,6 +65,9 @@ class RTDETRLightningModule(pl.LightningModule):
         self.test_coco_gt = test_coco_gt
         self.train_coco_gt = train_coco_gt
         
+        # Allow loading checkpoints with extra keys (e.g. unused denoising weights)
+        self.strict_loading = False
+        
         # For validation metric accumulation
         self.validation_predictions = []
         self.validation_image_ids = []
@@ -541,18 +544,6 @@ class RTDETRLightningModule(pl.LightningModule):
                     self.model.half()
                 self.print(f"[INFO] Forcing LightningModule to Half precision (float16) on test start.")
             
-            # Add similar explicit checks for bf16-mixed if you intend to use it.
-            # elif self.trainer.precision == "bf16-mixed":
-            #     if next(self.parameters()).device.type == 'cpu':
-            #         self.to("cuda")
-            #     if next(self.parameters()).dtype != torch.bfloat16:
-            #         self.to(torch.bfloat16)
-            #         if hasattr(self, 'model') and next(self.model.parameters(), torch.tensor(0.0)).dtype != torch.bfloat16:
-            #             self.model.to(torch.bfloat16)
-            #         self.print(f"[INFO] Forcing LightningModule to BFloat16 precision on test start.")
-
-
-        
     def on_load_checkpoint(self, checkpoint: dict) -> None:
         """
         Force the scheduler to accept a larger total_steps when resuming.
