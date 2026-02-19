@@ -151,8 +151,6 @@ class RTDETRLightningModule(pl.LightningModule):
         
         return loss
     
-
-
     def on_validation_epoch_start(self):
         """Reset validation visualization counter."""
         self.val_viz_counter = 0
