@@ -1,6 +1,9 @@
 defaults:
   - backbone: dinov2
 
+name: rtdetr_v2_${model.backbone.name}_backbone
+input_size: ${model.rtdetr.input_size}
+
 rtdetr:
   # change this model name to swithc pretrained RT-DETR weights
   model_name: "rtdetr_v2_r50vd" # choices: rtdetr_v2_r18vd/ rtdetr_v2_r34vd/ rtdetr_v2_r50vd/ rtdetr_v2_r101vd

@@ -15,7 +15,7 @@ defaults:
 # --- Top-Level Global Settings ---
 seed: 42
 # run_name: "rtdetr_dinov2_${now:%Y-%m-%d_%H-%M-%S}"
-run_name: "rtdetrv2_${model.backbone.name}_${now:%Y-%m-%d}"
+run_name: "${model.name}_${now:%Y-%m-%d}"
 debug: false
 
 # allow remapping of labels

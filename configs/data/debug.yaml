@@ -3,7 +3,7 @@
 
 # data:
 path: "/global/home/ashish.sinha/cellanome/TRAINING_DATA"
-model_input_size: 672
+model_input_size: ${model.input_size}
 min_random_scale: 0.7
 max_random_scale: 1.0
 p_noise: 0.25

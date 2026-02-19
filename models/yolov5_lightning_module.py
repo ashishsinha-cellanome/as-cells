@@ -1,0 +1,311 @@
+import os
+import sys
+from pathlib import Path
+
+import torch
+import pytorch_lightning as pl
+
+from utils.coco_eval_utils import (
+    convert_preds_to_coco,
+    gather_outputs_across_processes,
+    broadcast_object,
+    compute_coco_metrics,
+)
+
+
+def _ensure_repo_import(repo_path: str):
+    repo = Path(repo_path).expanduser().resolve()
+    if not repo.exists():
+        raise FileNotFoundError(
+            f"YOLOv5 repo not found at: {repo}. Set model.yolov5.repo_path to official YOLOv5 source."
+        )
+    if str(repo) not in sys.path:
+        sys.path.insert(0, str(repo))
+    return repo
+
+
+class YOLOv5LightningModule(pl.LightningModule):
+    """Lightning module for official YOLOv5 training with COCO metrics."""
+
+    def __init__(
+        self,
+        config,
+        yolo_repo_path: str,
+        yolo_to_coco: dict,
+        split_path_to_image_id: dict,
+        val_coco_gt=None,
+        test_coco_gt=None,
+    ):
+        super().__init__()
+        self.config = config
+        self.yolo_repo_path = str(_ensure_repo_import(yolo_repo_path))
+        self.yolo_to_coco = {int(k): int(v) for k, v in yolo_to_coco.items()}
+        self.split_path_to_image_id = split_path_to_image_id
+        self.val_coco_gt = val_coco_gt
+        self.test_coco_gt = test_coco_gt
+
+        from models.yolo import Model  # type: ignore
+        from utils.loss import ComputeLoss  # type: ignore
+        from utils.general import non_max_suppression, scale_boxes  # type: ignore
+
+        self._non_max_suppression = non_max_suppression
+        self._scale_boxes = scale_boxes
+
+        model_cfg = self.config.model.yolov5
+        nc = len(self.config.model.label_map)
+        model_def = model_cfg.model_cfg
+        if not os.path.isabs(model_def):
+            model_def = str(Path(self.yolo_repo_path) / model_def)
+        model = Model(model_def, ch=3, nc=nc)
+        self._load_weights_if_available(model, model_cfg.weights)
+
+        self.model = model
+        self.compute_loss = ComputeLoss(self.model)
+        self.validation_step_outputs = []
+        self.test_step_outputs = []
+
+    def _load_weights_if_available(self, model, weights_path: str):
+        if not weights_path:
+            return
+        w = Path(weights_path).expanduser()
+        if not w.is_absolute():
+            w = Path(self.yolo_repo_path) / w
+        if not w.exists():
+            return
+        ckpt = torch.load(str(w), map_location="cpu")
+        state_dict = ckpt["model"].float().state_dict() if isinstance(ckpt, dict) and "model" in ckpt else ckpt
+        model.load_state_dict(state_dict, strict=False)
+
+    @property
+    def stride(self):
+        s = int(max(self.model.stride)) if hasattr(self.model, "stride") else 32
+        return max(s, 32)
+
+    def forward(self, images):
+        return self.model(images)
+
+    def _extract_model_outputs(self, model_output):
+        # YOLOv5 eval forward returns (pred, train_out); train forward returns train_out.
+        if isinstance(model_output, tuple) and len(model_output) == 2:
+            return model_output[0], model_output[1]
+        if isinstance(model_output, list):
+            return None, model_output
+        return model_output, None
+
+    def _map_label_ids(self, yolo_label_tensor):
+        mapped = []
+        for label in yolo_label_tensor.tolist():
+            mapped.append(self.yolo_to_coco.get(int(label), int(label)))
+        return torch.tensor(mapped, device=yolo_label_tensor.device, dtype=torch.int64)
+
+    def training_step(self, batch, batch_idx):
+        images, targets, _, _ = batch
+        images = images.to(self.device, non_blocking=True).float() / 255.0
+        targets = targets.to(self.device)
+
+        _, train_out = self._extract_model_outputs(self.model(images))
+        if train_out is None:
+            # If model returns only train outputs in train mode, use raw output.
+            train_out = self.model(images)
+
+        loss, loss_items = self.compute_loss(train_out, targets)
+        self.log("train/loss", loss, on_step=True, on_epoch=True, prog_bar=True, sync_dist=True)
+        if loss_items is not None and len(loss_items) >= 3:
+            self.log("train/box_loss", loss_items[0], on_step=False, on_epoch=True, sync_dist=True)
+            self.log("train/obj_loss", loss_items[1], on_step=False, on_epoch=True, sync_dist=True)
+            self.log("train/cls_loss", loss_items[2], on_step=False, on_epoch=True, sync_dist=True)
+        return loss
+
+    @torch.no_grad()
+    def _run_eval_step(self, batch, split_name: str):
+        images, targets, paths, shapes = batch
+        images = images.to(self.device, non_blocking=True).float() / 255.0
+        targets = targets.to(self.device)
+
+        infer_out, train_out = self._extract_model_outputs(self.model(images))
+        if infer_out is None and train_out is not None:
+            infer_out = train_out
+
+        if train_out is not None:
+            val_loss, _ = self.compute_loss(train_out, targets)
+            self.log(f"{split_name}/loss", val_loss, on_step=False, on_epoch=True, sync_dist=True)
+
+        pred_list = self._non_max_suppression(
+            infer_out,
+            conf_thres=float(self.config.model.detection_threshold),
+            iou_thres=float(self.config.model.yolov5.iou_threshold),
+            max_det=int(self.config.model.max_detections),
+        )
+
+        result_map = {}
+        image_ids = []
+        for sample_idx, pred in enumerate(pred_list):
+            image_path = paths[sample_idx]
+            file_name = Path(image_path).name
+            image_id = self.split_path_to_image_id.get(split_name, {}).get(file_name)
+            if image_id is None:
+                continue
+
+            image_ids.append(int(image_id))
+            if pred is None or len(pred) == 0:
+                result_map[int(image_id)] = {
+                    "boxes": torch.empty((0, 4), dtype=torch.float32),
+                    "scores": torch.empty((0,), dtype=torch.float32),
+                    "labels": torch.empty((0,), dtype=torch.int64),
+                }
+                continue
+
+            predn = pred.clone()
+            # Native image shape from dataloader metadata.
+            native_shape = shapes[sample_idx][0]
+            ratio_pad = shapes[sample_idx][1]
+            self._scale_boxes(images[sample_idx].shape[1:], predn[:, :4], native_shape, ratio_pad)
+            mapped_labels = self._map_label_ids(predn[:, 5].to(torch.int64))
+
+            result_map[int(image_id)] = {
+                "boxes": predn[:, :4].detach().cpu(),
+                "scores": predn[:, 4].detach().cpu(),
+                "labels": mapped_labels.detach().cpu(),
+            }
+
+        return {"predictions": result_map, "image_ids": image_ids}
+
+    @torch.no_grad()
+    def validation_step(self, batch, batch_idx):
+        output = self._run_eval_step(batch, split_name="val")
+        self.validation_step_outputs.append(output)
+        return output
+
+    def on_validation_epoch_end(self):
+        all_outputs = gather_outputs_across_processes(self.validation_step_outputs)
+        metrics = {}
+        if self.trainer.is_global_zero:
+            predictions = []
+            image_ids = []
+            for batch_out in all_outputs:
+                predictions.extend(convert_preds_to_coco(batch_out["predictions"]))
+                image_ids.extend(batch_out["image_ids"])
+
+            if len(predictions) > 0:
+                metrics = compute_coco_metrics(
+                    coco_gt=self.val_coco_gt,
+                    predictions=predictions,
+                    image_ids=list(set(image_ids)),
+                    max_detections=int(self.config.model.max_detections),
+                    label_map=self.config.model.label_map,
+                )
+            else:
+                metrics = {"map": 0.0, "map_50": 0.0, "map_75": 0.0}
+
+        metrics = broadcast_object(metrics, src=0)
+        for key, value in metrics.items():
+            self.log(f"val/{key}", value, prog_bar=(key in {"map", "map_50"}), sync_dist=True)
+            if key == "map":
+                self.log("val_map", value, prog_bar=False, sync_dist=True)
+
+        self.validation_step_outputs.clear()
+
+    @torch.no_grad()
+    def test_step(self, batch, batch_idx):
+        output = self._run_eval_step(batch, split_name="test")
+        self.test_step_outputs.append(output)
+        return output
+
+    def on_test_epoch_end(self):
+        all_outputs = gather_outputs_across_processes(self.test_step_outputs)
+        metrics = {}
+        if self.trainer.is_global_zero:
+            predictions = []
+            image_ids = []
+            for batch_out in all_outputs:
+                predictions.extend(convert_preds_to_coco(batch_out["predictions"]))
+                image_ids.extend(batch_out["image_ids"])
+
+            if len(predictions) > 0:
+                metrics = compute_coco_metrics(
+                    coco_gt=self.test_coco_gt,
+                    predictions=predictions,
+                    image_ids=list(set(image_ids)),
+                    max_detections=int(self.config.model.max_detections),
+                    label_map=self.config.model.label_map,
+                )
+            else:
+                metrics = {"map": 0.0, "map_50": 0.0, "map_75": 0.0}
+
+        metrics = broadcast_object(metrics, src=0)
+        for key, value in metrics.items():
+            self.log(f"test/{key}", value, prog_bar=(key in {"map", "map_50"}), sync_dist=True)
+
+        self.test_step_outputs.clear()
+
+    @torch.no_grad()
+    def predict_batch(self, images, conf_threshold=None, iou_threshold=None):
+        """Simple inference helper for external inference scripts."""
+        if conf_threshold is None:
+            conf_threshold = float(self.config.model.detection_threshold)
+        if iou_threshold is None:
+            iou_threshold = float(self.config.model.yolov5.iou_threshold)
+
+        images = images.to(self.device).float() / 255.0
+        infer_out, _ = self._extract_model_outputs(self.model(images))
+        preds = self._non_max_suppression(
+            infer_out,
+            conf_thres=float(conf_threshold),
+            iou_thres=float(iou_threshold),
+            max_det=int(self.config.model.max_detections),
+        )
+        return preds
+
+    def configure_optimizers(self):
+        opt_cfg = self.config.model.yolov5.optimizer
+        sch_cfg = self.config.scheduler
+
+        params = [p for p in self.model.parameters() if p.requires_grad]
+        if opt_cfg.type.lower() == "sgd":
+            optimizer = torch.optim.SGD(
+                params,
+                lr=float(opt_cfg.lr),
+                momentum=float(opt_cfg.momentum),
+                weight_decay=float(opt_cfg.weight_decay),
+                nesterov=bool(opt_cfg.nesterov),
+            )
+        else:
+            optimizer = torch.optim.AdamW(
+                params,
+                lr=float(opt_cfg.lr),
+                weight_decay=float(opt_cfg.weight_decay),
+            )
+
+        if sch_cfg.type == "onecycle":
+            total_steps = max(1, self.trainer.estimated_stepping_batches)
+            scheduler = {
+                "scheduler": torch.optim.lr_scheduler.OneCycleLR(
+                    optimizer,
+                    max_lr=float(opt_cfg.lr),
+                    total_steps=total_steps,
+                    pct_start=float(sch_cfg.pct_start),
+                    anneal_strategy="cos",
+                ),
+                "interval": "step",
+            }
+        elif sch_cfg.type == "cosine":
+            total_steps = max(1, self.trainer.estimated_stepping_batches)
+            scheduler = {
+                "scheduler": torch.optim.lr_scheduler.CosineAnnealingLR(
+                    optimizer,
+                    T_max=total_steps,
+                    eta_min=float(sch_cfg.eta_min),
+                ),
+                "interval": "step",
+            }
+        else:
+            scheduler = {
+                "scheduler": torch.optim.lr_scheduler.StepLR(
+                    optimizer,
+                    step_size=max(1, int(getattr(sch_cfg, "step_size", 10))),
+                    gamma=float(getattr(sch_cfg, "gamma", 0.1)),
+                ),
+                "interval": "epoch",
+            }
+
+        return {"optimizer": optimizer, "lr_scheduler": scheduler}
