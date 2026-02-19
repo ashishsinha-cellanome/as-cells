@@ -320,14 +320,6 @@ def setup_model(config: DictConfig) -> RTDETRLightningModule:
              if "model.backbone.backbone" in name: # The ViT part
                  param.requires_grad = False
 
-    # Check for EMA keys if EMA is enabled (just a warning)
-    if hasattr(config.model, 'ema') and config.model.ema.enabled:
-        # We can't easily check the checkpoint file here without reloading it, 
-        # but the LightningModule init will set up self.ema_model.
-        # If loading from a PL checkpoint later, strict=False handles it.
-        pass
-
-    # breakpoint()
     rtdetr_overrides = OmegaConf.to_container(config.model.rtdetr, resolve=True)
     rtdetr_overrides.pop("pretrained_name_or_path", None)
     rtdetr_overrides.pop("config_overrides", None)
@@ -429,13 +421,14 @@ def setup_callbacks(config: DictConfig):
     callbacks.append(
         ModelCheckpoint(
             dirpath=os.path.join(hydra.utils.to_absolute_path(checkpoint_config.save_dir), 'ckpts'),
-            filename='rtdetr-regular-{epoch:02d}-{' + checkpoint_config.monitor.replace('/', '_') + ':.4f}',
+            filename='rtdetr-regular-epoch{epoch:02d}-val_map{' + checkpoint_config.monitor.replace('/', '_') + ':.4f}',
             monitor=checkpoint_config.monitor,
             mode=checkpoint_config.mode,
             save_top_k=checkpoint_config.save_top_k,
             save_last=checkpoint_config.save_last, # 'last.ckpt' will be managed by this one
             every_n_epochs=checkpoint_config.every_n_epochs,
             verbose=True,
+            auto_insert_metric_name=False
         )
     )
 
@@ -452,13 +445,14 @@ def setup_callbacks(config: DictConfig):
         callbacks.append(
             ModelCheckpoint(
                 dirpath=os.path.join(hydra.utils.to_absolute_path(checkpoint_config.save_dir), 'ckpts'),
-                filename='rtdetr-ema-{epoch:02d}-{' + ema_monitor.replace('/', '_') + ':.4f}',
+                filename='rtdetr-ema-{epoch:02d}-val_map{' + ema_monitor.replace('/', '_') + ':.4f}',
                 monitor=ema_monitor,
                 mode=checkpoint_config.mode,
                 save_top_k=checkpoint_config.save_top_k,
                 save_last=False, # Don't duplicate 'last.ckpt' logic
                 every_n_epochs=checkpoint_config.every_n_epochs,
                 verbose=True,
+                auto_insert_metric_name=False
             )
         )
 
@@ -522,13 +516,13 @@ def main(config: DictConfig):
     for var in id_candidates:
         if os.environ.get(var):
             unique_id = os.environ.get(var)
-            rank_zero_print(f"🚀 Found Job ID from {var}: {unique_id}")
+            rank_zero_print(f"Found Job ID from {var}: {unique_id}")
             break
             
     if not unique_id:
         # Fallback to timestamp if no manager/launcher detected
         unique_id = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        rank_zero_print(f"⚠️  No shared job ID found. Using timestamp: {unique_id}")
+        rank_zero_print(f"No shared job ID found. Using timestamp: {unique_id}")
     
     # Standardize run naming: {original_run_name_with_date_from_yaml}_{unique_id}
     config.run_name = f"{config.run_name}_{unique_id}"
@@ -537,7 +531,7 @@ def main(config: DictConfig):
     hydra_cfg = HydraConfig.get()
     
     if hydra_cfg.mode == RunMode.MULTIRUN:
-        rank_zero_print(f"🚀 Detected Hydra Sweep (Job {hydra_cfg.job.num})")
+        rank_zero_print(f"Detected Hydra Sweep (Job {hydra_cfg.job.num})")
         
         # A. Set WandB Group
         # We group by the directory name Hydra created for this sweep (shared by all jobs)

@@ -110,10 +110,10 @@ class RTDETREMACallback(pl.Callback):
                 first_param_after = next(self.ema_model.module.parameters())
 
                 if torch.allclose(first_param_before, first_param_after, atol=1e-9):
-                    pl_module.print(f"⚠️  [EMA] WARNING: EMA weights did NOT change after update! Check implementation.")
+                    pl_module.print(f"[EMA] WARNING: EMA weights did NOT change after update! Check implementation.")
                 else:
                     diff = (first_param_after - first_param_before).abs().max().item()
-                    pl_module.print(f"✓ [EMA] First update successful. Max param change: {diff:.2e}")
+                    pl_module.print(f"[EMA] First update successful. Max param change: {diff:.2e}")
                 return  # Already updated above
 
         # Update EMA model
@@ -130,5 +130,5 @@ class RTDETREMACallback(pl.Callback):
         if 'ema_state_dict' in checkpoint:
             if self.ema_model is None:
                 self.ema_model = ModelEma(pl_module.model, decay=self.decay)
-            self.ema_model.module.load_state_dict(checkpoint['ema_state_dict'])
+            self.ema_model.module.load_state_dict(checkpoint['ema_state_dict'], strict=False)
             pl_module.print("[EMA Callback] Restored EMA state from checkpoint.")

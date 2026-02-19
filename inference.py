@@ -892,16 +892,20 @@ def main(config: DictConfig):
         RTDetrV2ForObjectDetectionWithCustomBackbone,
         RTDetrV2ConfigWithCustomBackBone
     )
-    from transformers import RTDetrV2ForObjectDetection
+    from transformers import RTDetrV2ForObjectDetection, RTDetrForObjectDetection
 
     model_checkpoint_path = config.model.rtdetr.pretrained_name_or_path
     print(f"Loading base model from: {model_checkpoint_path}")
 
     # Determine model class based on config
-    if hasattr(config.model, 'backbone') and hasattr(config.model.backbone, 'type'):
+    # if hasattr(config.model, 'backbone') and hasattr(config.model.backbone, 'type'):
+    #     model_cls = RTDetrV2ForObjectDetectionWithCustomBackbone
+    # else:
+    #     model_cls = RTDetrV2ForObjectDetection
+    if 'rtdetr_v2' in config.model.rtdetr.model_name:
         model_cls = RTDetrV2ForObjectDetectionWithCustomBackbone
     else:
-        model_cls = RTDetrV2ForObjectDetection
+        model_cls = RTDetrForObjectDetection
 
     # First, determine the number of classes from the checkpoint
     # by inspecting the shape of classification head weights
@@ -939,7 +943,7 @@ def main(config: DictConfig):
     # Load state dict from checkpoint
     if config.inference.get("use_ema", False) and 'ema_state_dict' in checkpoint:
         print("[EMA] Loading EMA weights from checkpoint...")
-        lightning_module.model.load_state_dict(checkpoint['ema_state_dict'])
+        lightning_module.model.load_state_dict(checkpoint['ema_state_dict'], strict=False)
     elif 'state_dict' in checkpoint:
         print("[Weights] Loading standard weights from checkpoint...")
         lightning_module.load_state_dict(checkpoint['state_dict'], strict=False)
