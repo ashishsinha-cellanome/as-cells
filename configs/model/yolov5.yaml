@@ -54,6 +54,11 @@ yolov5:
 
   dataset_cache_dir: ${hydra:runtime.cwd}/.cache/datasets/yolov5_${data.train_name}_${data.val_name}_${data.test_name}
 
+# --- EMA (Exponential Moving Average) ---
+use_ema: true           # Enable EMA model during training
+ema_decay: 0.9999       # EMA decay rate (higher = more stable)
+ema_warmup_steps: 0     # Steps before starting EMA updates (0 = start immediately)
+
 # --- General ---
 label_map:
   0: "cell"
