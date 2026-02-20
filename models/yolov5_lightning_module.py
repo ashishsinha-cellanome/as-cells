@@ -98,6 +98,35 @@ class YOLOv5LightningModule(pl.LightningModule):
             mapped.append(self.yolo_to_coco.get(int(label), int(label)))
         return torch.tensor(mapped, device=yolo_label_tensor.device, dtype=torch.int64)
 
+    def _log_loss_items(self, split: str, loss_items):
+        """
+        Log all available YOLO loss components.
+        Official YOLOv5 typically returns [box, obj, cls], but we keep this dynamic
+        so extra terms are also logged if present.
+        """
+        if loss_items is None:
+            return
+
+        if isinstance(loss_items, torch.Tensor):
+            values = loss_items.detach().float().view(-1).tolist()
+        elif isinstance(loss_items, (list, tuple)):
+            values = []
+            for item in loss_items:
+                if isinstance(item, torch.Tensor):
+                    values.append(float(item.detach().float().item()))
+                else:
+                    values.append(float(item))
+        else:
+            return
+
+        default_names = ["box_loss", "obj_loss", "cls_loss"]
+        for idx, value in enumerate(values):
+            if idx < len(default_names):
+                name = default_names[idx]
+            else:
+                name = f"loss_{idx}"
+            self.log(f"{split}/{name}", value, on_step=False, on_epoch=True, sync_dist=True)
+
     def training_step(self, batch, batch_idx):
         images, targets, _, _ = batch
         images = images.to(self.device, non_blocking=True).float() / 255.0
@@ -110,10 +139,7 @@ class YOLOv5LightningModule(pl.LightningModule):
 
         loss, loss_items = self.compute_loss(train_out, targets)
         self.log("train/loss", loss, on_step=True, on_epoch=True, prog_bar=True, sync_dist=True)
-        if loss_items is not None and len(loss_items) >= 3:
-            self.log("train/box_loss", loss_items[0], on_step=False, on_epoch=True, sync_dist=True)
-            self.log("train/obj_loss", loss_items[1], on_step=False, on_epoch=True, sync_dist=True)
-            self.log("train/cls_loss", loss_items[2], on_step=False, on_epoch=True, sync_dist=True)
+        self._log_loss_items("train", loss_items)
         return loss
 
     @torch.no_grad()
@@ -127,8 +153,9 @@ class YOLOv5LightningModule(pl.LightningModule):
             infer_out = train_out
 
         if train_out is not None:
-            val_loss, _ = self.compute_loss(train_out, targets)
+            val_loss, loss_items = self.compute_loss(train_out, targets)
             self.log(f"{split_name}/loss", val_loss, on_step=False, on_epoch=True, sync_dist=True)
+            self._log_loss_items(split_name, loss_items)
 
         pred_list = self._non_max_suppression(
             infer_out,
