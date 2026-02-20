@@ -1,5 +1,6 @@
 import os
 import sys
+import importlib.util
 from pathlib import Path
 
 import torch
@@ -11,6 +12,26 @@ from utils.coco_eval_utils import (
     broadcast_object,
     compute_coco_metrics,
 )
+
+
+def _import_from_yolo_repo(repo_path: str, module_path: str, import_name: str):
+    """Import a module from the YOLOv5 repository by explicit file path."""
+    repo = Path(repo_path).expanduser().resolve()
+    if not repo.exists():
+        raise FileNotFoundError(
+            f"YOLOv5 repo not found at: {repo}. Set model.yolov5.repo_path to official YOLOv5 source."
+        )
+
+    file_path = repo / module_path
+    if not file_path.exists():
+        raise FileNotFoundError(
+            f"Module file not found at: {file_path}"
+        )
+
+    spec = importlib.util.spec_from_file_location(import_name, file_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def _ensure_repo_import(repo_path: str):
@@ -42,9 +63,15 @@ class YOLOv5LightningModule(pl.LightningModule):
         self.val_coco_gt = val_coco_gt
         self.test_coco_gt = test_coco_gt
 
-        from models.yolo import Model  # type: ignore
-        from utils.loss import ComputeLoss  # type: ignore
-        from utils.general import non_max_suppression  # type: ignore
+        # Import modules explicitly from YOLOv5 repo by file path
+        yolo_module = _import_from_yolo_repo(self.yolo_repo_path, "models/yolo.py", "yolo_models")
+        Model = yolo_module.Model
+
+        utils_loss = _import_from_yolo_repo(self.yolo_repo_path, "utils/loss.py", "yolo_loss")
+        ComputeLoss = utils_loss.ComputeLoss
+
+        utils_general = _import_from_yolo_repo(self.yolo_repo_path, "utils/general.py", "yolo_general")
+        non_max_suppression = utils_general.non_max_suppression
 
         self._non_max_suppression = non_max_suppression
 

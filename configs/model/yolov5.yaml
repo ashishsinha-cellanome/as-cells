@@ -3,7 +3,7 @@ input_size: 640
 
 yolov5:
   # Must point to official YOLOv5 source tree.
-  repo_path: ${hydra:runtime.cwd}/YOLOv5
+  repo_path: ${hydra:runtime.cwd}/models/yolov5
 
   # Official YOLOv5 model definition yaml (relative to repo_path or absolute path).
   model_cfg: models/yolov5s.yaml
