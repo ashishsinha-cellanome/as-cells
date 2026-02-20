@@ -152,6 +152,9 @@ class YOLOv5DataModule(pl.LightningDataModule):
         self.coco_cat_to_model_id: Dict[int, int] = {}
         self.model_to_coco_map: Dict[int, int] = {}
 
+        # Track if setup has been called to avoid re-loading
+        self._setup_called = False
+
     def _build_class_maps(self, train_coco):
         target_label_map = {int(k): v for k, v in self.config.model.label_map.items()}
         name_to_model_id = {name: model_id for model_id, name in target_label_map.items()}
@@ -194,6 +197,10 @@ class YOLOv5DataModule(pl.LightningDataModule):
         )
 
     def setup(self, stage=None):
+        # Skip if already set up to avoid re-loading data
+        if self._setup_called:
+            return
+
         train_coco = CocoDetection(
             root=str(Path(self.dataset_root) / "images" / self.config.train_name),
             annFile=str(Path(self.dataset_root) / f"{self.config.train_name}_annotations.json"),
@@ -225,6 +232,9 @@ class YOLOv5DataModule(pl.LightningDataModule):
                 transforms=self._build_transforms(train=False),
                 coco_cat_to_model_id=self.coco_cat_to_model_id,
             )
+
+        # Mark setup as called
+        self._setup_called = True
 
     @property
     def val_coco_gt(self):

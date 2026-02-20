@@ -199,8 +199,9 @@ class YOLOv5LightningModule(pl.LightningModule):
         images, targets = batch[0], batch[1]
         images = images.to(self.device, non_blocking=True).float() / 255.0
 
-        # Ensure targets are on the same device as model
+        # Ensure targets and model are on the same device as model
         targets = targets.to(self.device, non_blocking=True).float()
+        self.model = self.model.to(self.device)
 
         _, train_out = self._extract_model_outputs(self.model(images))
         if train_out is None:
@@ -217,9 +218,9 @@ class YOLOv5LightningModule(pl.LightningModule):
         images, targets, _, shapes, batch_image_ids = batch
         images = images.to(self.device, non_blocking=True).float() / 255.0
 
-        # Ensure targets are on the same device as model
-        # Use detach + clone to ensure targets are properly on device
+        # Ensure targets and model are on the same device
         targets = targets.to(self.device, non_blocking=True).float()
+        self.model = self.model.to(self.device)
 
         infer_out, train_out = self._extract_model_outputs(self.model(images))
         if infer_out is None and train_out is not None:
