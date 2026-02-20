@@ -312,7 +312,7 @@ class RTDETRLightningModule(pl.LightningModule):
                         coco_gt=self.val_coco_gt
                     )
             else:
-                self.print(f"⚠️  [Val] WARNING: No predictions made! Logging 0.0 metrics.")
+                self.print(f"[Val] WARNING: No predictions made! Logging 0.0 metrics.")
                 metrics = {'map': 0.0, 'map_50': 0.0, 'map_75': 0.0}
 
         # Broadcast metrics from Rank 0 to all other ranks
@@ -690,7 +690,12 @@ class RTDETRLightningModule(pl.LightningModule):
                     s_50 = precisions[0, :, i, 0, -1]
                     if len(s_50[s_50 > -1]) > 0:
                         metrics[f'map_50_{cat_name}'] = round(float(np.mean(s_50[s_50 > -1])), 4)
-                        
+                    
+                    # compute recalls as well
+                    recalls = coco_evaluator.eval['recall'][:, i, 0, -1]
+                    if len(recalls[recalls > -1]) > 0:
+                        metrics[f'mar_{cat_name}'] = round(float(np.mean(recalls[recalls > -1])), 4)
+
         except Exception as e:
             self.print(f"Error computing COCO metrics: {e}")
             import traceback

@@ -37,6 +37,18 @@ class RFDETRLightningModule(pl.LightningModule):
         loss = sum(loss_dict[k] * weight_dict[k] for k in loss_dict if k in weight_dict)
         return loss, loss_dict, weight_dict
 
+    def _log_loss_dict(self, split: str, loss_dict, weight_dict):
+        """
+        Log all loss terms from RF-DETR criterion.
+        For weighted terms we log both unscaled and scaled values.
+        """
+        for key, value in loss_dict.items():
+            self.log(f"{split}/{key}_unscaled", value, on_step=False, on_epoch=True, sync_dist=True)
+            if key in weight_dict:
+                self.log(f"{split}/{key}", value * weight_dict[key], on_step=False, on_epoch=True, sync_dist=True)
+            else:
+                self.log(f"{split}/{key}", value, on_step=False, on_epoch=True, sync_dist=True)
+
     def training_step(self, batch, batch_idx):
         samples, targets = batch
         samples = samples.to(self.device)
@@ -46,12 +58,7 @@ class RFDETRLightningModule(pl.LightningModule):
         loss, loss_dict, weight_dict = self._compute_loss(outputs, targets)
 
         self.log("train/loss", loss, on_step=True, on_epoch=True, prog_bar=True, sync_dist=True)
-        for key, value in loss_dict.items():
-            metric_name = f"train/{key}"
-            if key in weight_dict:
-                self.log(metric_name, value * weight_dict[key], on_step=False, on_epoch=True, sync_dist=True)
-            else:
-                self.log(metric_name, value, on_step=False, on_epoch=True, sync_dist=True)
+        self._log_loss_dict("train", loss_dict, weight_dict)
 
         return loss
 
@@ -74,12 +81,7 @@ class RFDETRLightningModule(pl.LightningModule):
         outputs = self.model(samples)
         loss, loss_dict, weight_dict = self._compute_loss(outputs, targets)
         self.log("val/loss", loss, on_step=False, on_epoch=True, prog_bar=False, sync_dist=True)
-        for key, value in loss_dict.items():
-            metric_name = f"val/{key}"
-            if key in weight_dict:
-                self.log(metric_name, value * weight_dict[key], on_step=False, on_epoch=True, sync_dist=True)
-            else:
-                self.log(metric_name, value, on_step=False, on_epoch=True, sync_dist=True)
+        self._log_loss_dict("val", loss_dict, weight_dict)
 
         predictions, image_ids = self._collect_batch_predictions(outputs, targets)
         self.validation_step_outputs.append({"predictions": predictions, "image_ids": image_ids})
