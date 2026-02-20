@@ -32,8 +32,8 @@ def _write_meta(meta_path: Path, payload):
         json.dump(payload, fh)
 
 
-def _safe_symlink(src: Path, dst: Path):
-    """Create or refresh a symlink, falling back to copy if symlink fails."""
+def _safe_symlink(src: Path, dst: Path, allow_copy_fallback: bool = False):
+    """Create or refresh a symlink. Optional copy fallback is disabled by default."""
     if dst.is_symlink():
         try:
             if dst.resolve() == src.resolve():
@@ -49,10 +49,16 @@ def _safe_symlink(src: Path, dst: Path):
     try:
         dst.symlink_to(src, target_is_directory=src.is_dir())
     except OSError:
-        if src.is_dir():
-            shutil.copytree(src, dst)
+        if allow_copy_fallback:
+            if src.is_dir():
+                shutil.copytree(src, dst)
+            else:
+                shutil.copy2(src, dst)
         else:
-            shutil.copy2(src, dst)
+            raise RuntimeError(
+                f"Failed to create symlink '{dst}' -> '{src}'. "
+                "Copy fallback is disabled to avoid duplicating image data."
+            )
 
 
 def _load_coco(path: Path):
@@ -113,7 +119,7 @@ def prepare_rfdetr_roboflow_layout(
         split_dir = out_root / target_split
         split_dir.mkdir(parents=True, exist_ok=True)
         split_images_dir = split_dir / "images"
-        _safe_symlink(src_img_dir, split_images_dir)
+        _safe_symlink(src_img_dir, split_images_dir, allow_copy_fallback=False)
 
         coco = _load_coco(src_ann)
         images = coco.get("images", [])
@@ -265,7 +271,7 @@ def prepare_yolov5_layout(
         coco_payload = _load_coco(src_ann_path)
 
         dst_img_dir = out_root / "images" / target_split
-        _safe_symlink(src_img_dir, dst_img_dir)
+        _safe_symlink(src_img_dir, dst_img_dir, allow_copy_fallback=False)
         dst_label_dir = out_root / "labels" / target_split
 
         split_path_to_image_id[target_split] = _convert_coco_annotations_to_yolo(
