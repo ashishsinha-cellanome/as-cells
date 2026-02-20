@@ -1,5 +1,7 @@
 **/*.ipynb
-
+*.pth
+*.ckpt
+*.pt
 test_ema_safety.py
 GEMINI.md
 ClAUDE.md
