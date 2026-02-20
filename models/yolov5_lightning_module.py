@@ -117,10 +117,25 @@ class YOLOv5LightningModule(pl.LightningModule):
         model.hyp = dict(model_cfg.hyp)
 
         self.model = model
-        # Register compute_loss as a submodule so Lightning auto-moves it to device
-        self.compute_loss = ComputeLoss(self.model)
+        # Store ComputeLoss class for later instantiation on device
+        self._ComputeLossClass = ComputeLoss
+        self._compute_loss = None
         self.validation_step_outputs = []
         self.test_step_outputs = []
+
+    @property
+    def compute_loss(self):
+        """Lazy initialization of compute_loss to ensure it's created on the correct device."""
+        if self._compute_loss is None:
+            self._compute_loss = self._ComputeLossClass(self.model)
+            # Move to device if available
+            if hasattr(self._compute_loss, 'to') and hasattr(self, '_device'):
+                self._compute_loss = self._compute_loss.to(self._device)
+        return self._compute_loss
+
+    @compute_loss.setter
+    def compute_loss(self, value):
+        self._compute_loss = value
 
     def _load_weights_if_available(self, model, weights_path: str):
         if not weights_path:
@@ -134,15 +149,19 @@ class YOLOv5LightningModule(pl.LightningModule):
         state_dict = ckpt["model"].float().state_dict() if isinstance(ckpt, dict) and "model" in ckpt else ckpt
         model.load_state_dict(state_dict, strict=False)
 
-    def on_train_start(self):
-        """Move compute_loss to device at training start."""
-        if hasattr(self.compute_loss, 'to'):
-            self.compute_loss = self.compute_loss.to(self.device)
-
     def on_sanity_check_start(self):
-        """Move compute_loss to device before sanity check."""
-        if hasattr(self.compute_loss, 'to'):
-            self.compute_loss = self.compute_loss.to(self.device)
+        """Move model to device before sanity check and initialize compute_loss."""
+        self.model = self.model.to(self.device)
+        self._device = self.device
+        # Force compute_loss initialization on correct device
+        _ = self.compute_loss
+
+    def on_train_start(self):
+        """Move model to device at training start and initialize compute_loss."""
+        self.model = self.model.to(self.device)
+        self._device = self.device
+        # Force compute_loss initialization on correct device
+        _ = self.compute_loss
 
     @property
     def stride(self):
@@ -211,6 +230,9 @@ class YOLOv5LightningModule(pl.LightningModule):
         images = images.to(self.device, non_blocking=True).float() / 255.0
         targets = targets.to(self.device, non_blocking=True).float()
 
+        # Ensure model is on device before using compute_loss
+        self.model = self.model.to(self.device)
+
         _, train_out = self._extract_model_outputs(self.model(images))
         if train_out is None:
             train_out = self.model(images)
@@ -225,6 +247,9 @@ class YOLOv5LightningModule(pl.LightningModule):
         images, targets, _, shapes, batch_image_ids = batch
         images = images.to(self.device, non_blocking=True).float() / 255.0
         targets = targets.to(self.device, non_blocking=True).float()
+
+        # Ensure model is on device before using compute_loss
+        self.model = self.model.to(self.device)
 
         infer_out, train_out = self._extract_model_outputs(self.model(images))
         if infer_out is None and train_out is not None:
