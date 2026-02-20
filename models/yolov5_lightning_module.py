@@ -31,25 +31,22 @@ class YOLOv5LightningModule(pl.LightningModule):
         self,
         config,
         yolo_repo_path: str,
-        yolo_to_coco: dict,
-        split_path_to_image_id: dict,
+        model_to_coco: dict,
         val_coco_gt=None,
         test_coco_gt=None,
     ):
         super().__init__()
         self.config = config
         self.yolo_repo_path = str(_ensure_repo_import(yolo_repo_path))
-        self.yolo_to_coco = {int(k): int(v) for k, v in yolo_to_coco.items()}
-        self.split_path_to_image_id = split_path_to_image_id
+        self.model_to_coco = {int(k): int(v) for k, v in model_to_coco.items()}
         self.val_coco_gt = val_coco_gt
         self.test_coco_gt = test_coco_gt
 
         from models.yolo import Model  # type: ignore
         from utils.loss import ComputeLoss  # type: ignore
-        from utils.general import non_max_suppression, scale_boxes  # type: ignore
+        from utils.general import non_max_suppression  # type: ignore
 
         self._non_max_suppression = non_max_suppression
-        self._scale_boxes = scale_boxes
 
         model_cfg = self.config.model.yolov5
         nc = len(self.config.model.label_map)
@@ -95,8 +92,19 @@ class YOLOv5LightningModule(pl.LightningModule):
     def _map_label_ids(self, yolo_label_tensor):
         mapped = []
         for label in yolo_label_tensor.tolist():
-            mapped.append(self.yolo_to_coco.get(int(label), int(label)))
+            mapped.append(self.model_to_coco.get(int(label), int(label)))
         return torch.tensor(mapped, device=yolo_label_tensor.device, dtype=torch.int64)
+
+    def _undo_letterbox(self, boxes_xyxy: torch.Tensor, shape_meta):
+        """Map boxes from letterboxed model-input coordinates back to original image coordinates."""
+        (h0, w0), (ratio, (dw, dh)) = shape_meta
+        boxes = boxes_xyxy.clone()
+        boxes[:, [0, 2]] -= float(dw)
+        boxes[:, [1, 3]] -= float(dh)
+        boxes[:, :4] /= float(ratio)
+        boxes[:, [0, 2]] = boxes[:, [0, 2]].clamp(0, float(w0))
+        boxes[:, [1, 3]] = boxes[:, [1, 3]].clamp(0, float(h0))
+        return boxes
 
     def _log_loss_items(self, split: str, loss_items):
         """
@@ -128,7 +136,7 @@ class YOLOv5LightningModule(pl.LightningModule):
             self.log(f"{split}/{name}", value, on_step=False, on_epoch=True, sync_dist=True)
 
     def training_step(self, batch, batch_idx):
-        images, targets, _, _ = batch
+        images, targets = batch[0], batch[1]
         images = images.to(self.device, non_blocking=True).float() / 255.0
         targets = targets.to(self.device)
 
@@ -144,7 +152,7 @@ class YOLOv5LightningModule(pl.LightningModule):
 
     @torch.no_grad()
     def _run_eval_step(self, batch, split_name: str):
-        images, targets, paths, shapes = batch
+        images, targets, _, shapes, batch_image_ids = batch
         images = images.to(self.device, non_blocking=True).float() / 255.0
         targets = targets.to(self.device)
 
@@ -167,12 +175,7 @@ class YOLOv5LightningModule(pl.LightningModule):
         result_map = {}
         image_ids = []
         for sample_idx, pred in enumerate(pred_list):
-            image_path = paths[sample_idx]
-            file_name = Path(image_path).name
-            image_id = self.split_path_to_image_id.get(split_name, {}).get(file_name)
-            if image_id is None:
-                continue
-
+            image_id = int(batch_image_ids[sample_idx])
             image_ids.append(int(image_id))
             if pred is None or len(pred) == 0:
                 result_map[int(image_id)] = {
@@ -183,10 +186,7 @@ class YOLOv5LightningModule(pl.LightningModule):
                 continue
 
             predn = pred.clone()
-            # Native image shape from dataloader metadata.
-            native_shape = shapes[sample_idx][0]
-            ratio_pad = shapes[sample_idx][1]
-            self._scale_boxes(images[sample_idx].shape[1:], predn[:, :4], native_shape, ratio_pad)
+            predn[:, :4] = self._undo_letterbox(predn[:, :4], shapes[sample_idx])
             mapped_labels = self._map_label_ids(predn[:, 5].to(torch.int64))
 
             result_map[int(image_id)] = {

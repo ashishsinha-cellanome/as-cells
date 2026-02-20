@@ -12,11 +12,9 @@ from omegaconf import DictConfig, OmegaConf
 from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint, ModelSummary
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.plugins.environments import SLURMEnvironment
-from torchvision.datasets import CocoDetection
 
 from data.yolov5_data_module import YOLOv5DataModule
 from models.yolov5_lightning_module import YOLOv5LightningModule
-from utils.data_layout_utils import prepare_yolov5_layout
 from utils.distributed_utils import rank_zero_print, setup_cluster_env
 from utils.train_utils import BackupToNASCallback
 
@@ -83,14 +81,6 @@ def _resolve_run_name(config: DictConfig):
     config.run_name = f"{config.run_name}_{unique_id}"
 
 
-def _build_coco_gt(dataset_root: str, split_name: str):
-    img_dir = os.path.join(dataset_root, "images", split_name)
-    ann_file = os.path.join(dataset_root, f"{split_name}_annotations.json")
-    coco = CocoDetection(root=img_dir, annFile=ann_file, transforms=None).coco
-    coco.dataset["info"] = {}
-    return coco
-
-
 @hydra.main(config_path="configs", config_name="config.yaml", version_base=None)
 def main(config: DictConfig):
     OmegaConf.set_struct(config, False)
@@ -102,38 +92,22 @@ def main(config: DictConfig):
     pl.seed_everything(config.seed, workers=True)
 
     raw_dataset_root = to_absolute_path(config.data.path)
-    cache_root = to_absolute_path(config.model.yolov5.dataset_cache_dir)
-    rank_zero_print(f"[Startup] Preparing YOLOv5 layout cache at: {cache_root}")
-    yolo_layout = prepare_yolov5_layout(
-        dataset_path=raw_dataset_root,
-        cache_root=cache_root,
-        train_name=config.train_name,
-        val_name=config.val_name,
-        test_name=config.test_name,
-        label_map=config.model.label_map,
-    )
-    rank_zero_print("[Startup] YOLOv5 layout ready.")
-
-    rank_zero_print("[Startup] Loading COCO GT for val/test metrics...")
-    val_coco_gt = _build_coco_gt(raw_dataset_root, config.val_name)
-    test_coco_gt = _build_coco_gt(raw_dataset_root, config.test_name)
+    rank_zero_print(f"[Startup] Using YOLOv5 COCO dataset path: {raw_dataset_root}")
 
     yolo_repo_path = to_absolute_path(config.model.yolov5.repo_path)
+    data_module = YOLOv5DataModule(
+        dataset_root=raw_dataset_root,
+        config=config,
+    )
+    data_module.setup("fit")
+    data_module.setup("test")
+
     lightning_model = YOLOv5LightningModule(
         config=config,
         yolo_repo_path=yolo_repo_path,
-        yolo_to_coco=yolo_layout["yolo_to_coco"],
-        split_path_to_image_id=yolo_layout["split_path_to_image_id"],
-        val_coco_gt=val_coco_gt,
-        test_coco_gt=test_coco_gt,
-    )
-
-    data_module = YOLOv5DataModule(
-        yolo_repo_path=yolo_repo_path,
-        dataset_root=yolo_layout["root"],
-        config=config,
-        stride=lightning_model.stride,
-        split_path_to_image_id=yolo_layout["split_path_to_image_id"],
+        model_to_coco=data_module.model_to_coco_map,
+        val_coco_gt=data_module.val_coco_gt,
+        test_coco_gt=data_module.test_coco_gt,
     )
 
     logger = _setup_logger(config)
