@@ -344,11 +344,14 @@ class YOLOv5LightningModule(pl.LightningModule):
         return preds
 
     def configure_optimizers(self):
-        opt_cfg = self.config.optimizer
+        opt_cfg = self.config.optimizer.optimizer
         sch_cfg = self.config.scheduler
 
         params = [p for p in self.model.parameters() if p.requires_grad]
-        if opt_cfg.type.lower() == "sgd":
+
+        # Determine optimizer type based on available config keys
+        # If momentum and nesterov are present, use SGD; otherwise use AdamW
+        if "momentum" in opt_cfg and "nesterov" in opt_cfg:
             optimizer = torch.optim.SGD(
                 params,
                 lr=float(opt_cfg.lr),

@@ -103,8 +103,10 @@ def main(config: DictConfig):
         dataset_root=raw_dataset_root,
         config=config,
     )
-    data_module.setup("fit")
-    data_module.setup("test")
+
+    # Setup data module once to prepare train/val/test splits and compute COCO annotations
+    # Trainer will reuse this setup instead of calling it again
+    data_module.setup(stage=None)
 
     lightning_model = YOLOv5LightningModule(
         config=config,
