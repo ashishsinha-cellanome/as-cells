@@ -103,6 +103,7 @@ def main(config: DictConfig):
 
     raw_dataset_root = to_absolute_path(config.data.path)
     cache_root = to_absolute_path(config.model.yolov5.dataset_cache_dir)
+    rank_zero_print(f"[Startup] Preparing YOLOv5 layout cache at: {cache_root}")
     yolo_layout = prepare_yolov5_layout(
         dataset_path=raw_dataset_root,
         cache_root=cache_root,
@@ -111,7 +112,9 @@ def main(config: DictConfig):
         test_name=config.test_name,
         label_map=config.model.label_map,
     )
+    rank_zero_print("[Startup] YOLOv5 layout ready.")
 
+    rank_zero_print("[Startup] Loading COCO GT for val/test metrics...")
     val_coco_gt = _build_coco_gt(raw_dataset_root, config.val_name)
     test_coco_gt = _build_coco_gt(raw_dataset_root, config.test_name)
 

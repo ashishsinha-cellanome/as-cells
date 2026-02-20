@@ -111,6 +111,7 @@ def main(config: DictConfig):
     pl.seed_everything(config.seed, workers=True)
 
     cache_dir = to_absolute_path(config.model.rfdetr.dataset_cache_dir)
+    rank_zero_print(f"[Startup] Preparing RF-DETR layout cache at: {cache_dir}")
     staged_dataset_dir = prepare_rfdetr_roboflow_layout(
         dataset_path=to_absolute_path(config.data.path),
         cache_root=cache_dir,
@@ -118,11 +119,13 @@ def main(config: DictConfig):
         val_name=config.val_name,
         test_name=config.test_name,
     )
+    rank_zero_print("[Startup] RF-DETR layout ready.")
 
     label_map = {int(k): v for k, v in config.model.label_map.items()}
     class_names = [label_map[idx] for idx in sorted(label_map.keys())]
 
     rf_model_cls = _get_model_class(config.model.rfdetr.size)
+    rank_zero_print(f"[Startup] Building RF-DETR model ({config.model.rfdetr.size})...")
     rf_wrapper = rf_model_cls(
         pretrain_weights=config.model.rfdetr.pretrain_weights,
         resolution=int(config.model.input_size),
