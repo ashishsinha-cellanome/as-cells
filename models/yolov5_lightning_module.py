@@ -122,7 +122,9 @@ class YOLOv5LightningModule(pl.LightningModule):
         self._compute_loss = None
         self._compute_loss_device = None
         self.validation_step_outputs = []
+        self.ema_validation_step_outputs = []
         self.test_step_outputs = []
+        self.ema_test_step_outputs = []
 
     @property
     def compute_loss(self):
@@ -198,6 +200,40 @@ class YOLOv5LightningModule(pl.LightningModule):
         boxes[:, [1, 3]] = boxes[:, [1, 3]].clamp(0, float(h0))
         return boxes
 
+    def _process_predictions(self, model_output, shapes, batch_image_ids):
+        """Helper to process model predictions (called by both standard and EMA models)."""
+        pred_list = self._non_max_suppression(
+            model_output,
+            conf_thres=float(self.config.model.detection_threshold),
+            iou_thres=float(self.config.model.yolov5.iou_threshold),
+            max_det=int(self.config.model.max_detections),
+        )
+
+        result_map = {}
+        image_ids = []
+        for sample_idx, pred in enumerate(pred_list):
+            image_id = int(batch_image_ids[sample_idx])
+            image_ids.append(int(image_id))
+            if pred is None or len(pred) == 0:
+                result_map[int(image_id)] = {
+                    "boxes": torch.empty((0, 4), dtype=torch.float32),
+                    "scores": torch.empty((0,), dtype=torch.float32),
+                    "labels": torch.empty((0,), dtype=torch.int64),
+                }
+                continue
+
+            predn = pred.clone()
+            predn[:, :4] = self._undo_letterbox(predn[:, :4], shapes[sample_idx])
+            mapped_labels = self._map_label_ids(predn[:, 5].to(torch.int64))
+
+            result_map[int(image_id)] = {
+                "boxes": predn[:, :4].detach().cpu(),
+                "scores": predn[:, 4].detach().cpu(),
+                "labels": mapped_labels.detach().cpu(),
+            }
+
+        return {"predictions": result_map, "image_ids": image_ids}
+
     def _log_loss_items(self, split: str, loss_items):
         """
         Log all available YOLO loss components.
@@ -253,6 +289,7 @@ class YOLOv5LightningModule(pl.LightningModule):
         # Ensure model is on device before using compute_loss
         self.model = self.model.to(self.device)
 
+        # Standard model predictions
         infer_out, train_out = self._extract_model_outputs(self.model(images))
         if infer_out is None and train_out is not None:
             infer_out = train_out
@@ -262,42 +299,29 @@ class YOLOv5LightningModule(pl.LightningModule):
             self.log(f"{split_name}/loss", val_loss, on_step=False, on_epoch=True, sync_dist=True)
             self._log_loss_items(split_name, loss_items)
 
-        pred_list = self._non_max_suppression(
-            infer_out,
-            conf_thres=float(self.config.model.detection_threshold),
-            iou_thres=float(self.config.model.yolov5.iou_threshold),
-            max_det=int(self.config.model.max_detections),
-        )
+        result = self._process_predictions(infer_out, shapes, batch_image_ids)
 
-        result_map = {}
-        image_ids = []
-        for sample_idx, pred in enumerate(pred_list):
-            image_id = int(batch_image_ids[sample_idx])
-            image_ids.append(int(image_id))
-            if pred is None or len(pred) == 0:
-                result_map[int(image_id)] = {
-                    "boxes": torch.empty((0, 4), dtype=torch.float32),
-                    "scores": torch.empty((0,), dtype=torch.float32),
-                    "labels": torch.empty((0,), dtype=torch.int64),
-                }
-                continue
+        # EMA model predictions (if available)
+        ema_result = None
+        from utils.ema import RTDETREMACallback
+        ema_callback = next((cb for cb in self.trainer.callbacks if isinstance(cb, RTDETREMACallback)), None)
+        if ema_callback and ema_callback.ema_model:
+            ema_infer_out, ema_train_out = self._extract_model_outputs(ema_callback.ema_model.module(images))
+            if ema_infer_out is None and ema_train_out is not None:
+                ema_infer_out = ema_train_out
+            ema_result = self._process_predictions(ema_infer_out, shapes, batch_image_ids)
 
-            predn = pred.clone()
-            predn[:, :4] = self._undo_letterbox(predn[:, :4], shapes[sample_idx])
-            mapped_labels = self._map_label_ids(predn[:, 5].to(torch.int64))
-
-            result_map[int(image_id)] = {
-                "boxes": predn[:, :4].detach().cpu(),
-                "scores": predn[:, 4].detach().cpu(),
-                "labels": mapped_labels.detach().cpu(),
-            }
-
-        return {"predictions": result_map, "image_ids": image_ids}
+        return {"predictions": result["predictions"], "image_ids": result["image_ids"], "ema_predictions": ema_result["predictions"] if ema_result else None, "ema_image_ids": ema_result["image_ids"] if ema_result else None}
 
     @torch.no_grad()
     def validation_step(self, batch, batch_idx):
         output = self._run_eval_step(batch, split_name="val")
         self.validation_step_outputs.append(output)
+        if output["ema_predictions"] is not None:
+            self.ema_validation_step_outputs.append({
+                "predictions": output["ema_predictions"],
+                "image_ids": output["ema_image_ids"]
+            })
         return output
 
     def on_validation_epoch_end(self):
@@ -327,12 +351,45 @@ class YOLOv5LightningModule(pl.LightningModule):
             if key == "map":
                 self.log("val_map", value, prog_bar=False, sync_dist=True)
 
+        # EMA validation metrics
+        all_ema_outputs = gather_outputs_across_processes(self.ema_validation_step_outputs)
+        ema_metrics = {}
+        if self.trainer.is_global_zero and len(all_ema_outputs) > 0:
+            ema_predictions = []
+            ema_image_ids = []
+            for batch_out in all_ema_outputs:
+                ema_predictions.extend(convert_preds_to_coco(batch_out["predictions"]))
+                ema_image_ids.extend(batch_out["image_ids"])
+
+            if len(ema_predictions) > 0:
+                ema_metrics = compute_coco_metrics(
+                    coco_gt=self.val_coco_gt,
+                    predictions=ema_predictions,
+                    image_ids=list(set(ema_image_ids)),
+                    max_detections=int(self.config.model.max_detections),
+                    label_map=self.config.model.label_map,
+                )
+            else:
+                ema_metrics = {"map": 0.0, "map_50": 0.0, "map_75": 0.0}
+
+        ema_metrics = broadcast_object(ema_metrics, src=0)
+        for key, value in ema_metrics.items():
+            self.log(f"val_ema/{key}", value, prog_bar=(key in {"map", "map_50"}), sync_dist=True)
+            if key == "map":
+                self.log("val_ema_map", value, prog_bar=False, sync_dist=True)
+
         self.validation_step_outputs.clear()
+        self.ema_validation_step_outputs.clear()
 
     @torch.no_grad()
     def test_step(self, batch, batch_idx):
         output = self._run_eval_step(batch, split_name="test")
         self.test_step_outputs.append(output)
+        if output["ema_predictions"] is not None:
+            self.ema_test_step_outputs.append({
+                "predictions": output["ema_predictions"],
+                "image_ids": output["ema_image_ids"]
+            })
         return output
 
     def on_test_epoch_end(self):
@@ -360,7 +417,33 @@ class YOLOv5LightningModule(pl.LightningModule):
         for key, value in metrics.items():
             self.log(f"test/{key}", value, prog_bar=(key in {"map", "map_50"}), sync_dist=True)
 
+        # EMA test metrics
+        all_ema_outputs = gather_outputs_across_processes(self.ema_test_step_outputs)
+        ema_metrics = {}
+        if self.trainer.is_global_zero and len(all_ema_outputs) > 0:
+            ema_predictions = []
+            ema_image_ids = []
+            for batch_out in all_ema_outputs:
+                ema_predictions.extend(convert_preds_to_coco(batch_out["predictions"]))
+                ema_image_ids.extend(batch_out["image_ids"])
+
+            if len(ema_predictions) > 0:
+                ema_metrics = compute_coco_metrics(
+                    coco_gt=self.test_coco_gt,
+                    predictions=ema_predictions,
+                    image_ids=list(set(ema_image_ids)),
+                    max_detections=int(self.config.model.max_detections),
+                    label_map=self.config.model.label_map,
+                )
+            else:
+                ema_metrics = {"map": 0.0, "map_50": 0.0, "map_75": 0.0}
+
+        ema_metrics = broadcast_object(ema_metrics, src=0)
+        for key, value in ema_metrics.items():
+            self.log(f"test_ema/{key}", value, prog_bar=(key in {"map", "map_50"}), sync_dist=True)
+
         self.test_step_outputs.clear()
+        self.ema_test_step_outputs.clear()
 
     @torch.no_grad()
     def predict_batch(self, images, conf_threshold=None, iou_threshold=None):
