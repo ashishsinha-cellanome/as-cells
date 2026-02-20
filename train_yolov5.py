@@ -9,6 +9,10 @@ import torch
 from hydra.utils import to_absolute_path
 from lightning.pytorch.profilers import AdvancedProfiler, SimpleProfiler
 from omegaconf import DictConfig, OmegaConf
+
+# Register custom OmegaConf resolvers
+OmegaConf.register_new_resolver("oc.eval", eval)
+
 from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint, ModelSummary
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.plugins.environments import SLURMEnvironment
