@@ -113,6 +113,9 @@ class YOLOv5LightningModule(pl.LightningModule):
         model = Model(model_def, ch=3, nc=nc)
         self._load_weights_if_available(model, model_cfg.weights)
 
+        # Set hyperparameters on the model (required by ComputeLoss)
+        model.hyp = dict(model_cfg.hyp)
+
         self.model = model
         self.compute_loss = ComputeLoss(self.model)
         self.validation_step_outputs = []
@@ -341,7 +344,7 @@ class YOLOv5LightningModule(pl.LightningModule):
         return preds
 
     def configure_optimizers(self):
-        opt_cfg = self.config.model.yolov5.optimizer
+        opt_cfg = self.config.optimizer
         sch_cfg = self.config.scheduler
 
         params = [p for p in self.model.parameters() if p.requires_grad]
