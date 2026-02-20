@@ -117,6 +117,7 @@ class YOLOv5LightningModule(pl.LightningModule):
         model.hyp = dict(model_cfg.hyp)
 
         self.model = model
+        # Register compute_loss as a submodule so Lightning auto-moves it to device
         self.compute_loss = ComputeLoss(self.model)
         self.validation_step_outputs = []
         self.test_step_outputs = []
@@ -132,6 +133,16 @@ class YOLOv5LightningModule(pl.LightningModule):
         ckpt = torch.load(str(w), map_location="cpu")
         state_dict = ckpt["model"].float().state_dict() if isinstance(ckpt, dict) and "model" in ckpt else ckpt
         model.load_state_dict(state_dict, strict=False)
+
+    def on_train_start(self):
+        """Move compute_loss to device at training start."""
+        if hasattr(self.compute_loss, 'to'):
+            self.compute_loss = self.compute_loss.to(self.device)
+
+    def on_sanity_check_start(self):
+        """Move compute_loss to device before sanity check."""
+        if hasattr(self.compute_loss, 'to'):
+            self.compute_loss = self.compute_loss.to(self.device)
 
     @property
     def stride(self):
@@ -198,14 +209,10 @@ class YOLOv5LightningModule(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         images, targets = batch[0], batch[1]
         images = images.to(self.device, non_blocking=True).float() / 255.0
-
-        # Ensure targets and model are on the same device as model
         targets = targets.to(self.device, non_blocking=True).float()
-        self.model = self.model.to(self.device)
 
         _, train_out = self._extract_model_outputs(self.model(images))
         if train_out is None:
-            # If model returns only train outputs in train mode, use raw output.
             train_out = self.model(images)
 
         loss, loss_items = self.compute_loss(train_out, targets)
@@ -217,10 +224,7 @@ class YOLOv5LightningModule(pl.LightningModule):
     def _run_eval_step(self, batch, split_name: str):
         images, targets, _, shapes, batch_image_ids = batch
         images = images.to(self.device, non_blocking=True).float() / 255.0
-
-        # Ensure targets and model are on the same device
         targets = targets.to(self.device, non_blocking=True).float()
-        self.model = self.model.to(self.device)
 
         infer_out, train_out = self._extract_model_outputs(self.model(images))
         if infer_out is None and train_out is not None:
