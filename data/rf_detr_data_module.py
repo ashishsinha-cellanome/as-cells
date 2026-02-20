@@ -1,7 +1,13 @@
 import pytorch_lightning as pl
+from pathlib import Path
+
 from torch.utils.data import DataLoader
 
-from rfdetr.datasets import build_dataset
+from rfdetr.datasets.coco import (
+    CocoDetection,
+    make_coco_transforms,
+    make_coco_transforms_square_div_64,
+)
 from rfdetr.main import populate_args
 from rfdetr.util.misc import collate_fn
 
@@ -9,9 +15,9 @@ from rfdetr.util.misc import collate_fn
 class RFDETRDataModule(pl.LightningDataModule):
     """LightningDataModule backed by RF-DETR's native dataset pipeline."""
 
-    def __init__(self, dataset_dir: str, config, base_args=None):
+    def __init__(self, dataset_path: str, config, base_args=None):
         super().__init__()
-        self.dataset_dir = dataset_dir
+        self.dataset_path = str(Path(dataset_path).expanduser().resolve())
         self.config = config
         self.base_args = base_args
 
@@ -31,7 +37,7 @@ class RFDETRDataModule(pl.LightningDataModule):
             args = self.base_args
 
         args.dataset_file = "roboflow"
-        args.dataset_dir = self.dataset_dir
+        args.dataset_dir = self.dataset_path
         args.resolution = int(self.config.model.input_size)
         args.batch_size = int(data_cfg.batch_size)
         args.num_workers = int(data_cfg.num_workers)
@@ -57,13 +63,42 @@ class RFDETRDataModule(pl.LightningDataModule):
         args.device = "cuda"
         return args
 
+    def _build_transforms(self, image_set: str):
+        args = self._args
+        transform_fn = (
+            make_coco_transforms_square_div_64
+            if bool(args.square_resize_div_64)
+            else make_coco_transforms
+        )
+        # Non-square path in upstream library has no explicit "test" branch.
+        transform_image_set = image_set if bool(args.square_resize_div_64) else ("val" if image_set == "test" else image_set)
+        return transform_fn(
+            transform_image_set,
+            args.resolution,
+            multi_scale=args.multi_scale,
+            expanded_scales=args.expanded_scales,
+            skip_random_resize=not args.do_random_resize_via_padding,
+            patch_size=args.patch_size,
+            num_windows=args.num_windows,
+        )
+
+    def _make_dataset(self, split_name: str):
+        image_root = Path(self.dataset_path) / "images" / split_name
+        ann_path = Path(self.dataset_path) / f"{split_name}_annotations.json"
+        return CocoDetection(
+            img_folder=image_root,
+            ann_file=ann_path,
+            transforms=self._build_transforms("test" if split_name == self.config.test_name else ("val" if split_name == self.config.val_name else "train")),
+            include_masks=False,
+        )
+
     def setup(self, stage=None):
         self._args = self._build_args()
         if stage in ("fit", None):
-            self.train_dataset = build_dataset("train", self._args, self._args.resolution)
-            self.val_dataset = build_dataset("val", self._args, self._args.resolution)
+            self.train_dataset = self._make_dataset(self.config.train_name)
+            self.val_dataset = self._make_dataset(self.config.val_name)
         if stage in ("test", None):
-            self.test_dataset = build_dataset("test", self._args, self._args.resolution)
+            self.test_dataset = self._make_dataset(self.config.test_name)
 
     @property
     def args(self):

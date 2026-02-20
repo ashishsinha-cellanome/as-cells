@@ -4,7 +4,6 @@ input_size: 560
 rfdetr:
   size: base            # base|small|medium|large|nano
   pretrain_weights: rf-detr-base.pth
-  dataset_cache_dir: ${hydra:runtime.cwd}/.cache/datasets/rfdetr_${data.train_name}_${data.val_name}_${data.test_name}
 
   # RF-DETR data/training behavior
   multi_scale: true

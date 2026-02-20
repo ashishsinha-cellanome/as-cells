@@ -17,7 +17,6 @@ from rfdetr.models import build_criterion_and_postprocessors
 
 from data.rf_detr_data_module import RFDETRDataModule
 from models.rf_detr_lightning_module import RFDETRLightningModule
-from utils.data_layout_utils import prepare_rfdetr_roboflow_layout
 from utils.distributed_utils import rank_zero_print, setup_cluster_env
 from utils.train_utils import BackupToNASCallback
 
@@ -110,16 +109,8 @@ def main(config: DictConfig):
 
     pl.seed_everything(config.seed, workers=True)
 
-    cache_dir = to_absolute_path(config.model.rfdetr.dataset_cache_dir)
-    rank_zero_print(f"[Startup] Preparing RF-DETR layout cache at: {cache_dir}")
-    staged_dataset_dir = prepare_rfdetr_roboflow_layout(
-        dataset_path=to_absolute_path(config.data.path),
-        cache_root=cache_dir,
-        train_name=config.train_name,
-        val_name=config.val_name,
-        test_name=config.test_name,
-    )
-    rank_zero_print("[Startup] RF-DETR layout ready.")
+    dataset_path = to_absolute_path(config.data.path)
+    rank_zero_print(f"[Startup] Using RF-DETR dataset path: {dataset_path}")
 
     label_map = {int(k): v for k, v in config.model.label_map.items()}
     class_names = [label_map[idx] for idx in sorted(label_map.keys())]
@@ -137,7 +128,7 @@ def main(config: DictConfig):
     rf_wrapper.model.reinitialize_detection_head(len(label_map))
 
     base_args = rf_wrapper.model.args
-    data_module = RFDETRDataModule(dataset_dir=staged_dataset_dir, config=config, base_args=base_args)
+    data_module = RFDETRDataModule(dataset_path=dataset_path, config=config, base_args=base_args)
     data_module.setup("fit")
     data_module.setup("test")
 
