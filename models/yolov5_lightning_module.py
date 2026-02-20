@@ -14,24 +14,54 @@ from utils.coco_eval_utils import (
 )
 
 
-def _import_from_yolo_repo(repo_path: str, module_path: str, import_name: str):
-    """Import a module from the YOLOv5 repository by explicit file path."""
+def _import_from_yolo_repo(repo_path: str, module_name: str):
+    """Import a module from the YOLOv5 repository using normal module resolution.
+
+    Args:
+        repo_path: Path to YOLOv5 repository
+        module_name: Module name to import (e.g., 'models.yolo', 'utils.loss')
+    """
     repo = Path(repo_path).expanduser().resolve()
     if not repo.exists():
         raise FileNotFoundError(
             f"YOLOv5 repo not found at: {repo}. Set model.yolov5.repo_path to official YOLOv5 source."
         )
 
-    file_path = repo / module_path
-    if not file_path.exists():
-        raise FileNotFoundError(
-            f"Module file not found at: {file_path}"
-        )
+    repo_str = str(repo)
 
-    spec = importlib.util.spec_from_file_location(import_name, file_path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    # Temporarily manipulate sys.path and sys.modules to isolate YOLOv5 imports
+    # This prevents YOLOv5's "from models.X import ..." from finding our project's models/
+    original_path = sys.path.copy()
+    original_modules = {}
+
+    try:
+        # Remove current directory and project paths from sys.path
+        sys.path = [p for p in sys.path if p not in ("", ".", str(Path.cwd()))]
+
+        # Add YOLOv5 repo to the front
+        if repo_str not in sys.path:
+            sys.path.insert(0, repo_str)
+
+        # Cache any existing modules that might conflict
+        for key in list(sys.modules.keys()):
+            if key.startswith(("models", "utils", "detect", "export")):
+                original_modules[key] = sys.modules.pop(key)
+
+        # Import the module
+        module = importlib.import_module(module_name)
+        return module
+
+    except ImportError as e:
+        raise ImportError(
+            f"Could not import '{module_name}' from YOLOv5 at {repo}. "
+            f"Make sure the YOLOv5 repository structure is correct.\n{e}"
+        )
+    finally:
+        # Restore sys.path
+        sys.path = original_path
+
+        # Don't restore modules - we want to keep the imported yolov5 modules
+        # but exclude them from being re-imported
 
 
 def _ensure_repo_import(repo_path: str):
@@ -63,14 +93,14 @@ class YOLOv5LightningModule(pl.LightningModule):
         self.val_coco_gt = val_coco_gt
         self.test_coco_gt = test_coco_gt
 
-        # Import modules explicitly from YOLOv5 repo by file path
-        yolo_module = _import_from_yolo_repo(self.yolo_repo_path, "models/yolo.py", "yolo_models")
+        # Import modules explicitly from YOLOv5 repo
+        yolo_module = _import_from_yolo_repo(self.yolo_repo_path, "models.yolo")
         Model = yolo_module.Model
 
-        utils_loss = _import_from_yolo_repo(self.yolo_repo_path, "utils/loss.py", "yolo_loss")
+        utils_loss = _import_from_yolo_repo(self.yolo_repo_path, "utils.loss")
         ComputeLoss = utils_loss.ComputeLoss
 
-        utils_general = _import_from_yolo_repo(self.yolo_repo_path, "utils/general.py", "yolo_general")
+        utils_general = _import_from_yolo_repo(self.yolo_repo_path, "utils.general")
         non_max_suppression = utils_general.non_max_suppression
 
         self._non_max_suppression = non_max_suppression
