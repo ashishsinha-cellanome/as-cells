@@ -120,22 +120,30 @@ class YOLOv5LightningModule(pl.LightningModule):
         # Store ComputeLoss class for later instantiation on device
         self._ComputeLossClass = ComputeLoss
         self._compute_loss = None
+        self._compute_loss_device = None
         self.validation_step_outputs = []
         self.test_step_outputs = []
 
     @property
     def compute_loss(self):
-        """Lazy initialization of compute_loss to ensure it's created on the correct device."""
-        if self._compute_loss is None:
+        """Lazy initialization of compute_loss, recreating if model device changes."""
+        # Get current model device
+        try:
+            model_device = next(self.model.parameters()).device
+        except StopIteration:
+            model_device = None
+
+        # Recreate if device changed or not initialized yet
+        if self._compute_loss is None or self._compute_loss_device != model_device:
             self._compute_loss = self._ComputeLossClass(self.model)
-            # Move to device if available
-            if hasattr(self._compute_loss, 'to') and hasattr(self, '_device'):
-                self._compute_loss = self._compute_loss.to(self._device)
+            self._compute_loss_device = model_device
+
         return self._compute_loss
 
     @compute_loss.setter
     def compute_loss(self, value):
         self._compute_loss = value
+        self._compute_loss_device = None
 
     def _load_weights_if_available(self, model, weights_path: str):
         if not weights_path:
@@ -150,18 +158,12 @@ class YOLOv5LightningModule(pl.LightningModule):
         model.load_state_dict(state_dict, strict=False)
 
     def on_sanity_check_start(self):
-        """Move model to device before sanity check and initialize compute_loss."""
+        """Move model to device before sanity check."""
         self.model = self.model.to(self.device)
-        self._device = self.device
-        # Force compute_loss initialization on correct device
-        _ = self.compute_loss
 
     def on_train_start(self):
-        """Move model to device at training start and initialize compute_loss."""
+        """Move model to device at training start."""
         self.model = self.model.to(self.device)
-        self._device = self.device
-        # Force compute_loss initialization on correct device
-        _ = self.compute_loss
 
     @property
     def stride(self):
