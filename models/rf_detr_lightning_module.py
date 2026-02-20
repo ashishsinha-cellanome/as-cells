@@ -24,6 +24,10 @@ class RFDETRLightningModule(pl.LightningModule):
 
         self.validation_step_outputs = []
         self.test_step_outputs = []
+        
+        if hasattr(self.config.model, 'ema') and self.config.model.ema.enabled:
+            self.validation_step_outputs_ema = []
+            self.test_step_outputs_ema = []
 
     def forward(self, samples, targets=None):
         return self.model(samples, targets)
@@ -85,6 +89,15 @@ class RFDETRLightningModule(pl.LightningModule):
 
         predictions, image_ids = self._collect_batch_predictions(outputs, targets)
         self.validation_step_outputs.append({"predictions": predictions, "image_ids": image_ids})
+        
+        # EMA validation
+        from utils.ema import EMACallback
+        ema_callback = next((cb for cb in self.trainer.callbacks if isinstance(cb, EMACallback)), None)
+        if ema_callback and ema_callback.ema_model:
+            ema_outputs = ema_callback.ema_model.module(samples)
+            ema_predictions, ema_image_ids = self._collect_batch_predictions(ema_outputs, targets)
+            self.validation_step_outputs_ema.append({"predictions": ema_predictions, "image_ids": ema_image_ids})
+            
         return {"predictions": predictions, "image_ids": image_ids}
 
     def on_validation_epoch_end(self):
@@ -115,6 +128,36 @@ class RFDETRLightningModule(pl.LightningModule):
                 self.log("val_map", value, prog_bar=False, sync_dist=True)
 
         self.validation_step_outputs.clear()
+        
+        # Compute EMA metrics
+        all_ema_outputs = gather_outputs_across_processes(getattr(self, 'validation_step_outputs_ema', []))
+        if hasattr(self, 'validation_step_outputs_ema'):
+            ema_metrics = {}
+            if self.trainer.is_global_zero:
+                ema_predictions = []
+                ema_image_ids = []
+                for batch_out in all_ema_outputs:
+                    ema_predictions.extend(convert_preds_to_coco(batch_out["predictions"]))
+                    ema_image_ids.extend(batch_out["image_ids"])
+
+                if len(ema_predictions) > 0:
+                    ema_metrics = compute_coco_metrics(
+                        coco_gt=self.val_coco_gt,
+                        predictions=ema_predictions,
+                        image_ids=list(set(ema_image_ids)),
+                        max_detections=int(self.config.model.max_detections),
+                        label_map=self.config.model.label_map,
+                    )
+                else:
+                    ema_metrics = {"map": 0.0, "map_50": 0.0, "map_75": 0.0}
+
+            ema_metrics = broadcast_object(ema_metrics, src=0)
+            for key, value in ema_metrics.items():
+                self.log(f"val/{key}_ema", value, prog_bar=True, sync_dist=True)
+                if key == "map":
+                    self.log("val_map_ema", value, prog_bar=False, sync_dist=True)
+
+            self.validation_step_outputs_ema.clear()
 
     @torch.no_grad()
     def test_step(self, batch, batch_idx):
@@ -125,6 +168,15 @@ class RFDETRLightningModule(pl.LightningModule):
         outputs = self.model(samples)
         predictions, image_ids = self._collect_batch_predictions(outputs, targets)
         self.test_step_outputs.append({"predictions": predictions, "image_ids": image_ids})
+        
+        # EMA test
+        from utils.ema import EMACallback
+        ema_callback = next((cb for cb in self.trainer.callbacks if isinstance(cb, EMACallback)), None)
+        if ema_callback and ema_callback.ema_model:
+            ema_outputs = ema_callback.ema_model.module(samples)
+            ema_predictions, ema_image_ids = self._collect_batch_predictions(ema_outputs, targets)
+            self.test_step_outputs_ema.append({"predictions": ema_predictions, "image_ids": ema_image_ids})
+            
         return {"predictions": predictions, "image_ids": image_ids}
 
     def on_test_epoch_end(self):
@@ -153,6 +205,34 @@ class RFDETRLightningModule(pl.LightningModule):
             self.log(f"test/{key}", value, prog_bar=(key in {"map", "map_50"}), sync_dist=True)
 
         self.test_step_outputs.clear()
+        
+        # Compute EMA metrics for Test
+        all_ema_outputs = gather_outputs_across_processes(getattr(self, 'test_step_outputs_ema', []))
+        if hasattr(self, 'test_step_outputs_ema'):
+            ema_metrics = {}
+            if self.trainer.is_global_zero:
+                ema_predictions = []
+                ema_image_ids = []
+                for batch_out in all_ema_outputs:
+                    ema_predictions.extend(convert_preds_to_coco(batch_out["predictions"]))
+                    ema_image_ids.extend(batch_out["image_ids"])
+
+                if len(ema_predictions) > 0:
+                    ema_metrics = compute_coco_metrics(
+                        coco_gt=self.test_coco_gt,
+                        predictions=ema_predictions,
+                        image_ids=list(set(ema_image_ids)),
+                        max_detections=int(self.config.model.max_detections),
+                        label_map=self.config.model.label_map,
+                    )
+                else:
+                    ema_metrics = {"map": 0.0, "map_50": 0.0, "map_75": 0.0}
+
+            ema_metrics = broadcast_object(ema_metrics, src=0)
+            for key, value in ema_metrics.items():
+                self.log(f"test/{key}_ema", value, prog_bar=True, sync_dist=True)
+
+            self.test_step_outputs_ema.clear()
 
     @torch.no_grad()
     def predict_batch(self, samples, score_threshold=0.25):

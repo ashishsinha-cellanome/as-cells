@@ -70,6 +70,29 @@ def _setup_callbacks(config: DictConfig):
         LearningRateMonitor(logging_interval="step"),
         ModelSummary(max_depth=3),
     ]
+    
+    # EMA Callback and Checkpoint (If enabled)
+    if hasattr(config.model, 'ema') and config.model.ema.enabled:
+        from utils.ema import EMACallback
+        warmup_steps = config.model.ema.get('warmup_steps', 0)
+        rank_zero_print(f"💡 EMA enabled: Adding EMACallback with decay={config.model.ema.decay}, warmup_steps={warmup_steps}")
+        callbacks.append(EMACallback(decay=config.model.ema.decay, warmup_steps=warmup_steps))
+
+        ema_monitor = "val/map_ema"
+        callbacks.append(
+            ModelCheckpoint(
+                dirpath=ckpt_dir,
+                filename="yolov5-ema-{epoch:02d}-val_map{" + ema_monitor.replace("/", "_") + ":.4f}",
+                monitor=ema_monitor,
+                mode=ckpt_cfg.mode,
+                save_top_k=ckpt_cfg.save_top_k,
+                save_last=False,
+                every_n_epochs=ckpt_cfg.every_n_epochs,
+                auto_insert_metric_name=False,
+                verbose=True,
+            )
+        )
+        
     if "backup_dir" in ckpt_cfg and ckpt_cfg.backup_dir:
         callbacks.append(BackupToNASCallback(backup_dir=to_absolute_path(ckpt_cfg.backup_dir)))
     return callbacks
@@ -163,7 +186,30 @@ def main(config: DictConfig):
         trainer.test(lightning_model, datamodule=data_module, ckpt_path=ckpt_path)
     else:
         trainer.fit(lightning_model, datamodule=data_module, ckpt_path=ckpt_path)
-        trainer.test(lightning_model, datamodule=data_module, ckpt_path="best")
+        
+        # Test the best model
+        best_path = None
+        
+        # Priority 1: EMA checkpoint
+        if hasattr(config.model, 'ema') and config.model.ema.enabled:
+            for cb in trainer.callbacks:
+                if isinstance(cb, ModelCheckpoint) and cb.monitor == "val/map_ema":
+                    if cb.best_model_path:
+                        best_path = cb.best_model_path
+                        rank_zero_print(f"🎯 Selected BEST EMA checkpoint (monitor: {cb.monitor}): {best_path}")
+                    break
+        
+        # Priority 2: Regular checkpoint
+        if not best_path:
+            for cb in trainer.callbacks:
+                if isinstance(cb, ModelCheckpoint) and cb.monitor == config.checkpointing.monitor:
+                    if cb.best_model_path:
+                        best_path = cb.best_model_path
+                        rank_zero_print(f"🎯 Selected BEST REGULAR checkpoint (monitor: {cb.monitor}): {best_path}")
+                    break
+                    
+        eval_ckpt = best_path if best_path else "best"
+        trainer.test(lightning_model, datamodule=data_module, ckpt_path=eval_ckpt)
 
 
 if __name__ == "__main__":

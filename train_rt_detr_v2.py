@@ -434,10 +434,10 @@ def setup_callbacks(config: DictConfig):
 
     # 2. EMA Callback and Checkpoint (If enabled)
     if hasattr(config.model, 'ema') and config.model.ema.enabled:
-        from utils.ema import RTDETREMACallback
+        from utils.ema import EMACallback
         warmup_steps = config.model.ema.get('warmup_steps', 0)
-        rank_zero_print(f"💡 EMA enabled: Adding RTDETREMACallback with decay={config.model.ema.decay}, warmup_steps={warmup_steps}")
-        callbacks.append(RTDETREMACallback(decay=config.model.ema.decay, warmup_steps=warmup_steps))
+        rank_zero_print(f"💡 EMA enabled: Adding EMACallback with decay={config.model.ema.decay}, warmup_steps={warmup_steps}")
+        callbacks.append(EMACallback(decay=config.model.ema.decay, warmup_steps=warmup_steps))
 
         # Tracks the EMA validation metric (val/map_ema)
         rank_zero_print("💡 EMA enabled: Adding second ModelCheckpoint for 'val/map_ema'")

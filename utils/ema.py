@@ -50,9 +50,9 @@ class ModelEma(nn.Module):
 
 import pytorch_lightning as pl
 
-class RTDETREMACallback(pl.Callback):
+class EMACallback(pl.Callback):
     """
-    Exponential Moving Average callback for RT-DETR.
+    Exponential Moving Average callback for object detection models (RT-DETR, RF-DETR, YOLOv5).
     Manages a ModelEma instance and handles synchronization and checkpointing.
 
     Args:
