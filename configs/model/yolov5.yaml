@@ -1,0 +1,72 @@
+name: yolov5
+input_size: 640
+
+yolov5:
+  # Must point to official YOLOv5 source tree.
+  repo_path: ${hydra:runtime.cwd}/models/yolov5
+
+  # Official YOLOv5 model definition yaml (relative to repo_path or absolute path).
+  model_cfg: models/yolov5s.yaml
+  # Optional pretrained checkpoint (.pt). Leave null for random init.
+  weights: yolov5s.pt
+
+  # YOLO inference/eval settings
+  iou_threshold: 0.45 # 0.6
+  cache_images: false
+
+  # Native YOLO hyperparameters passed into dataloader/train behavior.
+  hyp:
+    lr0: 0.01
+    lrf: 0.1
+    momentum: 0.937
+    weight_decay: 0.0005
+    warmup_epochs: 3.0
+    warmup_momentum: 0.8
+    warmup_bias_lr: 0.1
+    box: 0.05
+    cls: 0.5
+    cls_pw: 1.0
+    obj: 1.0
+    obj_pw: 1.0
+    iou_t: 0.20
+    anchor_t: 4.0
+    fl_gamma: 0.0
+    hsv_h: 0.015
+    hsv_s: 0.7
+    hsv_v: 0.4
+    degrees: 0.0
+    translate: 0.1
+    scale: 0.5
+    shear: 0.0
+    perspective: 0.0
+    flipud: 0.0
+    fliplr: 0.5
+    mosaic: 1.0
+    mixup: 0.0
+    copy_paste: 0.0
+
+  optimizer:
+    type: sgd
+    lr: 0.01
+    momentum: 0.937
+    weight_decay: 0.0005
+    nesterov: true
+
+  dataset_cache_dir: ${hydra:runtime.cwd}/.cache/datasets/yolov5_${data.train_name}_${data.val_name}_${data.test_name}
+
+# --- General ---
+label_map:
+  0: "cell"
+  1: "bead"
+  2: "cell-adhered"
+  3: "soma"
+
+detection_threshold: 0.05
+draw_threshold: 0.4
+max_detections: 100
+
+ema:
+  enabled: true
+  decay: 0.9999
+  tau: 2000
+  warmup_steps: 100

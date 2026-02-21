@@ -1,0 +1,35 @@
+name: rf_detr
+input_size: 560
+
+rfdetr:
+  size: base            # base|small|medium|large|nano
+  pretrain_weights: rf-detr-base.pth
+
+  # RF-DETR data/training behavior
+  multi_scale: true
+  expanded_scales: true
+  do_random_resize_via_padding: false
+  square_resize_div_64: true
+  use_ema: true
+  ema_decay: 0.993
+  ema_tau: 100
+  lr_scheduler: cosine
+  warmup_epochs: 1.0
+  lr_min_factor: 0.0
+
+# --- General ---
+label_map:
+  0: "cell"
+  1: "bead"
+  2: "cell-adhered"
+  3: "soma"
+
+detection_threshold: 0.05
+draw_threshold: 0.4
+max_detections: 100
+
+ema:
+  enabled: true
+  decay: 0.9999
+  tau: 2000
+  warmup_steps: 100

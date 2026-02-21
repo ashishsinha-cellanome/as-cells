@@ -4,7 +4,7 @@
 wandb:
   enabled: true
   # project: "rt-detr-cell-detection"
-  project: 'DEBUG_MULTIRUN'
+  project: 'cell-detection'
   # 'name' will be set by the top-level 'run_name'
   tags: ["rt-detr", "dinov2", "cell-detection"]
   notes: "Training RT-DETR with DINOv2 backbone"

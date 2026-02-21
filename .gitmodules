@@ -1,3 +1,6 @@
 [submodule "DEIMv2"]
 	path = DEIMv2
 	url = https://github.com/Intellindust-AI-Lab/DEIMv2.git
+[submodule "models/yolov5"]
+	path = models/yolov5
+	url = https://github.com/ultralytics/yolov5.git

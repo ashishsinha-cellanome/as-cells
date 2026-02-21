@@ -124,6 +124,9 @@ class COCODataModule(pl.LightningDataModule):
         self.train_dataset = None
         self.val_dataset = None
         self.test_dataset = None
+
+        # Track if setup has been called to avoid re-loading
+        self._setup_called = False
     
     def _get_remap_dict(self, coco_dataset: CocoDetection) -> Optional[Dict[int, int]]:
         """Builds a dictionary to map dataset category IDs to model class IDs."""
@@ -171,7 +174,11 @@ class COCODataModule(pl.LightningDataModule):
 
     def setup(self, stage: Optional[str] = None):
         """Setup datasets for each stage."""
-        
+
+        # Skip if already set up to avoid re-loading data
+        if self._setup_called:
+            return
+
         if stage == "fit" or stage is None:
             # Training dataset
             train_images_path = os.path.join(self.dataset_path, 'images', self.config.train_name)
@@ -285,6 +292,9 @@ class COCODataModule(pl.LightningDataModule):
                 remap_dict=test_remap
             )
             print ('Test set includes %d annotated images.' %len(self.test_dataset))
+
+        # Mark setup as called
+        self._setup_called = True
     
     @staticmethod
     def collate_fn(batch):

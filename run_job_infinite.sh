@@ -37,6 +37,11 @@ echo "Account used: $SLURM_JOB_ACCOUNT"
 
 # srun uv run train_rt_detr_v2.py -m data=vulcan model=rtdetr_v2 model/backbone=resnet50 model.ema.enabled=True model.backbone.train_backbone=True model.backbone.freeze_at_stage=1 optimizer.optimizer.use_param_groups=True scheduler=onecycle,cosine_warmup optimizer.optimizer.lr=3e-4,1e-4
 
+srun uv run train_yolov5.py data=vulcan model=yolov5 scheduler=cosine_warmup
+
+srun uv run train_rt_detr_v2.py data=vulcan model=rtdetr_v1 model/backbone=resnet50 scheduler=onecycle model.backbone.train_backbone=True model.backbone.freeze_at_stage=2
+
+srun uv run train_rt_detr_v2.py data=vulcan model=rtdetr_v2 model/backbone=resnet50 scheduler=onecycle model.backbone.train_backbone=True model.backbone.freeze_at_stage=2
 srun uv run train_rt_detr_v2.py -m data=vulcan model=rtdetr_v2 model/backbone=resnet50 model.ema.enabled=True model.backbone.train_backbone=True model.backbone.freeze_at_stage=2 optimizer.optimizer.use_param_groups=True,False scheduler=onecycle optimizer.optimizer.lr=3e-4
 
 

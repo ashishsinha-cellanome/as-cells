@@ -1,7 +1,7 @@
 # configs/checkpointing/default.yaml
 
 # checkpointing:
-  _folder_name: "${model.backbone.model_name}_backbone_${model.rtdetr.model_name}"
+  _folder_name: "${model.name}_${now:%Y-%m-%d}"
   save_dir: "checkpoints/" 
   save_top_k: 1
   monitor: "val_map"
@@ -12,7 +12,7 @@
 
   # Paths for initial model creation
   # Uses the dynamic folder name defined above
-  dinov2_backbone_checkpoint: "${hydra:runtime.cwd}/checkpoints/backbones/${model.backbone.type}"
+  dinov2_backbone_checkpoint: "${hydra:runtime.cwd}/checkpoints/backbones/dinov2"
   rtdetr_initial_checkpoint: "${hydra:runtime.cwd}/checkpoints/${checkpointing._folder_name}"
 
   # Visualization

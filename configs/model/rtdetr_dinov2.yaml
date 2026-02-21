@@ -1,6 +1,9 @@
 defaults:
   - backbone: dinov2
 
+name: rtdetr_v2_dinov2_backbone
+input_size: 672
+
 # model:
   # --- RT-DETR Config ---
 rtdetr:

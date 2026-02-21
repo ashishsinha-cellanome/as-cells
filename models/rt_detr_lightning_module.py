@@ -56,7 +56,6 @@ class RTDETRLightningModule(pl.LightningModule):
         config = None,
     ):
         super().__init__()
-        # breakpoint()
         self.save_hyperparameters(ignore=['image_processor', 'val_coco_gt', 'test_coco_gt', 'train_coco_gt'])
         self.model = model
         # self.model.train() # REMOVED: Managed by train() override below
@@ -151,8 +150,6 @@ class RTDETRLightningModule(pl.LightningModule):
         
         return loss
     
-
-
     def on_validation_epoch_start(self):
         """Reset validation visualization counter."""
         self.val_viz_counter = 0
@@ -222,12 +219,11 @@ class RTDETRLightningModule(pl.LightningModule):
         # self.validation_image_ids.extend([int(target["image_id"].item()) for target in labels])
         
         # return {"predictions": results}
-        # breakpoint()
         self.validation_step_outputs.append({"predictions": results, "image_ids": image_ids})
         
         # EMA validation
-        from utils.ema import RTDETREMACallback
-        ema_callback = next((cb for cb in self.trainer.callbacks if isinstance(cb, RTDETREMACallback)), None)
+        from utils.ema import EMACallback
+        ema_callback = next((cb for cb in self.trainer.callbacks if isinstance(cb, EMACallback)), None)
         if ema_callback and ema_callback.ema_model:
             # DEBUG: Verify EMA is different from standard model (only log once per epoch)
             if batch_idx == 0 and self.trainer.is_global_zero:
@@ -316,7 +312,7 @@ class RTDETRLightningModule(pl.LightningModule):
                         coco_gt=self.val_coco_gt
                     )
             else:
-                self.print(f"⚠️  [Val] WARNING: No predictions made! Logging 0.0 metrics.")
+                self.print(f"[Val] WARNING: No predictions made! Logging 0.0 metrics.")
                 metrics = {'map': 0.0, 'map_50': 0.0, 'map_75': 0.0}
 
         # Broadcast metrics from Rank 0 to all other ranks
@@ -407,7 +403,6 @@ class RTDETRLightningModule(pl.LightningModule):
             {k: to_cpu_device(v) for k, v in outputs.items()}
             for outputs in post_processed_outputs
         ]
-        # breakpoint()
         if self.config.checkpointing.visualize_samples ==-1:
             self.config.checkpointing.visualize_samples = float('inf')
         if self.trainer.is_global_zero and \
@@ -440,8 +435,8 @@ class RTDETRLightningModule(pl.LightningModule):
         self.test_step_outputs.append({"predictions": results, "image_ids": image_ids})
 
         # EMA validation during test
-        from utils.ema import RTDETREMACallback
-        ema_callback = next((cb for cb in self.trainer.callbacks if isinstance(cb, RTDETREMACallback)), None)
+        from utils.ema import EMACallback
+        ema_callback = next((cb for cb in self.trainer.callbacks if isinstance(cb, EMACallback)), None)
         if ema_callback and ema_callback.ema_model:
             # EMA model forward pass
             ema_outputs = ema_callback.ema_model.module(pixel_values=pixel_values, labels=None)
@@ -585,7 +580,7 @@ class RTDETRLightningModule(pl.LightningModule):
             remapping_rules = self.config.data.class_remapping
         elif 'class_remapping' in self.config:
             remapping_rules = self.config.class_remapping
-            
+        
         remap_dict = {}
         for cat_id, cat_info in coco_gt.cats.items():
             src_name = cat_info['name']
@@ -633,9 +628,7 @@ class RTDETRLightningModule(pl.LightningModule):
 	
         if self.config.debug:
             self.print(f"DEBUG: COCO GT Categories before remap: {[{c['id']: c['name']} for c in coco_gt.dataset['categories']]}")
-        
         coco_gt, remap_dict = self._remap_coco_gt(coco_gt)
-        
         # Remap predictions if remapping rules were applied
         if remap_dict:
             for p in predictions:
@@ -671,7 +664,8 @@ class RTDETRLightningModule(pl.LightningModule):
             for i, key in enumerate(metric_keys):
                 if i < len(coco_evaluator.stats):
                     metrics[key] = round(coco_evaluator.stats[i], 4)
-                    
+            
+            self.print('[INFO] Computing Class-wise COCO metrics')
             # Extract per-category metrics from the internal COCOeval precision tensor
             if hasattr(coco_evaluator, 'eval') and 'precision' in coco_evaluator.eval:
                 precisions = coco_evaluator.eval['precision']
@@ -696,7 +690,12 @@ class RTDETRLightningModule(pl.LightningModule):
                     s_50 = precisions[0, :, i, 0, -1]
                     if len(s_50[s_50 > -1]) > 0:
                         metrics[f'map_50_{cat_name}'] = round(float(np.mean(s_50[s_50 > -1])), 4)
-                        
+                    
+                    # compute recalls as well
+                    recalls = coco_evaluator.eval['recall'][:, i, 0, -1]
+                    if len(recalls[recalls > -1]) > 0:
+                        metrics[f'mar_{cat_name}'] = round(float(np.mean(recalls[recalls > -1])), 4)
+
         except Exception as e:
             self.print(f"Error computing COCO metrics: {e}")
             import traceback
