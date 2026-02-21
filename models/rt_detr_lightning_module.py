@@ -784,9 +784,6 @@ class RTDETRLightningModule(pl.LightningModule):
         else:
              warmup_steps = sch_config.warmup_steps
         
-        # Save effective warmup steps for optimizer_step
-        self.effective_warmup_steps = warmup_steps
-        
         # Configure scheduler
         if sch_config.type == "reduce_lr_on_plateau":
             scheduler = {
@@ -935,30 +932,6 @@ class RTDETRLightningModule(pl.LightningModule):
             # LinearLR stays at factor 1.0 after total_iters are done
             return [{'scheduler': warmup_scheduler, 'interval': 'step'}]
         
-    def optimizer_step(self, epoch, batch_idx, optimizer, optimizer_closure):
-        # --- 1. Warmup Logic (Apply BEFORE step) ---
-        
-        # Use effective_warmup_steps if set in configure_optimizers, else default logic
-        if hasattr(self, 'effective_warmup_steps'):
-            warmup_steps = self.effective_warmup_steps
-        else:
-            total_steps = self.trainer.estimated_stepping_batches + 100
-            warmup_steps = max(self.config.scheduler.warmup_steps, int(0.1 * total_steps))
-        
-        is_one_cycle = self.config.scheduler.type == "onecycle"
-        
-        if self.trainer.global_step < warmup_steps and not is_one_cycle:
-            # Calculate linear scale (0.0 to 1.0)
-            lr_scale = min(1.0, float(self.trainer.global_step + 1) / float(max(1, warmup_steps)))
-            
-            # Get the base LR from config to ensure we always scale from the correct starting point
-            # (Avoids issues where pg['lr'] might be modified by other schedulers or restarts)
-            base_lr = self.config.optimizer.optimizer.lr
-            
-            for pg in optimizer.param_groups:
-                pg['lr'] = base_lr * lr_scale
-        
-        optimizer.step(closure=optimizer_closure)
 
     def draw_boxes(self, image, boxes, labels, scores=None, id2label=None, color_override=None, label_prefix=""):
         """Draws bounding boxes on a PIL image."""
