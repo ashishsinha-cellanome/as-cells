@@ -6,6 +6,8 @@ Powered by Hydra for flexible configuration.
 
 import os
 import datetime
+import warnings
+warnings.filterwarnings("ignore", category=FutureWarning)
 import shutil
 import time
 
@@ -521,8 +523,12 @@ def main(config: DictConfig):
             
     if not unique_id:
         # Fallback to timestamp if no manager/launcher detected
-        unique_id = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        unique_id = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M")
         rank_zero_print(f"No shared job ID found. Using timestamp: {unique_id}")
+    else:
+        # Append HH-MM so sequential runs in the same interactive session don't collide
+        timestamp = datetime.datetime.now().strftime("%H-%M")
+        unique_id = f"{unique_id}_{timestamp}"
     
     # Standardize run naming: {original_run_name_with_date_from_yaml}_{unique_id}
     config.run_name = f"{config.run_name}_{unique_id}"
@@ -532,6 +538,9 @@ def main(config: DictConfig):
     
     if hydra_cfg.mode == RunMode.MULTIRUN:
         rank_zero_print(f"Detected Hydra Sweep (Job {hydra_cfg.job.num})")
+
+        # Append sweep job index to run_name for unique directories
+        config.run_name = f"{config.run_name}_run{hydra_cfg.job.num}"
         
         # A. Set WandB Group
         # We group by the directory name Hydra created for this sweep (shared by all jobs)

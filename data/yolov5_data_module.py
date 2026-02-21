@@ -56,6 +56,10 @@ class YoloCocoDataset(Dataset):
             annFile=str(self.dataset_path / f"{split_name}_annotations.json"),
             transforms=None,
         )
+        
+        # Ensure 'info' key exists to prevent KeyError during COCO evaluation
+        if "info" not in self.dataset.coco.dataset:
+            self.dataset.coco.dataset["info"] = {}
 
     @property
     def coco(self):
@@ -177,6 +181,16 @@ class YOLOv5DataModule(pl.LightningDataModule):
         self.coco_cat_to_model_id = cat_to_model
         self.model_to_coco_map = model_to_coco
 
+        if self.config.debug:
+            print(f"\n{'-'*60}")
+            print(f"[DEBUG] Class Mapping Summary:")
+            print(f"  Target label_map: {target_label_map}")
+            print(f"  COCO cat_to_model: {cat_to_model}")
+            print(f"  Model_to_coco: {model_to_coco}")
+            mapped_names = {train_coco.cats[cat_id]['name']: model_id for cat_id, model_id in cat_to_model.items()}
+            print(f"  Successful mappings: {mapped_names}")
+            print(f"{'-'*60}\n")
+
     def _build_transforms(self, train: bool):
         data_cfg = self.config.data
         transforms_config = None
@@ -206,6 +220,8 @@ class YOLOv5DataModule(pl.LightningDataModule):
             annFile=str(Path(self.dataset_root) / f"{self.config.train_name}_annotations.json"),
             transforms=None,
         )
+        if "info" not in train_coco.coco.dataset:
+            train_coco.coco.dataset["info"] = {}
         self._build_class_maps(train_coco.coco)
 
         if stage in ("fit", None):
@@ -216,6 +232,7 @@ class YOLOv5DataModule(pl.LightningDataModule):
                 transforms=self._build_transforms(train=True),
                 coco_cat_to_model_id=self.coco_cat_to_model_id,
             )
+            
             self.val_dataset = YoloCocoDataset(
                 dataset_path=self.dataset_root,
                 split_name=self.config.val_name,
@@ -223,6 +240,8 @@ class YOLOv5DataModule(pl.LightningDataModule):
                 transforms=self._build_transforms(train=False),
                 coco_cat_to_model_id=self.coco_cat_to_model_id,
             )
+            if "info" not in self.val_dataset.coco.dataset:
+                self.val_dataset.coco.dataset["info"] = {}
 
         if stage in ("test", None):
             self.test_dataset = YoloCocoDataset(
@@ -232,9 +251,17 @@ class YOLOv5DataModule(pl.LightningDataModule):
                 transforms=self._build_transforms(train=False),
                 coco_cat_to_model_id=self.coco_cat_to_model_id,
             )
+            if "info" not in self.test_dataset.coco.dataset:
+                self.test_dataset.coco.dataset["info"] = {}
 
         # Mark setup as called
         self._setup_called = True
+        
+    @property
+    def train_coco_gt(self):
+        if self.train_dataset is None:
+            return None
+        return self.train_dataset.coco
 
     @property
     def val_coco_gt(self):
@@ -256,7 +283,7 @@ class YOLOv5DataModule(pl.LightningDataModule):
             num_workers=int(self.config.data.num_workers),
             collate_fn=yolo_collate_fn,
             pin_memory=True,
-            drop_last=False,
+            drop_last=True,
         )
 
     def val_dataloader(self):
