@@ -133,6 +133,16 @@ def main(config: DictConfig):
 
     # --- Handle Hydra Sweep Logic ---
     hydra_cfg = HydraConfig.get()
+    # Convert overrides to WandB tags for easy identification
+    job_overrides = hydra_cfg.overrides.task
+    for override in job_overrides:
+        if "=" in override:
+            key, value = override.split("=", 1)
+            short_key = key.split(".")[-1]
+            tag = f"{short_key}={value}"
+            config.logging.wandb.tags.append(tag)
+            rank_zero_print(f"   -> Added WandB tag: {tag}")
+
     if hydra_cfg.mode == RunMode.MULTIRUN:
         rank_zero_print(f"{'*'*80}\n[Startup] Detected Hydra Sweep (Job {hydra_cfg.job.num})\n{'*'*80}")
 
@@ -140,19 +150,11 @@ def main(config: DictConfig):
         config.run_name = f"{config.run_name}_run{hydra_cfg.job.num}"
 
         # Set WandB Group so all sweep runs are grouped together
+
         if not config.logging.wandb.get("group"):
             sweep_id = os.path.basename(os.path.normpath(hydra_cfg.sweep.dir))
             config.logging.wandb.group = f"sweep_{sweep_id}"
 
-        # Convert overrides to WandB tags for easy identification
-        job_overrides = hydra_cfg.overrides.task
-        for override in job_overrides:
-            if "=" in override:
-                key, value = override.split("=", 1)
-                short_key = key.split(".")[-1]
-                tag = f"{short_key}={value}"
-                config.logging.wandb.tags.append(tag)
-                rank_zero_print(f"   -> Added WandB tag: {tag}")
 
     # --- Debug Mode ---
     if config.debug:

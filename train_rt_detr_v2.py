@@ -536,6 +536,16 @@ def main(config: DictConfig):
     # --- 2. Handle Hydra Sweep Logic ---
     hydra_cfg = HydraConfig.get()
     
+    # Convert overrides to WandB tags for easy identification
+    job_overrides = hydra_cfg.overrides.task
+    for override in job_overrides:
+        if "=" in override:
+            key, value = override.split("=", 1)
+            short_key = key.split(".")[-1]
+            tag = f"{short_key}={value}"
+            config.logging.wandb.tags.append(tag)
+            rank_zero_print(f"   -> Added WandB tag: {tag}")
+
     if hydra_cfg.mode == RunMode.MULTIRUN:
         rank_zero_print(f"Detected Hydra Sweep (Job {hydra_cfg.job.num})")
 
@@ -553,19 +563,19 @@ def main(config: DictConfig):
 
         # B. Convert Overrides to Tags
         # Get list of overrides for this specific job (e.g. ["model.x=1", "data.y=2"])
-        job_overrides = hydra_cfg.overrides.task
+        # job_overrides = hydra_cfg.overrides.task
         
-        for override in job_overrides:
-            # Split "key=value"
-            if "=" in override:
-                key, value = override.split("=", 1)
-                # Shorten the key (e.g. "model.rtdetr.config_overrides.aux_loss" -> "aux_loss")
-                short_key = key.split(".")[-1] 
-                tag = f"{short_key}={value}"
+        # for override in job_overrides:
+        #     # Split "key=value"
+        #     if "=" in override:
+        #         key, value = override.split("=", 1)
+        #         # Shorten the key (e.g. "model.rtdetr.config_overrides.aux_loss" -> "aux_loss")
+        #         short_key = key.split(".")[-1] 
+        #         tag = f"{short_key}={value}"
                 
-                # Add to WandB tags
-                config.logging.wandb.tags.append(tag)
-                rank_zero_print(f"   -> Added WandB tag: {tag}")
+        #         # Add to WandB tags
+        #         config.logging.wandb.tags.append(tag)
+        #         rank_zero_print(f"   -> Added WandB tag: {tag}")
 
     # --- Hydra handles all config loading and merging ---
     # The 'config' object is already the final, merged config
