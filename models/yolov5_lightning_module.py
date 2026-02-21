@@ -236,9 +236,9 @@ class YOLOv5LightningModule(pl.LightningModule):
         yolo_labels = yolo_label_tensor.tolist()
         mapped = [int(x) for x in yolo_labels]
         
-        if self.config.debug and self.trainer.is_global_zero and len(yolo_labels) > 0:
-             # Look for this in the logs to verify both match (e.g. [0, 0] -> [0, 0])
-             self.print(f"[DEBUG] Evaluation labels (model idx): {yolo_labels[:5]}")
+        # if self.config.debug and self.trainer.is_global_zero and len(yolo_labels) > 0:
+        #      # Look for this in the logs to verify both match (e.g. [0, 0] -> [0, 0])
+        #      self.print(f"[DEBUG] Evaluation labels (model idx): {yolo_labels[:5]}")
 
         return torch.tensor(mapped, device=yolo_label_tensor.device, dtype=torch.int64)
 
@@ -409,12 +409,12 @@ class YOLOv5LightningModule(pl.LightningModule):
             mapped_labels = self._map_label_ids(predn[:, 5].to(torch.int64))
 
             # DIAGNOSTIC (continued): Add prediction info if it exists
-            if self.config.debug and self.trainer.is_global_zero and sample_idx == 0:
-                # Convert first pred to xywh for direct comparison
-                p_box = predn[0, :4].tolist()
-                p_xywh = [p_box[0], p_box[1], p_box[2]-p_box[0], p_box[3]-p_box[1]]
-                self.print(f"  PRED (first 1 box xywh): {[round(x, 2) for x in p_xywh]}")
-                self.print(f"  PRED Category: {int(mapped_labels[0])}")
+            # if self.config.debug and self.trainer.is_global_zero and sample_idx == 0:
+            #     # Convert first pred to xywh for direct comparison
+            #     p_box = predn[0, :4].tolist()
+            #     p_xywh = [p_box[0], p_box[1], p_box[2]-p_box[0], p_box[3]-p_box[1]]
+            #     self.print(f"  PRED (first 1 box xywh): {[round(x, 2) for x in p_xywh]}")
+            #     self.print(f"  PRED Category: {int(mapped_labels[0])}")
 
             result_map[int(image_id)] = {
                 "boxes": predn[:, :4].detach().cpu(),
@@ -528,8 +528,8 @@ class YOLOv5LightningModule(pl.LightningModule):
                 predictions.extend(convert_preds_to_coco(batch_out["predictions"]))
                 image_ids.extend(batch_out["image_ids"])
 
-            if self.config.debug and len(predictions) > 0:
-                self.print(f"[DEBUG] Final COCO preds for eval (first 3): {predictions[:3]}")
+            # if self.config.debug and len(predictions) > 0:
+            #     self.print(f"[DEBUG] Final COCO preds for eval (first 3): {predictions[:3]}")
 
             if len(predictions) > 0:
                 metrics = compute_coco_metrics(

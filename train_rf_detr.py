@@ -100,8 +100,9 @@ def _setup_callbacks(config: DictConfig):
     if hasattr(config.model, 'ema') and config.model.ema.enabled:
         from utils.ema import EMACallback
         warmup_steps = config.model.ema.get('warmup_steps', 0)
-        rank_zero_print(f"💡 EMA enabled: Adding EMACallback with decay={config.model.ema.decay}, warmup_steps={warmup_steps}")
-        callbacks.append(EMACallback(decay=config.model.ema.decay, warmup_steps=warmup_steps))
+        tau = config.model.ema.get('tau', 2000)
+        rank_zero_print(f"💡 EMA enabled: Adding EMACallback with decay={config.model.ema.decay}, tau={tau}, warmup_steps={warmup_steps}")
+        callbacks.append(EMACallback(decay=config.model.ema.decay, tau=tau, warmup_steps=warmup_steps))
 
         ema_monitor = "val/map_ema"
         callbacks.append(

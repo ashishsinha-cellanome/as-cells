@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import copy
+import math
 
 def to_cpu_device(data):
     if isinstance(data, dict):
@@ -12,7 +13,7 @@ def to_cpu_device(data):
     return data
 
 class ModelEma(nn.Module):
-    def __init__(self, model, decay=0.9999):
+    def __init__(self, model, decay=0.9999, tau=None):
         super().__init__()
         # make a copy of the model for accumulating moving average of weights
         self.module = copy.deepcopy(model)
@@ -20,6 +21,8 @@ class ModelEma(nn.Module):
         for p in self.module.parameters():
             p.requires_grad = False
         self.decay = decay
+        self.tau = tau
+        self.updates = 0
 
     def train(self, mode=True):
         """Force the module and its children to stay in evaluation mode."""
@@ -43,7 +46,15 @@ class ModelEma(nn.Module):
                     buffer.copy_(update_fn(buffer, model_buffers[name]))
 
     def update(self, model):
-        self._update(model, update_fn=lambda e, m: self.decay * e + (1. - self.decay) * m)
+        self.updates += 1
+        # Dynamic decay: starts fast (low d) and ramps up to self.decay (e.g. 0.9999)
+        # Using exponential ramp-up as in official YOLOv5
+        if self.tau is not None and self.tau > 0:
+            d = self.decay * (1 - math.exp(-self.updates / self.tau))
+        else:
+            d = self.decay
+        self._update(model, update_fn=lambda e, m: d * e + (1. - d) * m)
+        return d
 
     def set(self, model):
         self._update(model, update_fn=lambda e, m: m)
@@ -56,24 +67,25 @@ class EMACallback(pl.Callback):
     Manages a ModelEma instance and handles synchronization and checkpointing.
 
     Args:
-        decay: EMA decay rate (default: 0.9999)
+        decay: Target EMA decay rate (default: 0.9999)
         warmup_steps: Number of training steps before EMA updates start (default: 0)
-                     Early training has noisy gradients, warmup lets model stabilize first
+        tau: Decay ramp-up tau (default: None). Set to e.g. 2000 to enable YOLO-style ramp-up.
     """
-    def __init__(self, decay=0.9999, warmup_steps=0):
+    def __init__(self, decay=0.9999, warmup_steps=0, tau=None):
         super().__init__()
         self.decay = decay
         self.warmup_steps = warmup_steps
+        self.tau = tau
         self.ema_model = None
         self.warmup_completed = False
 
     def on_fit_start(self, trainer, pl_module):
         """Initialize EMA model and sync weights at the start of training."""
         if self.ema_model is None:
-            pl_module.print(f"[EMA Callback] Initializing EMA with decay={self.decay}")
+            pl_module.print(f"[EMA Callback] Initializing EMA with decay={self.decay}, tau={self.tau}")
             if self.warmup_steps > 0:
                 pl_module.print(f"[EMA Callback] Warmup enabled: EMA updates will start after {self.warmup_steps} steps")
-            self.ema_model = ModelEma(pl_module.model, decay=self.decay)
+            self.ema_model = ModelEma(pl_module.model, decay=self.decay, tau=self.tau)
 
         # Always sync at start of fit to ensure valid state
         pl_module.print("[EMA Callback] Synchronizing EMA weights with model weights...")
@@ -117,7 +129,11 @@ class EMACallback(pl.Callback):
                 return  # Already updated above
 
         # Update EMA model
-        self.ema_model.update(pl_module.model)
+        d = self.ema_model.update(pl_module.model)
+        
+        # Occasionally log the current decay value (every 100 steps)
+        if trainer.global_step % 100 == 0:
+            pl_module.log("ema/decay", d)
 
     def on_save_checkpoint(self, trainer, pl_module, checkpoint):
         """Save EMA state into the main checkpoint."""
@@ -129,6 +145,6 @@ class EMACallback(pl.Callback):
         """Restore EMA state from the checkpoint."""
         if 'ema_state_dict' in checkpoint:
             if self.ema_model is None:
-                self.ema_model = ModelEma(pl_module.model, decay=self.decay)
+                self.ema_model = ModelEma(pl_module.model, decay=self.decay, tau=self.tau)
             self.ema_model.module.load_state_dict(checkpoint['ema_state_dict'], strict=False)
             pl_module.print("[EMA Callback] Restored EMA state from checkpoint.")

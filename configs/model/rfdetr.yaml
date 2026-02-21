@@ -31,4 +31,5 @@ max_detections: 100
 ema:
   enabled: true
   decay: 0.9999
-  warmup_steps: 1000
+  tau: 2000
+  warmup_steps: 100
