@@ -17,6 +17,8 @@ from utils.coco_eval_utils import (
 )
 from utils.ema import EMACallback
 
+# import yolo models from ultralytics
+# from ultralytics import yolov5n, yolov5s, yolov5m, yolov5l, yolov5x
 
 def _import_from_yolo_repo(repo_path: str, module_name: str):
     """Import a module from the YOLOv5 repository using normal module resolution.
@@ -171,38 +173,65 @@ class YOLOv5LightningModule(pl.LightningModule):
     def _load_weights_if_available(self, model, weights_path: str):
         if not weights_path:
             return
-        w = Path(weights_path).expanduser()
-        
-        # Try finding the file in multiple common locations
-        search_paths = [
-            w,                                    # As-is (usually relative to CWD)
-            Path(self.yolo_repo_path) / w,        # Relative to YOLOv5 repo
-            Path(self.yolo_repo_path).parent / w, # Relative to repo parent (our project root)
-        ]
-        
-        found_path = None
-        for p in search_paths:
-            if p.exists() and p.is_file():
-                found_path = p
-                break
-                
-        if found_path is None:
-            print(f"[WARNING] YOLOv5 weights not found. Searched: {[str(p) for p in search_paths]}")
-            return
-            
-        print(f"[INFO] YOLOv5 Loading pre-trained weights from: {found_path}")
-        # weights_only=False is required for YOLOv5 checkpoints as they contain custom classes
-        ckpt = torch.load(str(found_path), map_location="cpu", weights_only=False)
 
-        state_dict = ckpt["model"].float().state_dict() if isinstance(ckpt, dict) and "model" in ckpt else ckpt
+        # Check if weights_path looks like a torch hub model name (e.g., 'yolov5s', 'yolov5m')
+        # and not a file path (doesn't end in .pt)
+        is_hub_model = not weights_path.endswith('.pt') and not Path(weights_path).exists()
         
-        # Filter state_dict to handle class mismatch (Detection head layers)
-        # In YOLOv5s, the detection head is typically layer 24.
-        exclude = ["model.24.m.0.weight", "model.24.m.0.bias", 
-                   "model.24.m.1.weight", "model.24.m.1.bias", 
-                   "model.24.m.2.weight", "model.24.m.2.bias"]
+        if is_hub_model:
+            try:
+                print(f"[INFO] YOLOv5 Loading pre-trained weights from torch.hub: {weights_path}")
+                # Load model from torch hub to get weights
+                # trusting repo since we are loading official yolov5
+                hub_model = torch.hub.load('ultralytics/yolov5', weights_path, pretrained=True, trust_repo=True)
+                
+                # Extract state dict
+                if hasattr(hub_model, 'model'):
+                    state_dict = hub_model.model.float().state_dict()
+                else:
+                    state_dict = hub_model.float().state_dict()
+                    
+                print(f"[INFO] YOLOv5 Successfully downloaded weights for {weights_path} from torch.hub")
+            except Exception as e:
+                print(f"[WARNING] Failed to load from torch.hub: {e}")
+                print("[INFO] Falling back to local file search...")
+                state_dict = None
+        else:
+            state_dict = None
+
+        if state_dict is None:
+            # Fallback to local file search
+            w = Path(weights_path).expanduser()
+            
+            # Try finding the file in multiple common locations
+            search_paths = [
+                w,                                    # As-is (usually relative to CWD)
+                Path(self.yolo_repo_path) / w,        # Relative to YOLOv5 repo
+                Path(self.yolo_repo_path).parent / w, # Relative to repo parent (our project root)
+            ]
+            
+            found_path = None
+            for p in search_paths:
+                if p.exists() and p.is_file():
+                    found_path = p
+                    break
+            
+            if found_path is None:
+                print(f"[WARNING] YOLOv5 weights not found. Searched: {[str(p) for p in search_paths]}")
+                return
+
+            print(f"[INFO] YOLOv5 Loading pre-trained weights from local file: {found_path}")
+            # weights_only=False is required for YOLOv5 checkpoints as they contain custom classes
+            ckpt = torch.load(str(found_path), map_location="cpu", weights_only=False)
+            state_dict = ckpt["model"].float().state_dict() if isinstance(ckpt, dict) and "model" in ckpt else ckpt
         
-        state_dict = {k: v for k, v in state_dict.items() if k in model.state_dict() and k not in exclude}
+        # Filter state_dict by shape to handle class mismatch (Detection head layers)
+        # The detection head weights will have different shapes due to num_classes differences
+        # (e.g. 80 classes in COCO vs 4 classes in this dataset).
+        # This dynamic filtering works for all YOLOv5 variants (n, s, m, l, x) without hardcoding layer indices.
+        model_state_dict = model.state_dict()
+        state_dict = {k: v for k, v in state_dict.items() 
+                     if k in model_state_dict and v.shape == model_state_dict[k].shape}
         
         model.load_state_dict(state_dict, strict=False)
         print(f"[INFO] YOLOv5 Weights loaded successfully (backbone and neck only).")
