@@ -108,6 +108,14 @@ def _setup_callbacks(config: DictConfig):
         
     if "backup_dir" in ckpt_cfg and ckpt_cfg.backup_dir:
         callbacks.append(BackupToNASCallback(backup_dir=to_absolute_path(ckpt_cfg.backup_dir)))
+
+    # Add EMA callback if enabled
+    if getattr(config.model, "use_ema", True):
+        from utils.ema import RTDETREMACallback
+        ema_decay = getattr(config.model, "ema_decay", 0.9999)
+        ema_warmup_steps = getattr(config.model, "ema_warmup_steps", 0)
+        callbacks.append(RTDETREMACallback(decay=ema_decay, warmup_steps=ema_warmup_steps))
+
     return callbacks
 
 

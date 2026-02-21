@@ -17,6 +17,8 @@ from utils.coco_eval_utils import (
 )
 from utils.ema import EMACallback
 
+# import yolo models from ultralytics
+# from ultralytics import yolov5n, yolov5s, yolov5m, yolov5l, yolov5x
 
 def _import_from_yolo_repo(repo_path: str, module_name: str):
     """Import a module from the YOLOv5 repository using normal module resolution.
@@ -126,6 +128,7 @@ class YOLOv5LightningModule(pl.LightningModule):
         self._compute_loss = None
         self._compute_loss_device = None
         self.validation_step_outputs = []
+        self.ema_validation_step_outputs = []
         self.test_step_outputs = []
         
         if hasattr(self.config.model, 'ema') and self.config.model.ema.enabled:
@@ -171,38 +174,65 @@ class YOLOv5LightningModule(pl.LightningModule):
     def _load_weights_if_available(self, model, weights_path: str):
         if not weights_path:
             return
-        w = Path(weights_path).expanduser()
-        
-        # Try finding the file in multiple common locations
-        search_paths = [
-            w,                                    # As-is (usually relative to CWD)
-            Path(self.yolo_repo_path) / w,        # Relative to YOLOv5 repo
-            Path(self.yolo_repo_path).parent / w, # Relative to repo parent (our project root)
-        ]
-        
-        found_path = None
-        for p in search_paths:
-            if p.exists() and p.is_file():
-                found_path = p
-                break
-                
-        if found_path is None:
-            print(f"[WARNING] YOLOv5 weights not found. Searched: {[str(p) for p in search_paths]}")
-            return
-            
-        print(f"[INFO] YOLOv5 Loading pre-trained weights from: {found_path}")
-        # weights_only=False is required for YOLOv5 checkpoints as they contain custom classes
-        ckpt = torch.load(str(found_path), map_location="cpu", weights_only=False)
 
-        state_dict = ckpt["model"].float().state_dict() if isinstance(ckpt, dict) and "model" in ckpt else ckpt
+        # Check if weights_path looks like a torch hub model name (e.g., 'yolov5s', 'yolov5m')
+        # and not a file path (doesn't end in .pt)
+        is_hub_model = not weights_path.endswith('.pt') and not Path(weights_path).exists()
         
-        # Filter state_dict to handle class mismatch (Detection head layers)
-        # In YOLOv5s, the detection head is typically layer 24.
-        exclude = ["model.24.m.0.weight", "model.24.m.0.bias", 
-                   "model.24.m.1.weight", "model.24.m.1.bias", 
-                   "model.24.m.2.weight", "model.24.m.2.bias"]
+        if is_hub_model:
+            try:
+                print(f"[INFO] YOLOv5 Loading pre-trained weights from torch.hub: {weights_path}")
+                # Load model from torch hub to get weights
+                # trusting repo since we are loading official yolov5
+                hub_model = torch.hub.load('ultralytics/yolov5', weights_path, pretrained=True, trust_repo=True)
+                
+                # Extract state dict
+                if hasattr(hub_model, 'model'):
+                    state_dict = hub_model.model.float().state_dict()
+                else:
+                    state_dict = hub_model.float().state_dict()
+                    
+                print(f"[INFO] YOLOv5 Successfully downloaded weights for {weights_path} from torch.hub")
+            except Exception as e:
+                print(f"[WARNING] Failed to load from torch.hub: {e}")
+                print("[INFO] Falling back to local file search...")
+                state_dict = None
+        else:
+            state_dict = None
+
+        if state_dict is None:
+            # Fallback to local file search
+            w = Path(weights_path).expanduser()
+            
+            # Try finding the file in multiple common locations
+            search_paths = [
+                w,                                    # As-is (usually relative to CWD)
+                Path(self.yolo_repo_path) / w,        # Relative to YOLOv5 repo
+                Path(self.yolo_repo_path).parent / w, # Relative to repo parent (our project root)
+            ]
+            
+            found_path = None
+            for p in search_paths:
+                if p.exists() and p.is_file():
+                    found_path = p
+                    break
+            
+            if found_path is None:
+                print(f"[WARNING] YOLOv5 weights not found. Searched: {[str(p) for p in search_paths]}")
+                return
+
+            print(f"[INFO] YOLOv5 Loading pre-trained weights from local file: {found_path}")
+            # weights_only=False is required for YOLOv5 checkpoints as they contain custom classes
+            ckpt = torch.load(str(found_path), map_location="cpu", weights_only=False)
+            state_dict = ckpt["model"].float().state_dict() if isinstance(ckpt, dict) and "model" in ckpt else ckpt
         
-        state_dict = {k: v for k, v in state_dict.items() if k in model.state_dict() and k not in exclude}
+        # Filter state_dict by shape to handle class mismatch (Detection head layers)
+        # The detection head weights will have different shapes due to num_classes differences
+        # (e.g. 80 classes in COCO vs 4 classes in this dataset).
+        # This dynamic filtering works for all YOLOv5 variants (n, s, m, l, x) without hardcoding layer indices.
+        model_state_dict = model.state_dict()
+        state_dict = {k: v for k, v in state_dict.items() 
+                     if k in model_state_dict and v.shape == model_state_dict[k].shape}
         
         model.load_state_dict(state_dict, strict=False)
         print(f"[INFO] YOLOv5 Weights loaded successfully (backbone and neck only).")
@@ -253,6 +283,40 @@ class YOLOv5LightningModule(pl.LightningModule):
         boxes[:, [0, 2]] = boxes[:, [0, 2]].clamp(0, float(w0))
         boxes[:, [1, 3]] = boxes[:, [1, 3]].clamp(0, float(h0))
         return boxes
+
+    def _process_predictions(self, model_output, shapes, batch_image_ids):
+        """Helper to process model predictions (called by both standard and EMA models)."""
+        pred_list = self._non_max_suppression(
+            model_output,
+            conf_thres=float(self.config.model.detection_threshold),
+            iou_thres=float(self.config.model.yolov5.iou_threshold),
+            max_det=int(self.config.model.max_detections),
+        )
+
+        result_map = {}
+        image_ids = []
+        for sample_idx, pred in enumerate(pred_list):
+            image_id = int(batch_image_ids[sample_idx])
+            image_ids.append(int(image_id))
+            if pred is None or len(pred) == 0:
+                result_map[int(image_id)] = {
+                    "boxes": torch.empty((0, 4), dtype=torch.float32),
+                    "scores": torch.empty((0,), dtype=torch.float32),
+                    "labels": torch.empty((0,), dtype=torch.int64),
+                }
+                continue
+
+            predn = pred.clone()
+            predn[:, :4] = self._undo_letterbox(predn[:, :4], shapes[sample_idx])
+            mapped_labels = self._map_label_ids(predn[:, 5].to(torch.int64))
+
+            result_map[int(image_id)] = {
+                "boxes": predn[:, :4].detach().cpu(),
+                "scores": predn[:, 4].detach().cpu(),
+                "labels": mapped_labels.detach().cpu(),
+            }
+
+        return {"predictions": result_map, "image_ids": image_ids}
 
     def _log_loss_items(self, split: str, loss_items):
         """
@@ -582,6 +646,7 @@ class YOLOv5LightningModule(pl.LightningModule):
             self.validation_step_outputs_ema.clear()
             
         self.validation_step_outputs.clear()
+        self.ema_validation_step_outputs.clear()
 
     @torch.no_grad()
     def test_step(self, batch, batch_idx):
@@ -647,6 +712,31 @@ class YOLOv5LightningModule(pl.LightningModule):
         metrics = broadcast_object(metrics, src=0)
         for key, value in metrics.items():
             self.log(f"test/{key}", value, prog_bar=(key in {"map", "map_50"}), sync_dist=True)
+
+        # EMA test metrics
+        all_ema_outputs = gather_outputs_across_processes(self.ema_test_step_outputs)
+        ema_metrics = {}
+        if self.trainer.is_global_zero and len(all_ema_outputs) > 0:
+            ema_predictions = []
+            ema_image_ids = []
+            for batch_out in all_ema_outputs:
+                ema_predictions.extend(convert_preds_to_coco(batch_out["predictions"]))
+                ema_image_ids.extend(batch_out["image_ids"])
+
+            if len(ema_predictions) > 0:
+                ema_metrics = compute_coco_metrics(
+                    coco_gt=self.test_coco_gt,
+                    predictions=ema_predictions,
+                    image_ids=list(set(ema_image_ids)),
+                    max_detections=int(self.config.model.max_detections),
+                    label_map=self.config.model.label_map,
+                )
+            else:
+                ema_metrics = {"map": 0.0, "map_50": 0.0, "map_75": 0.0}
+
+        ema_metrics = broadcast_object(ema_metrics, src=0)
+        for key, value in ema_metrics.items():
+            self.log(f"test_ema/{key}", value, prog_bar=(key in {"map", "map_50"}), sync_dist=True)
 
         self.test_step_outputs.clear()
         

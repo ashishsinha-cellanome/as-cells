@@ -5,10 +5,13 @@ yolov5:
   # Must point to official YOLOv5 source tree.
   repo_path: ${hydra:runtime.cwd}/models/yolov5
 
+  yolo_size: s
   # Official YOLOv5 model definition yaml (relative to repo_path or absolute path).
-  model_cfg: models/yolov5s.yaml
+  model_cfg: models/yolov5${model.yolov5.yolo_size}.yaml
   # Optional pretrained checkpoint (.pt). Leave null for random init.
-  weights: yolov5s.pt
+  # Use 'yolov5s', 'yolov5m', etc. to load from torch hub dynamically.
+  # Use 'yolov5s.pt' etc. to load from local file.
+  weights: yolov5${model.yolov5.yolo_size}
 
   # YOLO inference/eval settings
   iou_threshold: 0.3 # 0.45
@@ -53,6 +56,11 @@ yolov5:
     nesterov: true
 
   dataset_cache_dir: ${hydra:runtime.cwd}/.cache/datasets/yolov5_${data.train_name}_${data.val_name}_${data.test_name}
+
+# --- EMA (Exponential Moving Average) ---
+use_ema: true           # Enable EMA model during training
+ema_decay: 0.9999       # EMA decay rate (higher = more stable)
+ema_warmup_steps: 0     # Steps before starting EMA updates (0 = start immediately)
 
 # --- General ---
 label_map:
