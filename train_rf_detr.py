@@ -143,6 +143,16 @@ def main(config: DictConfig):
 
     # --- Handle Hydra Sweep Logic ---
     hydra_cfg = HydraConfig.get()
+
+    # Convert overrides to WandB tags for easy identification
+    job_overrides = hydra_cfg.overrides.task
+    for override in job_overrides:
+        if "=" in override:
+            key, value = override.split("=", 1)
+            short_key = key.split(".")[-1]
+            tag = f"{short_key}={value}"
+            config.logging.wandb.tags.append(tag)
+            rank_zero_print(f"   -> Added WandB tag: {tag}")
     if hydra_cfg.mode == RunMode.MULTIRUN:
         rank_zero_print(f"Detected Hydra Sweep (Job {hydra_cfg.job.num})")
 
@@ -154,15 +164,15 @@ def main(config: DictConfig):
             sweep_id = os.path.basename(os.path.normpath(hydra_cfg.sweep.dir))
             config.logging.wandb.group = f"sweep_{sweep_id}"
 
-        # Convert overrides to WandB tags for easy identification
-        job_overrides = hydra_cfg.overrides.task
-        for override in job_overrides:
-            if "=" in override:
-                key, value = override.split("=", 1)
-                short_key = key.split(".")[-1]
-                tag = f"{short_key}={value}"
-                config.logging.wandb.tags.append(tag)
-                rank_zero_print(f"   -> Added WandB tag: {tag}")
+        # # Convert overrides to WandB tags for easy identification
+        # job_overrides = hydra_cfg.overrides.task
+        # for override in job_overrides:
+        #     if "=" in override:
+        #         key, value = override.split("=", 1)
+        #         short_key = key.split(".")[-1]
+        #         tag = f"{short_key}={value}"
+        #         config.logging.wandb.tags.append(tag)
+        #         rank_zero_print(f"   -> Added WandB tag: {tag}")
 
     # --- Debug Mode ---
     if config.debug:
@@ -281,7 +291,7 @@ def main(config: DictConfig):
                     
         eval_ckpt = best_path if best_path else "best"
         trainer.test(lightning_model, datamodule=data_module, ckpt_path=eval_ckpt)
-
+    wandb.finish()
 
 if __name__ == "__main__":
     main()

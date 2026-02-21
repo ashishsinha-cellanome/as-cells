@@ -28,6 +28,7 @@ from utils.distributed_utils import rank_zero_print, setup_cluster_env
 from utils.train_utils import BackupToNASCallback
 from utils.ema import EMACallback
 
+import torch.distributed as dist
 
 setup_cluster_env()
 torch.set_float32_matmul_precision("medium")
@@ -109,13 +110,6 @@ def _setup_callbacks(config: DictConfig):
     if "backup_dir" in ckpt_cfg and ckpt_cfg.backup_dir:
         callbacks.append(BackupToNASCallback(backup_dir=to_absolute_path(ckpt_cfg.backup_dir)))
 
-    # Add EMA callback if enabled
-    if getattr(config.model, "use_ema", True):
-        from utils.ema import RTDETREMACallback
-        ema_decay = getattr(config.model, "ema_decay", 0.9999)
-        ema_warmup_steps = getattr(config.model, "ema_warmup_steps", 0)
-        callbacks.append(RTDETREMACallback(decay=ema_decay, warmup_steps=ema_warmup_steps))
-
     return callbacks
 
 
@@ -140,6 +134,16 @@ def main(config: DictConfig):
 
     # --- Handle Hydra Sweep Logic ---
     hydra_cfg = HydraConfig.get()
+    # Convert overrides to WandB tags for easy identification
+    job_overrides = hydra_cfg.overrides.task
+    for override in job_overrides:
+        if "=" in override:
+            key, value = override.split("=", 1)
+            short_key = key.split(".")[-1]
+            tag = f"{short_key}={value}"
+            config.logging.wandb.tags.append(tag)
+            rank_zero_print(f"   -> Added WandB tag: {tag}")
+
     if hydra_cfg.mode == RunMode.MULTIRUN:
         rank_zero_print(f"{'*'*80}\n[Startup] Detected Hydra Sweep (Job {hydra_cfg.job.num})\n{'*'*80}")
 
@@ -147,19 +151,11 @@ def main(config: DictConfig):
         config.run_name = f"{config.run_name}_run{hydra_cfg.job.num}"
 
         # Set WandB Group so all sweep runs are grouped together
+
         if not config.logging.wandb.get("group"):
             sweep_id = os.path.basename(os.path.normpath(hydra_cfg.sweep.dir))
             config.logging.wandb.group = f"sweep_{sweep_id}"
 
-        # Convert overrides to WandB tags for easy identification
-        job_overrides = hydra_cfg.overrides.task
-        for override in job_overrides:
-            if "=" in override:
-                key, value = override.split("=", 1)
-                short_key = key.split(".")[-1]
-                tag = f"{short_key}={value}"
-                config.logging.wandb.tags.append(tag)
-                rank_zero_print(f"   -> Added WandB tag: {tag}")
 
     # --- Debug Mode ---
     if config.debug:
@@ -267,6 +263,24 @@ def main(config: DictConfig):
                     
         eval_ckpt = best_path if best_path else "best"
         trainer.test(lightning_model, datamodule=data_module, ckpt_path=eval_ckpt)
+
+    # 1. Stop all GPUs and ensure testing is 100% complete across the cluster
+    if dist.is_initialized():
+        dist.barrier()
+
+    # 2. Safely close WandB ONLY on Rank 0
+    # Lightning's global zero is the only one maintaining the WandB connection
+    if trainer.is_global_zero:
+        wandb.finish()
+
+    # 3. Wait for Rank 0 to finish uploading logs to the WandB servers
+    if dist.is_initialized():
+        dist.barrier()
+        
+    # 4. Tear down the distributed process group. 
+    # This ensures the next Hydra iteration boots up a completely fresh DDP environment.
+    if dist.is_initialized():
+        dist.destroy_process_group()
 
 
 if __name__ == "__main__":
