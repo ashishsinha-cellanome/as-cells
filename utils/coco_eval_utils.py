@@ -134,7 +134,18 @@ def compute_coco_metrics(coco_gt, predictions, image_ids, max_detections=100, la
                 valid_50 = p_50[p_50 > -1]
                 if len(valid_50) > 0:
                     metrics[f"map_50_{class_name}"] = round(float(np.mean(valid_50)), 4)
-    except Exception:
+                
+                # Add per-class recall metrics
+                for recall_idx, recall_val in enumerate([1, 10, max_detections]):
+                    r_all = precisions[:, :, class_idx, recall_idx, -1]
+                    valid_r_all = r_all[r_all > -1]
+                    if len(valid_r_all) > 0:
+                        metrics[f"mar_{recall_val}_{class_name}"] = round(float(np.mean(valid_r_all)), 4)
+                        
+    except Exception as e:
+        import traceback
+        print(f"[COCOEval Error] {e}")
+        traceback.print_exc()
         return metrics
 
     return metrics

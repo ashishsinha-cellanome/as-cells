@@ -222,8 +222,8 @@ class RTDETRLightningModule(pl.LightningModule):
         self.validation_step_outputs.append({"predictions": results, "image_ids": image_ids})
         
         # EMA validation
-        from utils.ema import RTDETREMACallback
-        ema_callback = next((cb for cb in self.trainer.callbacks if isinstance(cb, RTDETREMACallback)), None)
+        from utils.ema import EMACallback
+        ema_callback = next((cb for cb in self.trainer.callbacks if isinstance(cb, EMACallback)), None)
         if ema_callback and ema_callback.ema_model:
             # DEBUG: Verify EMA is different from standard model (only log once per epoch)
             if batch_idx == 0 and self.trainer.is_global_zero:
@@ -435,8 +435,8 @@ class RTDETRLightningModule(pl.LightningModule):
         self.test_step_outputs.append({"predictions": results, "image_ids": image_ids})
 
         # EMA validation during test
-        from utils.ema import RTDETREMACallback
-        ema_callback = next((cb for cb in self.trainer.callbacks if isinstance(cb, RTDETREMACallback)), None)
+        from utils.ema import EMACallback
+        ema_callback = next((cb for cb in self.trainer.callbacks if isinstance(cb, EMACallback)), None)
         if ema_callback and ema_callback.ema_model:
             # EMA model forward pass
             ema_outputs = ema_callback.ema_model.module(pixel_values=pixel_values, labels=None)

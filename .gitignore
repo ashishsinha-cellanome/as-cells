@@ -1,5 +1,4 @@
 **/*.ipynb
-*.pth
 *.ckpt
 *.pt
 test_ema_safety.py

@@ -8,10 +8,10 @@ yolov5:
   # Official YOLOv5 model definition yaml (relative to repo_path or absolute path).
   model_cfg: models/yolov5s.yaml
   # Optional pretrained checkpoint (.pt). Leave null for random init.
-  weights: null
+  weights: yolov5s.pt
 
   # YOLO inference/eval settings
-  iou_threshold: 0.6
+  iou_threshold: 0.45 # 0.6
   cache_images: false
 
   # Native YOLO hyperparameters passed into dataloader/train behavior.
@@ -68,4 +68,10 @@ label_map:
 
 detection_threshold: 0.05
 draw_threshold: 0.4
-max_detections: 300
+max_detections: 100
+
+ema:
+  enabled: true
+  decay: 0.9999
+  tau: 2000
+  warmup_steps: 100

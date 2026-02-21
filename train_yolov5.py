@@ -2,18 +2,23 @@
 
 import datetime
 import os
+import warnings
+warnings.filterwarnings("ignore", category=FutureWarning)
 
 import hydra
 import pytorch_lightning as pl
 import torch
 from hydra.utils import to_absolute_path
+from hydra.core.hydra_config import HydraConfig
+from hydra.types import RunMode
 from lightning.pytorch.profilers import AdvancedProfiler, SimpleProfiler
 from omegaconf import DictConfig, OmegaConf
 
 # Register custom OmegaConf resolvers
 OmegaConf.register_new_resolver("oc.eval", eval)
+OmegaConf.register_new_resolver("extract_name", lambda path: path.split("/")[-1])
 
-from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint, ModelSummary
+from pytorch_lightning.callbacks import EarlyStopping, LearningRateMonitor, ModelCheckpoint, ModelSummary
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.plugins.environments import SLURMEnvironment
 
@@ -21,6 +26,8 @@ from data.yolov5_data_module import YOLOv5DataModule
 from models.yolov5_lightning_module import YOLOv5LightningModule
 from utils.distributed_utils import rank_zero_print, setup_cluster_env
 from utils.train_utils import BackupToNASCallback
+from utils.ema import EMACallback
+
 
 setup_cluster_env()
 torch.set_float32_matmul_precision("medium")
@@ -69,7 +76,36 @@ def _setup_callbacks(config: DictConfig):
         ),
         LearningRateMonitor(logging_interval="step"),
         ModelSummary(max_depth=3),
+        EarlyStopping(
+            monitor="val/map_ema" if hasattr(config.model, "ema") and config.model.ema.enabled else ckpt_cfg.monitor,
+            patience=100,
+            mode=ckpt_cfg.mode,
+            verbose=True,
+        ),
     ]
+    
+    # EMA Callback and Checkpoint (If enabled)
+    if hasattr(config.model, 'ema') and config.model.ema.enabled:
+        warmup_steps = config.model.ema.get('warmup_steps', 0)
+        tau = config.model.ema.get('tau', 2000)
+        rank_zero_print(f"💡 EMA enabled: Adding EMACallback with decay={config.model.ema.decay}, tau={tau}, warmup_steps={warmup_steps}")
+        callbacks.append(EMACallback(decay=config.model.ema.decay, tau=tau, warmup_steps=warmup_steps))
+
+        ema_monitor = "val/map_ema"
+        callbacks.append(
+            ModelCheckpoint(
+                dirpath=ckpt_dir,
+                filename="yolov5-ema-{epoch:02d}-val_map_ema{" + ema_monitor.replace("/", "_") + ":.4f}",
+                monitor=ema_monitor,
+                mode=ckpt_cfg.mode,
+                save_top_k=ckpt_cfg.save_top_k,
+                save_last=False,
+                every_n_epochs=ckpt_cfg.every_n_epochs,
+                auto_insert_metric_name=False,
+                verbose=True,
+            )
+        )
+        
     if "backup_dir" in ckpt_cfg and ckpt_cfg.backup_dir:
         callbacks.append(BackupToNASCallback(backup_dir=to_absolute_path(ckpt_cfg.backup_dir)))
 
@@ -88,15 +124,51 @@ def _resolve_run_name(config: DictConfig):
         os.environ.get("SLURM_JOB_ID")
         or os.environ.get("TORCHELASTIC_RUN_ID")
         or os.environ.get("WANDB_RUN_ID")
-        or datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        or ""
     )
+    timestamp = datetime.datetime.now().strftime("%H-%M")
+    unique_id = f"{unique_id}_{timestamp}" if unique_id else datetime.datetime.now().strftime("%Y-%m-%d_%H-%M")
     config.run_name = f"{config.run_name}_{unique_id}"
 
 
 @hydra.main(config_path="configs", config_name="config.yaml", version_base=None)
 def main(config: DictConfig):
     OmegaConf.set_struct(config, False)
+    # breakpoint()
     _resolve_run_name(config)
+    rank_zero_print(f"{'*'*80}\n[Startup] Run name: {config.run_name}\n{'*'*80}")
+
+    # --- Handle Hydra Sweep Logic ---
+    hydra_cfg = HydraConfig.get()
+    if hydra_cfg.mode == RunMode.MULTIRUN:
+        rank_zero_print(f"{'*'*80}\n[Startup] Detected Hydra Sweep (Job {hydra_cfg.job.num})\n{'*'*80}")
+
+        # Append sweep job index to run_name for unique directories
+        config.run_name = f"{config.run_name}_run{hydra_cfg.job.num}"
+
+        # Set WandB Group so all sweep runs are grouped together
+        if not config.logging.wandb.get("group"):
+            sweep_id = os.path.basename(os.path.normpath(hydra_cfg.sweep.dir))
+            config.logging.wandb.group = f"sweep_{sweep_id}"
+
+        # Convert overrides to WandB tags for easy identification
+        job_overrides = hydra_cfg.overrides.task
+        for override in job_overrides:
+            if "=" in override:
+                key, value = override.split("=", 1)
+                short_key = key.split(".")[-1]
+                tag = f"{short_key}={value}"
+                config.logging.wandb.tags.append(tag)
+                rank_zero_print(f"   -> Added WandB tag: {tag}")
+
+    # --- Debug Mode ---
+    if config.debug:
+        rank_zero_print(f"{'!'*80}\n[DEBUG] Running in DEBUG/OVERFIT mode\n{'!'*80}")
+        config.trainer.num_overfit_samples = 10 # Overfit on a single batch
+        config.data.batch_size = 1
+        config.data.eval_batch_size = config.data.batch_size # Sync batch sizes
+        config.run_name = f"DEBUG_{config.run_name}"
+
     base_save_dir = to_absolute_path(config.checkpointing.save_dir)
     config.checkpointing.save_dir = os.path.join(base_save_dir, config.run_name)
     OmegaConf.set_struct(config, True)
@@ -120,8 +192,8 @@ def main(config: DictConfig):
         config=config,
         yolo_repo_path=yolo_repo_path,
         model_to_coco=data_module.model_to_coco_map,
-        val_coco_gt=data_module.val_coco_gt,
-        test_coco_gt=data_module.test_coco_gt,
+        val_coco_gt=data_module.val_coco_gt if config.debug else data_module.val_coco_gt,
+        test_coco_gt=data_module.val_coco_gt if config.debug else data_module.test_coco_gt,
     )
 
     logger = _setup_logger(config)
@@ -171,7 +243,30 @@ def main(config: DictConfig):
         trainer.test(lightning_model, datamodule=data_module, ckpt_path=ckpt_path)
     else:
         trainer.fit(lightning_model, datamodule=data_module, ckpt_path=ckpt_path)
-        trainer.test(lightning_model, datamodule=data_module, ckpt_path="best")
+        
+        # Test the best model
+        best_path = None
+        
+        # Priority 1: EMA checkpoint
+        if hasattr(config.model, 'ema') and config.model.ema.enabled:
+            for cb in trainer.callbacks:
+                if isinstance(cb, ModelCheckpoint) and cb.monitor == "val/map_ema":
+                    if cb.best_model_path:
+                        best_path = cb.best_model_path
+                        rank_zero_print(f"🎯 Selected BEST EMA checkpoint (monitor: {cb.monitor}): {best_path}")
+                    break
+        
+        # Priority 2: Regular checkpoint
+        if not best_path:
+            for cb in trainer.callbacks:
+                if isinstance(cb, ModelCheckpoint) and cb.monitor == config.checkpointing.monitor:
+                    if cb.best_model_path:
+                        best_path = cb.best_model_path
+                        rank_zero_print(f"🎯 Selected BEST REGULAR checkpoint (monitor: {cb.monitor}): {best_path}")
+                    break
+                    
+        eval_ckpt = best_path if best_path else "best"
+        trainer.test(lightning_model, datamodule=data_module, ckpt_path=eval_ckpt)
 
 
 if __name__ == "__main__":
