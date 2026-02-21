@@ -291,7 +291,7 @@ def main(config: DictConfig):
                     
         eval_ckpt = best_path if best_path else "best"
         trainer.test(lightning_model, datamodule=data_module, ckpt_path=eval_ckpt)
-
+    wandb.finish()
 
 if __name__ == "__main__":
     main()

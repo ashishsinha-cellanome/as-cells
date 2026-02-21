@@ -28,6 +28,7 @@ from utils.distributed_utils import rank_zero_print, setup_cluster_env
 from utils.train_utils import BackupToNASCallback
 from utils.ema import EMACallback
 
+import torch.distributed as dist
 
 setup_cluster_env()
 torch.set_float32_matmul_precision("medium")
@@ -262,6 +263,24 @@ def main(config: DictConfig):
                     
         eval_ckpt = best_path if best_path else "best"
         trainer.test(lightning_model, datamodule=data_module, ckpt_path=eval_ckpt)
+
+    # 1. Stop all GPUs and ensure testing is 100% complete across the cluster
+    if dist.is_initialized():
+        dist.barrier()
+
+    # 2. Safely close WandB ONLY on Rank 0
+    # Lightning's global zero is the only one maintaining the WandB connection
+    if trainer.is_global_zero:
+        wandb.finish()
+
+    # 3. Wait for Rank 0 to finish uploading logs to the WandB servers
+    if dist.is_initialized():
+        dist.barrier()
+        
+    # 4. Tear down the distributed process group. 
+    # This ensures the next Hydra iteration boots up a completely fresh DDP environment.
+    if dist.is_initialized():
+        dist.destroy_process_group()
 
 
 if __name__ == "__main__":
