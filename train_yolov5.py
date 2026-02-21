@@ -65,7 +65,7 @@ def _setup_callbacks(config: DictConfig):
     callbacks = [
         ModelCheckpoint(
             dirpath=ckpt_dir,
-            filename="yolov5-epoch{epoch:02d}-val_map{" + ckpt_cfg.monitor.replace("/", "_") + ":.4f}",
+            filename="yolov5-regular-epoch-{epoch:02d}-val_map-{" + ckpt_cfg.monitor.replace("/", "_") + ":.4f}",
             monitor=ckpt_cfg.monitor,
             mode=ckpt_cfg.mode,
             save_top_k=ckpt_cfg.save_top_k,
@@ -78,7 +78,7 @@ def _setup_callbacks(config: DictConfig):
         ModelSummary(max_depth=3),
         EarlyStopping(
             monitor="val/map_ema" if hasattr(config.model, "ema") and config.model.ema.enabled else ckpt_cfg.monitor,
-            patience=100,
+            patience=10,
             mode=ckpt_cfg.mode,
             verbose=True,
         ),
@@ -95,7 +95,7 @@ def _setup_callbacks(config: DictConfig):
         callbacks.append(
             ModelCheckpoint(
                 dirpath=ckpt_dir,
-                filename="yolov5-ema-{epoch:02d}-val_map_ema{" + ema_monitor.replace("/", "_") + ":.4f}",
+                filename="yolov5-ema-epoch-{epoch:02d}-val_map_ema-{" + ema_monitor.replace("/", "_") + ":.4f}",
                 monitor=ema_monitor,
                 mode=ckpt_cfg.mode,
                 save_top_k=ckpt_cfg.save_top_k,

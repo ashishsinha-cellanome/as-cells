@@ -1,4 +1,4 @@
-name: rf_detr
+name: rf_detr_${rfdetr.size}
 input_size: 560
 
 rfdetr:

@@ -145,6 +145,7 @@ class YOLOv5LightningModule(pl.LightningModule):
         self.val_viz_counter = 0
         self.test_viz_counter = 0
         self._train_image_ids_epoch = []
+        self.save_hyperparameters()
 
     @property
     def compute_loss(self):
@@ -726,9 +727,9 @@ class YOLOv5LightningModule(pl.LightningModule):
         
         coco_gt = self.test_coco_gt if split == "test" else self.val_coco_gt
         
-        # Use detection_threshold for drawing predictions (not draw_threshold)
-        # since predictions have already been NMS-filtered at detection_threshold
-        viz_threshold = float(self.config.model.detection_threshold)
+        # Use draw_threshold for visualization to show only "clean" detections.
+        # detection_threshold is still used for the actual metrics/COCO eval.
+        viz_threshold = float(self.config.model.draw_threshold)
         
         for i, (path, img_id) in enumerate(zip(paths, image_ids)):
             if counter >= max_samples and max_samples != -1:

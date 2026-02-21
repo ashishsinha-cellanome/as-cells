@@ -11,7 +11,7 @@ yolov5:
   weights: yolov5s.pt
 
   # YOLO inference/eval settings
-  iou_threshold: 0.45 # 0.6
+  iou_threshold: 0.3 # 0.45
   cache_images: false
 
   # Native YOLO hyperparameters passed into dataloader/train behavior.
