@@ -1,7 +1,7 @@
 defaults:
   - backbone: resnet50
 
-name: rtdetr_${model.backbone.model_name}_backbone
+name: rtdetr_v1_${model.backbone.model_name}
 input_size: ${model.rtdetr.input_size}
 
 rtdetr:
