@@ -132,20 +132,19 @@ class RTDETRLightningModule(pl.LightningModule):
     
     def training_step(self, batch, batch_idx):
         """Training step."""
-        breakpoint()
-        # check params states:
-        frozen_params = []
-        trainable_params = []
+        # breakpoint()
+        # # check params states:
+        # frozen_params = []
+        # trainable_params = []
 
-        for name, param in model.named_parameters():
-            if param.requires_grad:
-                trainable_params.append(name)
-            else:
-                frozen_params.append(name)
+        # for name, param in model.named_parameters():
+        #     if param.requires_grad:
+        #         trainable_params.append(name)
+        #     else:
+        #         frozen_params.append(name)
 
-        print(f"Frozen parameters: {len(frozen_params)}")
-        print(f"Trainable parameters: {len(trainable_params)}")
-
+        # print(f"Frozen parameters: {len(frozen_params)}")
+        # print(f"Trainable parameters: {len(trainable_params)}")
 
         pixel_values = batch["pixel_values"]
         batch_size = pixel_values.shape[0]
