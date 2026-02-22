@@ -646,6 +646,9 @@ def main(config: DictConfig):
     data_module = setup_data(config, processor)
     callbacks = setup_callbacks(config)
     logger = setup_logger(config)
+    if logger:
+        logger.experiment.save("models/rt_detr_lightning_module.py")
+
     profiler = setup_profiler(config)
     # breakpoint()
 

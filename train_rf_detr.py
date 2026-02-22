@@ -8,6 +8,7 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 import hydra
 import pytorch_lightning as pl
 import torch
+import wandb
 from hydra.utils import to_absolute_path
 from hydra.core.hydra_config import HydraConfig
 from hydra.types import RunMode
@@ -221,6 +222,9 @@ def main(config: DictConfig):
     )
 
     logger = _setup_logger(config)
+    if logger:
+        logger.experiment.save("models/rf_detr_lightning_module.py")
+
     callbacks = _setup_callbacks(config)
     profiler = _get_profiler(config)
 
