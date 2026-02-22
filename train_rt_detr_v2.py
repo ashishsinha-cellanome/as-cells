@@ -303,6 +303,7 @@ def setup_model(config: DictConfig) -> RTDETRLightningModule:
     # This ensures that when we subsequently freeze the backbone (eval mode),
     # the rest of the model (decoder, etc.) remains in train mode, creating the correct mixed state.
     # model.train()
+    breakpoint()
 
     if config.model.backbone.type == "resnet":
         if not config.model.backbone.train_backbone:
