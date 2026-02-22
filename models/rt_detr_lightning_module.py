@@ -109,7 +109,7 @@ class RTDETRLightningModule(pl.LightningModule):
     def train(self, mode: bool = True):
         """Override to keep frozen modules in eval mode."""
         super().train(mode)
-        breakpoint()
+        # breakpoint()
         if mode:
             # When switching to train mode, we must ensure that any frozen modules stay in eval mode
             # This is critical for backbones that are partially or fully frozen (e.g. BatchNorm stats)
@@ -128,11 +128,11 @@ class RTDETRLightningModule(pl.LightningModule):
                 
                 if has_params and all_frozen:
                     m.eval()
-        breakpoint()
+        # breakpoint()
     
     def training_step(self, batch, batch_idx):
         """Training step."""
-        breakpoint()
+        # breakpoint()
         pixel_values = batch["pixel_values"]
         batch_size = pixel_values.shape[0]
         labels = [{k: v.to(self.device) for k, v in sample.items()} for sample in batch["labels"]]
