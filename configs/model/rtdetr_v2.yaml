@@ -1,7 +1,7 @@
 defaults:
   - backbone: dinov2
 
-name: rtdetr_v2_${model.backbone.name}_backbone
+name: rtdetr_v2_${model.backbone.model_name}_backbone
 input_size: ${model.rtdetr.input_size}
 
 rtdetr:

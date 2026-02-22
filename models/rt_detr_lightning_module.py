@@ -56,7 +56,7 @@ class RTDETRLightningModule(pl.LightningModule):
         config = None,
     ):
         super().__init__()
-        self.save_hyperparameters(ignore=['image_processor', 'val_coco_gt', 'test_coco_gt', 'train_coco_gt'])
+        
         self.model = model
         # self.model.train() # REMOVED: Managed by train() override below
         self.image_processor = image_processor
@@ -100,6 +100,8 @@ class RTDETRLightningModule(pl.LightningModule):
         if hasattr(self.config.model, 'ema') and self.config.model.ema.enabled:
             self.validation_step_outputs_ema = []
             self.test_step_outputs_ema = []
+
+        self.save_hyperparameters(ignore=['image_processor', 'val_coco_gt', 'test_coco_gt', 'train_coco_gt'])
 
 
     def forward(self, pixel_values, labels=None):

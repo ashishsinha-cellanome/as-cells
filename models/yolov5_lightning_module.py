@@ -8,6 +8,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 import torch
 import pytorch_lightning as pl
+from tqdm import tqdm
 
 from utils.coco_eval_utils import (
     convert_preds_to_coco,
@@ -713,33 +714,6 @@ class YOLOv5LightningModule(pl.LightningModule):
         for key, value in metrics.items():
             self.log(f"test/{key}", value, prog_bar=(key in {"map", "map_50"}), sync_dist=True)
 
-        # EMA test metrics
-        all_ema_outputs = gather_outputs_across_processes(self.ema_test_step_outputs)
-        ema_metrics = {}
-        if self.trainer.is_global_zero and len(all_ema_outputs) > 0:
-            ema_predictions = []
-            ema_image_ids = []
-            for batch_out in all_ema_outputs:
-                ema_predictions.extend(convert_preds_to_coco(batch_out["predictions"]))
-                ema_image_ids.extend(batch_out["image_ids"])
-
-            if len(ema_predictions) > 0:
-                ema_metrics = compute_coco_metrics(
-                    coco_gt=self.test_coco_gt,
-                    predictions=ema_predictions,
-                    image_ids=list(set(ema_image_ids)),
-                    max_detections=int(self.config.model.max_detections),
-                    label_map=self.config.model.label_map,
-                )
-            else:
-                ema_metrics = {"map": 0.0, "map_50": 0.0, "map_75": 0.0}
-
-        ema_metrics = broadcast_object(ema_metrics, src=0)
-        for key, value in ema_metrics.items():
-            self.log(f"test_ema/{key}", value, prog_bar=(key in {"map", "map_50"}), sync_dist=True)
-
-        self.test_step_outputs.clear()
-        
         # Compute EMA metrics for Test
         all_ema_outputs = gather_outputs_across_processes(getattr(self, 'test_step_outputs_ema', []))
         if hasattr(self, 'test_step_outputs_ema'):
@@ -821,7 +795,7 @@ class YOLOv5LightningModule(pl.LightningModule):
         # detection_threshold is still used for the actual metrics/COCO eval.
         viz_threshold = float(self.config.model.draw_threshold)
         
-        for i, (path, img_id) in enumerate(zip(paths, image_ids)):
+        for i, (path, img_id) in enumerate(tqdm(zip(paths, image_ids), desc=f"Visualizing on {split}")):
             if counter >= max_samples and max_samples != -1:
                 break
                 
@@ -869,7 +843,7 @@ class YOLOv5LightningModule(pl.LightningModule):
                 if n_preds > 0:
                     max_score = float(preds['scores'].max()) if n_preds > 0 else 0.0
                     above_thresh = int((preds['scores'] >= viz_threshold).sum())
-                    self.print(f"[VIZ] image_id={image_id}: {n_preds} preds, max_score={max_score:.4f}, above_thresh({viz_threshold})={above_thresh}")
+                    # self.print(f"[VIZ] image_id={image_id}: {n_preds} preds, max_score={max_score:.4f}, above_thresh({viz_threshold})={above_thresh}")
                 image = self.draw_boxes(
                     image, 
                     preds['boxes'], 
