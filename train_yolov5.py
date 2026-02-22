@@ -56,7 +56,7 @@ def _setup_logger(config: DictConfig):
         group=wandb_cfg.get("group"),
         config=cfg_for_log,
         save_dir=os.getcwd(),
-        reinit=True,
+        reinit='finish_previous',
     )
 
 

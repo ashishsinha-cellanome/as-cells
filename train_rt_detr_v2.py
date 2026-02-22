@@ -291,18 +291,19 @@ def setup_model(config: DictConfig) -> RTDETRLightningModule:
     )
     
     # Ensure model is on CUDA before casting to half
-    if torch.cuda.is_available():
-        model.to("cuda")
-        rank_zero_print("[INFO] Moved base model to CUDA device.")
+    # if torch.cuda.is_available():
+    #     model.to("cuda")
+    #     rank_zero_print("[INFO] Moved base model to CUDA device.")
         
-    if config.trainer.precision == "16-mixed":
-        model.half()
-        rank_zero_print("[INFO] Explicitly cast base model to Half precision for AMP compatibility.")
+    # if config.trainer.precision == "16-mixed":
+    #     model.half()
+    #     rank_zero_print("[INFO] Explicitly cast base model to Half precision for AMP compatibility.")
 
     # Explicitly set model to TRAIN mode initially.
     # This ensures that when we subsequently freeze the backbone (eval mode),
     # the rest of the model (decoder, etc.) remains in train mode, creating the correct mixed state.
     model.train()
+    # breakpoint()
 
     if config.model.backbone.type == "resnet":
         if not config.model.backbone.train_backbone:
@@ -485,7 +486,7 @@ def setup_logger(config: DictConfig):
 
     logger = WandbLogger(
         project=wandb_config.project,
-	reinit=True,
+	    reinit='finish_previous',
         name=config.run_name,
         tags=list(wandb_config.tags), # Convert OmegaConf list to plain list
         notes=wandb_config.notes,
@@ -585,6 +586,7 @@ def main(config: DictConfig):
         OmegaConf.set_struct(config, False) # Unlock config
         # Apply debug settings
         config.trainer.num_overfit_samples = 10
+        config.data.batch_size = 1
         config.run_name = f"DEBUG_{config.run_name}"
         config.logging.wandb.project = f"{config.logging.wandb.project}"
         # config.checkpointing.save_dir = os.path.join({config.checkpointing.save_dir}, config.run_name)

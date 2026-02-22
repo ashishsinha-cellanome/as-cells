@@ -109,6 +109,7 @@ class RTDETRLightningModule(pl.LightningModule):
     def train(self, mode: bool = True):
         """Override to keep frozen modules in eval mode."""
         super().train(mode)
+        # breakpoint()
         if mode:
             # When switching to train mode, we must ensure that any frozen modules stay in eval mode
             # This is critical for backbones that are partially or fully frozen (e.g. BatchNorm stats)
@@ -127,9 +128,24 @@ class RTDETRLightningModule(pl.LightningModule):
                 
                 if has_params and all_frozen:
                     m.eval()
+        # breakpoint()
     
     def training_step(self, batch, batch_idx):
         """Training step."""
+        # breakpoint()
+        # # check params states:
+        # frozen_params = []
+        # trainable_params = []
+
+        # for name, param in model.named_parameters():
+        #     if param.requires_grad:
+        #         trainable_params.append(name)
+        #     else:
+        #         frozen_params.append(name)
+
+        # print(f"Frozen parameters: {len(frozen_params)}")
+        # print(f"Trainable parameters: {len(trainable_params)}")
+
         pixel_values = batch["pixel_values"]
         batch_size = pixel_values.shape[0]
         labels = [{k: v.to(self.device) for k, v in sample.items()} for sample in batch["labels"]]
@@ -858,6 +874,31 @@ class RTDETRLightningModule(pl.LightningModule):
 
         return {'optimizer': optimizer, 'lr_scheduler': scheduler}
 
+    def optimizer_step(self, epoch, batch_idx, optimizer, optimizer_closure):
+        # --- 1. Warmup Logic (Apply BEFORE step) ---
+        
+        # Use effective_warmup_steps if set in configure_optimizers, else default logic
+        if hasattr(self, 'effective_warmup_steps'):
+            warmup_steps = self.effective_warmup_steps
+        else:
+            total_steps = self.trainer.estimated_stepping_batches + 100
+            warmup_steps = max(self.config.scheduler.warmup_steps, int(0.1 * total_steps))
+        
+        is_one_cycle = self.config.scheduler.type == "onecycle"
+        
+        if self.trainer.global_step < warmup_steps and not is_one_cycle:
+            # Calculate linear scale (0.0 to 1.0)
+            lr_scale = min(1.0, float(self.trainer.global_step + 1) / float(max(1, warmup_steps)))
+            
+            # Get the base LR from config to ensure we always scale from the correct starting point
+            # (Avoids issues where pg['lr'] might be modified by other schedulers or restarts)
+            base_lr = self.config.optimizer.optimizer.lr
+            
+            for pg in optimizer.param_groups:
+                pg['lr'] = base_lr * lr_scale
+        
+        optimizer.step(closure=optimizer_closure)
+
     def _get_scheduler_with_warmup(self, optimizer, sch_config):
         """
         Helper to attach warmup to any scheduler strategy safely.
@@ -935,30 +976,6 @@ class RTDETRLightningModule(pl.LightningModule):
             # LinearLR stays at factor 1.0 after total_iters are done
             return [{'scheduler': warmup_scheduler, 'interval': 'step'}]
         
-    def optimizer_step(self, epoch, batch_idx, optimizer, optimizer_closure):
-        # --- 1. Warmup Logic (Apply BEFORE step) ---
-        
-        # Use effective_warmup_steps if set in configure_optimizers, else default logic
-        if hasattr(self, 'effective_warmup_steps'):
-            warmup_steps = self.effective_warmup_steps
-        else:
-            total_steps = self.trainer.estimated_stepping_batches + 100
-            warmup_steps = max(self.config.scheduler.warmup_steps, int(0.1 * total_steps))
-        
-        is_one_cycle = self.config.scheduler.type == "onecycle"
-        
-        if self.trainer.global_step < warmup_steps and not is_one_cycle:
-            # Calculate linear scale (0.0 to 1.0)
-            lr_scale = min(1.0, float(self.trainer.global_step + 1) / float(max(1, warmup_steps)))
-            
-            # Get the base LR from config to ensure we always scale from the correct starting point
-            # (Avoids issues where pg['lr'] might be modified by other schedulers or restarts)
-            base_lr = self.config.optimizer.optimizer.lr
-            
-            for pg in optimizer.param_groups:
-                pg['lr'] = base_lr * lr_scale
-        
-        optimizer.step(closure=optimizer_closure)
 
     def draw_boxes(self, image, boxes, labels, scores=None, id2label=None, color_override=None, label_prefix=""):
         """Draws bounding boxes on a PIL image."""
