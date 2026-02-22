@@ -30,7 +30,7 @@ from utils.ema import EMACallback
 
 import torch.distributed as dist
 
-setup_cluster_env()
+# setup_cluster_env()  # Moved inside main()
 torch.set_float32_matmul_precision("medium")
 
 
@@ -128,6 +128,7 @@ def _resolve_run_name(config: DictConfig):
 @hydra.main(config_path="configs", config_name="config.yaml", version_base=None)
 def main(config: DictConfig):
     OmegaConf.set_struct(config, False)
+    setup_cluster_env()
     # breakpoint()
     _resolve_run_name(config)
     rank_zero_print(f"{'*'*80}\n[Startup] Run name: {config.run_name}\n{'*'*80}")
@@ -274,13 +275,13 @@ def main(config: DictConfig):
         wandb.finish()
 
     # 3. Wait for Rank 0 to finish uploading logs to the WandB servers
-    if dist.is_initialized():
-        dist.barrier()
+    # if dist.is_initialized():
+    #     dist.barrier()
         
-    # 4. Tear down the distributed process group. 
-    # This ensures the next Hydra iteration boots up a completely fresh DDP environment.
-    if dist.is_initialized():
-        dist.destroy_process_group()
+    # # 4. Tear down the distributed process group. 
+    # # This ensures the next Hydra iteration boots up a completely fresh DDP environment.
+    # if dist.is_initialized():
+    #     dist.destroy_process_group()
 
 
 if __name__ == "__main__":
