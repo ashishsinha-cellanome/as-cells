@@ -478,9 +478,19 @@ def setup_logger(config: DictConfig):
         rank_zero_print("✓ WandB logging disabled")
         return None
     
-    wandb_log_config = OmegaConf.to_container(config, resolve=True)
+    # wandb_log_config = OmegaConf.to_container(config, resolve=True)
+    # Manually construct log config to avoid resolution issues if any
+    try:
+        wandb_log_config = OmegaConf.to_container(config, resolve=True)
+    except Exception as e:
+        rank_zero_print(f"Warning: Failed to resolve config for WandB logging: {e}")
+        wandb_log_config = OmegaConf.to_container(config, resolve=False)
+    
     # Add top-level keys for easy filtering on WandB dashboard
-    wandb_log_config["model_type"] = "rtdetrv2" if "v2" in config.model.rtdetr.model_name else "rtdetrv1"
+    if config.model and config.model.rtdetr and config.model.rtdetr.model_name:
+         wandb_log_config["model_type"] = "rtdetrv2" if "v2" in config.model.rtdetr.model_name else "rtdetrv1"
+    else:
+         wandb_log_config["model_type"] = "unknown"
     wandb_log_config["backbone"] = config.model.backbone.name
     wandb_log_config["backbone_type"] = config.model.backbone.type
 
