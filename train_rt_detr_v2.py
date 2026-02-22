@@ -486,7 +486,7 @@ def setup_logger(config: DictConfig):
 
     logger = WandbLogger(
         project=wandb_config.project,
-	reinit=True,
+	    reinit='finish_previous',
         name=config.run_name,
         tags=list(wandb_config.tags), # Convert OmegaConf list to plain list
         notes=wandb_config.notes,
@@ -586,6 +586,7 @@ def main(config: DictConfig):
         OmegaConf.set_struct(config, False) # Unlock config
         # Apply debug settings
         config.trainer.num_overfit_samples = 10
+        config.data.batch_size = 1
         config.run_name = f"DEBUG_{config.run_name}"
         config.logging.wandb.project = f"{config.logging.wandb.project}"
         # config.checkpointing.save_dir = os.path.join({config.checkpointing.save_dir}, config.run_name)
