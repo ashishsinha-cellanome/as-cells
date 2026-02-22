@@ -7,12 +7,12 @@ import torch.distributed as dist
 def setup_cluster_env():
     """Apply cluster-friendly defaults for distributed training."""
     # Hydra-specific context (if available)
-    try:
-        from hydra.core.hydra_config import HydraConfig
-        hydra_cfg = HydraConfig.get()
-        job_num = hydra_cfg.job.num
-    except (ImportError, ValueError, AttributeError):
-        job_num = 0
+    # try:
+    #     from hydra.core.hydra_config import HydraConfig
+    #     hydra_cfg = HydraConfig.get()
+    #     job_num = hydra_cfg.job.num
+    # except (ImportError, ValueError, AttributeError):
+    #     job_num = 0
 
     if "SLURM_PROCID" in os.environ:
         os.environ["RANK"] = os.environ["SLURM_PROCID"]
@@ -36,11 +36,11 @@ def setup_cluster_env():
             try:
                 # Add job_num to avoid collisions in Hydra multirun sweeps
                 base_port = 20000 + (int(job_id) % 10000)
-                os.environ["MASTER_PORT"] = str(base_port + job_num)
+                os.environ["MASTER_PORT"] = str(base_port)
             except ValueError:
-                os.environ["MASTER_PORT"] = str(29505 + job_num)
+                os.environ["MASTER_PORT"] = str(29505)
         else:
-            os.environ["MASTER_PORT"] = str(29505 + job_num)
+            os.environ["MASTER_PORT"] = str(29505)
 
     if "MASTER_ADDR" not in os.environ and "SLURM_NODELIST" in os.environ:
         try:
