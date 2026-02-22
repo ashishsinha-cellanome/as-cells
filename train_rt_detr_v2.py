@@ -480,7 +480,7 @@ def setup_logger(config: DictConfig):
     
     wandb_log_config = OmegaConf.to_container(config, resolve=True)
     # Add top-level keys for easy filtering on WandB dashboard
-    wandb_log_config["model"] = "rtdetrv2" if "v2" in config.model.rtdetr.model_name else "rtdetrv1"
+    wandb_log_config["model_type"] = "rtdetrv2" if "v2" in config.model.rtdetr.model_name else "rtdetrv1"
     wandb_log_config["backbone"] = config.model.backbone.name
     wandb_log_config["backbone_type"] = config.model.backbone.type
 
@@ -647,7 +647,12 @@ def main(config: DictConfig):
     callbacks = setup_callbacks(config)
     logger = setup_logger(config)
     if logger:
-        logger.experiment.save("models/rt_detr_lightning_module.py")
+        # Use absolute path to the source file
+        source_path = os.path.join(hydra.utils.get_original_cwd(), "models/rt_detr_lightning_module.py")
+        if os.path.exists(source_path):
+            logger.experiment.save(source_path)
+        else:
+            rank_zero_print(f"Warning: Could not find model source file at {source_path}")
 
     profiler = setup_profiler(config)
     # breakpoint()
