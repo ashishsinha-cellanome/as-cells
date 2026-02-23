@@ -4,6 +4,7 @@ import torch.distributed as dist
 import os
 import cv2
 import pytorch_lightning as pl
+from tqdm import tqdm
 from pycocotools.cocoeval import COCOeval
 from PIL import Image, ImageDraw, ImageFont
 from models.custom_rt_detr_with_dinov2_backbone import RTDetrV2ForObjectDetectionWithCustomBackbone
@@ -134,19 +135,6 @@ class RTDETRLightningModule(pl.LightningModule):
     
     def training_step(self, batch, batch_idx):
         """Training step."""
-        # breakpoint()
-        # # check params states:
-        # frozen_params = []
-        # trainable_params = []
-
-        # for name, param in model.named_parameters():
-        #     if param.requires_grad:
-        #         trainable_params.append(name)
-        #     else:
-        #         frozen_params.append(name)
-
-        # print(f"Frozen parameters: {len(frozen_params)}")
-        # print(f"Trainable parameters: {len(trainable_params)}")
 
         pixel_values = batch["pixel_values"]
         batch_size = pixel_values.shape[0]
@@ -204,7 +192,7 @@ class RTDETRLightningModule(pl.LightningModule):
             for outputs in post_processed_outputs
         ]
         
-        if (self.current_epoch + 1) % self.config.checkpointing.visualize_every_n_epochs == 0 and \
+        if (self.current_epoch) % self.config.checkpointing.visualize_every_n_epochs == 0 and \
            self.trainer.is_global_zero and \
            (self.val_viz_counter < self.config.checkpointing.visualize_samples or self.config.checkpointing.visualize_samples == -1):
             
@@ -359,14 +347,14 @@ class RTDETRLightningModule(pl.LightningModule):
                     ema_image_ids.extend(output_batch["image_ids"])
 
                 if len(ema_predictions) > 0:
-                    self.print(f"✓ [Val] EMA validation ran: {len(ema_predictions)} predictions on {len(set(ema_image_ids))} images")
+                    self.print(f"[Val] EMA validation ran: {len(ema_predictions)} predictions on {len(set(ema_image_ids))} images")
                     ema_metrics = self._compute_coco_metrics(
                         predictions=ema_predictions,
                         image_ids=list(set(ema_image_ids)),
                         coco_gt=self.val_coco_gt
                     )
                 else:
-                    self.print(f"⚠️  [Val] EMA validation FAILED: No predictions collected!")
+                    self.print(f"[Val] EMA validation FAILED: No predictions collected!")
                     ema_metrics = {'map': 0.0, 'map_50': 0.0, 'map_75': 0.0}
             
             # Broadcast EMA metrics to all ranks
@@ -1028,6 +1016,10 @@ class RTDETRLightningModule(pl.LightningModule):
         id2label = self.model.config.id2label
         max_samples = self.config.checkpointing.visualize_samples
         
+        if counter == 0:
+            self.print(f"[VIZ] Saving visualizations to: {save_dir}")
+            self.print(f"[VIZ] Max samples: {max_samples}")
+        
         # Determine which COCO GT to use based on stage
         coco_gt = self.test_coco_gt if self.trainer.testing else self.val_coco_gt
         if coco_gt is None:
@@ -1042,8 +1034,8 @@ class RTDETRLightningModule(pl.LightningModule):
         # Un-normalize the entire batch
         unnormalized_images = torch.clamp((pixel_values * std) + mean, 0, 1)
         
-        for i in range(len(labels)):
-            if counter >= max_samples:
+        for i in tqdm(range(len(labels)), desc="Visualizing Batch", leave=False):
+            if max_samples != -1 and counter >= max_samples:
                 break
             
             # Get original image info
@@ -1091,6 +1083,7 @@ class RTDETRLightningModule(pl.LightningModule):
                 # If coco_gt is missing, we might not have the filename easily, 
                 # but we can try to use the image_id
                 img_info = {'file_name': f"image_{image_id}.png"}
+                gt_labels = [] # No GT available
 
             # --- 2. Prediction Boxes ---
             preds = post_processed_outputs[i]
@@ -1106,8 +1099,70 @@ class RTDETRLightningModule(pl.LightningModule):
                 label_prefix=""
             )
             
+            # --- 3. Visualization Counts & Filename ---
+            # Compute counts
+            from collections import Counter
+            label_map = self.config.model.label_map
+            
+            # GT Counts
+            gt_counts = Counter([label_map.get(int(l)) or label_map.get(str(l)) or str(l) for l in gt_labels])
+            
+            # Pred Counts (Apply threshold)
+            viz_threshold = self.config.model.draw_threshold
+            valid_indices = preds['scores'] >= viz_threshold
+            valid_labels = preds['labels'][valid_indices]
+            
+            # Robust label mapping handling tensor or int
+            pred_class_names = []
+            for l in valid_labels:
+                l_item = l.item() if torch.is_tensor(l) else int(l)
+                name = label_map.get(int(l_item)) or label_map.get(str(l_item)) or str(l_item)
+                pred_class_names.append(name)
+                
+            pred_counts = Counter(pred_class_names)
+            
+            # Draw Counts on Image (Top Right)
+            draw = ImageDraw.Draw(image)
+            text_x = image.width - 200 # Starting X position (adjust as needed)
+            text_y = 10
+            line_height = 20
+            
+            # Union of all classes seen in GT or Pred
+            all_classes = set(gt_counts.keys()) | set(pred_counts.keys())
+            
+            for cls_name in sorted(all_classes):
+                # Format: "class: pred / gt"
+                text = f"{cls_name}: {pred_counts[cls_name]}/{gt_counts[cls_name]}"
+                
+                # Draw text with shadow/outline for visibility
+                text_bbox = draw.textbbox((text_x, text_y), text, font=self.font)
+                text_width = text_bbox[2] - text_bbox[0]
+                
+                # Ensure it fits on screen, shift left if needed
+                actual_x = image.width - text_width - 10
+                
+                draw.text((actual_x + 1, text_y + 1), text, fill="black", font=self.font) # Shadow
+                draw.text((actual_x, text_y), text, fill="white", font=self.font)
+                text_y += line_height
+
+            # Construct new filename
+            # Format: "image_{detected_class_name1}_{detected_class_name2}_{image_name}.png"
+            detected_classes = sorted(list(set(pred_class_names)))
+            if detected_classes:
+                class_str = "_".join(detected_classes)
+                prefix = f"image_{class_str}_"
+            else:
+                prefix = "image_no_detections_"
+                
+            original_filename = os.path.basename(img_info['file_name'])
+            # Avoid repeating "image_" if original already has it, but spec says "image_{class}_{name}"
+            # Let's just prepend.
+            new_filename = f"{prefix}{original_filename}"
+            # Ensure unique valid filename
+            new_filename = new_filename.replace("image_image_", "image_") # Cleanup double prefix if needed
+            
             # Save image
-            save_path = os.path.join(save_dir, img_info['file_name'])
+            save_path = os.path.join(save_dir, new_filename)
             image.save(save_path)
             
             counter += 1

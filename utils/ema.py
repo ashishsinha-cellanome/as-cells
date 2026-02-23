@@ -116,16 +116,57 @@ class EMACallback(pl.Callback):
 
             # Verify EMA update is working by checking weight divergence after first update
             if trainer.global_step == self.warmup_steps:
-                # Store a copy of first param before update
-                first_param_before = next(self.ema_model.module.parameters()).clone()
-                self.ema_model.update(pl_module.model)
-                first_param_after = next(self.ema_model.module.parameters())
+                # Count parameters
+                total_params = 0
+                trainable_params = 0
+                frozen_params = 0
+                
+                param_to_check = None
+                param_name = "unknown"
+                
+                for name, p in pl_module.model.named_parameters():
+                    total_params += 1
+                    if p.requires_grad:
+                        trainable_params += 1
+                        if param_to_check is None:
+                            # Use the first trainable parameter for verification
+                            # Find corresponding EMA param
+                            for ema_name, ema_p in self.ema_model.module.named_parameters():
+                                if ema_name == name:
+                                    param_to_check = ema_p
+                                    param_name = name
+                                    break
+                    else:
+                        frozen_params += 1
+                
+                pl_module.print(f"[EMA Check] Model status: {total_params} parameters total. {frozen_params} frozen (ignored), {trainable_params} trainable.")
 
-                if torch.allclose(first_param_before, first_param_after, atol=1e-9):
-                    pl_module.print(f"[EMA] WARNING: EMA weights did NOT change after update! Check implementation.")
+                if param_to_check is None:
+                    # Fallback if no trainable params found (unlikely)
+                    param_to_check = next(self.ema_model.module.parameters())
+                    param_name = "first_param (fallback)"
+                    pl_module.print(f"[EMA Check] WARNING: No trainable parameters found! Checking '{param_name}'.")
+
+                # Store a copy before update
+                param_before = param_to_check.clone()
+                self.ema_model.update(pl_module.model)
+                
+                # Get the same param after update
+                # (We need to re-fetch it because update() might modify it in-place or replace it)
+                param_after = None
+                for ema_name, ema_p in self.ema_model.module.named_parameters():
+                    if ema_name == param_name:
+                        param_after = ema_p
+                        break
+                
+                if param_after is None:
+                     param_after = next(self.ema_model.module.parameters()) # Should not happen
+
+                if torch.allclose(param_before, param_after, atol=1e-9):
+                    pl_module.print(f"[EMA] WARNING: EMA weights ({param_name}) did NOT change after update! Check implementation.")
                 else:
-                    diff = (first_param_after - first_param_before).abs().max().item()
-                    pl_module.print(f"[EMA] First update successful. Max param change: {diff:.2e}")
+                    diff = (param_after - param_before).abs().max().item()
+                    pl_module.print(f"[EMA Check] First update successful. Verified on 1 trainable parameter (max change: {diff:.2e}).")
                 return  # Already updated above
 
         # Update EMA model

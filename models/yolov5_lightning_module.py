@@ -789,6 +789,10 @@ class YOLOv5LightningModule(pl.LightningModule):
         id2label = self.config.model.label_map
         max_samples = self.config.checkpointing.visualize_samples
         
+        if counter == 0:
+            self.print(f"[VIZ] Saving visualizations to: {save_dir}")
+            self.print(f"[VIZ] Max samples: {max_samples}")
+
         coco_gt = self.test_coco_gt if split == "test" else self.val_coco_gt
         
         # Use draw_threshold for visualization to show only "clean" detections.
@@ -814,11 +818,11 @@ class YOLOv5LightningModule(pl.LightningModule):
                 continue
                 
             # --- 1. Scaled Ground Truth Boxes ---
+            gt_labels = []
             if coco_gt:
                 try:
                     gt_anns = coco_gt.loadAnns(coco_gt.getAnnIds(imgIds=image_id))
                     gt_boxes = []
-                    gt_labels = []
                     for ann in gt_anns:
                         x, y, w, h = ann['bbox'] # xywh
                         gt_boxes.append([x, y, x + w, y + h]) # xyxy
@@ -837,6 +841,7 @@ class YOLOv5LightningModule(pl.LightningModule):
                     pass
             
             # --- 2. Prediction Boxes ---
+            pred_class_names = []
             if image_id in predictions_map:
                 preds = predictions_map[image_id]
                 n_preds = len(preds['boxes'])
@@ -844,6 +849,16 @@ class YOLOv5LightningModule(pl.LightningModule):
                     max_score = float(preds['scores'].max()) if n_preds > 0 else 0.0
                     above_thresh = int((preds['scores'] >= viz_threshold).sum())
                     # self.print(f"[VIZ] image_id={image_id}: {n_preds} preds, max_score={max_score:.4f}, above_thresh({viz_threshold})={above_thresh}")
+                    
+                    # Collect names for counts (filtered by threshold)
+                    valid_indices = preds['scores'] >= viz_threshold
+                    valid_labels = preds['labels'][valid_indices]
+                    label_map = self.config.model.label_map
+                    for l in valid_labels:
+                        l_item = l.item() if torch.is_tensor(l) else int(l)
+                        name = label_map.get(int(l_item)) or label_map.get(str(l_item)) or str(l_item)
+                        pred_class_names.append(name)
+                        
                 image = self.draw_boxes(
                     image, 
                     preds['boxes'], 
@@ -855,8 +870,47 @@ class YOLOv5LightningModule(pl.LightningModule):
                     threshold_override=viz_threshold,
                 )
             
-            filename = os.path.basename(path)
-            save_path = os.path.join(save_dir, filename)
+            # --- 3. Visualization Counts & Filename ---
+            from collections import Counter
+            label_map = self.config.model.label_map
+            
+            # GT Counts
+            gt_counts = Counter([label_map.get(int(l)) or label_map.get(str(l)) or str(l) for l in gt_labels])
+            
+            # Pred Counts
+            pred_counts = Counter(pred_class_names)
+            
+            # Draw Counts on Image (Top Right)
+            draw = ImageDraw.Draw(image)
+            text_x = image.width - 200 
+            text_y = 10
+            line_height = 20
+            
+            all_classes = set(gt_counts.keys()) | set(pred_counts.keys())
+            
+            for cls_name in sorted(all_classes):
+                text = f"{cls_name}: {pred_counts[cls_name]}/{gt_counts[cls_name]}"
+                text_bbox = draw.textbbox((text_x, text_y), text, font=self.font)
+                text_width = text_bbox[2] - text_bbox[0]
+                actual_x = image.width - text_width - 10
+                
+                draw.text((actual_x + 1, text_y + 1), text, fill="black", font=self.font) 
+                draw.text((actual_x, text_y), text, fill="white", font=self.font)
+                text_y += line_height
+
+            # Construct new filename
+            detected_classes = sorted(list(set(pred_class_names)))
+            if detected_classes:
+                class_str = "_".join(detected_classes)
+                prefix = f"image_{class_str}_"
+            else:
+                prefix = "image_no_detections_"
+            
+            original_filename = os.path.basename(path)
+            new_filename = f"{prefix}{original_filename}"
+            new_filename = new_filename.replace("image_image_", "image_")
+            
+            save_path = os.path.join(save_dir, new_filename)
             image.save(save_path)
             counter += 1
             

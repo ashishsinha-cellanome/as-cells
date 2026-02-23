@@ -3,6 +3,7 @@ import os
 import random
 import json
 import matplotlib.pyplot as plt
+import matplotlib.patches as patches
 import numpy as np
 from PIL import Image
 from pycocotools.coco import COCO
@@ -21,7 +22,7 @@ def sample_images_for_class(coco, category_id, num_samples):
     
     return random.sample(image_ids, min(len(image_ids), num_samples))
 
-def plot_samples(image_paths, titles, output_path, grid_size=(2, 4)):
+def plot_samples(image_paths, titles, output_path, bboxes_list=None, grid_size=(2, 4)):
     """Plots a grid of images and saves it."""
     rows, cols = grid_size
     fig, axes = plt.subplots(rows, cols, figsize=(cols * 4, rows * 4))
@@ -33,6 +34,14 @@ def plot_samples(image_paths, titles, output_path, grid_size=(2, 4)):
         try:
             img = Image.open(img_path).convert("RGB")
             axes[i].imshow(img)
+            
+            if bboxes_list and i < len(bboxes_list):
+                for bbox in bboxes_list[i]:
+                    # COCO bbox: [x, y, w, h]
+                    rect = patches.Rectangle((bbox[0], bbox[1]), bbox[2], bbox[3],
+                                             linewidth=2, edgecolor='r', facecolor='none')
+                    axes[i].add_patch(rect)
+
             axes[i].set_title(title, fontsize=10)
             axes[i].axis('off')
         except Exception as e:
@@ -77,7 +86,9 @@ def main(cfg: DictConfig):
     label_map = {int(k): v for k, v in cfg.model.label_map.items()}
     
     # Local annotation files in ./dataset/
-    local_anno_dir = Path("./dataset")
+    # breakpoint()
+    # local_anno_dir = Path("./dataset")
+    local_anno_dir = Path(cfg.data.path)
     
     for split_key, split_name in splits.items():
         print(f"\nProcessing {split_key} split ('{split_name}')...")
@@ -111,6 +122,7 @@ def main(cfg: DictConfig):
             
             image_paths = []
             titles = []
+            bboxes_list = []
             
             for img_id in sampled_ids:
                 img_info = coco.loadImgs(img_id)[0]
@@ -119,10 +131,16 @@ def main(cfg: DictConfig):
                 img_path = image_base_dir / split_name / file_name
                 image_paths.append(str(img_path))
                 titles.append(f"{cat_name} | {file_name}")
+                
+                # Fetch annotations for this image and class
+                ann_ids = coco.getAnnIds(imgIds=img_id, catIds=[coco_cat_id], iscrowd=None)
+                anns = coco.loadAnns(ann_ids)
+                bboxes = [ann['bbox'] for ann in anns]
+                bboxes_list.append(bboxes)
             
             # Create output plot
             plot_name = output_dir / f"{split_key}_{cat_name}_samples.png"
-            plot_samples(image_paths, titles, str(plot_name), grid_size=grid_size)
+            plot_samples(image_paths, titles, str(plot_name), bboxes_list=bboxes_list, grid_size=grid_size)
 
 if __name__ == "__main__":
     main()

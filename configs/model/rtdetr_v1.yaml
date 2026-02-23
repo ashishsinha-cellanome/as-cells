@@ -64,4 +64,5 @@ max_detections: 100
 ema:
   enabled: true
   decay: 0.9999
-  warmup_steps: 2000  # Skip EMA updates for first N steps (early training has noisy gradients)
+  warmup_steps: 500  # Skip EMA updates for first N steps (early training has noisy gradients)
+  tau: 2000
