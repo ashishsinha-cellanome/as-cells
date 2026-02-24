@@ -87,7 +87,7 @@ class RTDETRLightningModule(pl.LightningModule):
         
         # --- Load font for labels ---
         try:
-            self.font = ImageFont.truetype("arial.ttf", 15)
+            self.font = ImageFont.truetype("arial.ttf", 17)
         except IOError:
             self.font = ImageFont.load_default()
         # debug setting
@@ -1123,26 +1123,38 @@ class RTDETRLightningModule(pl.LightningModule):
             
             # Draw Counts on Image (Top Right)
             draw = ImageDraw.Draw(image)
-            text_x = image.width - 200 # Starting X position (adjust as needed)
             text_y = 10
-            line_height = 20
+            line_height = 24
             
-            # Union of all classes seen in GT or Pred
             all_classes = set(gt_counts.keys()) | set(pred_counts.keys())
             
             for cls_name in sorted(all_classes):
-                # Format: "class: pred / gt"
-                text = f"{cls_name}: {pred_counts[cls_name]}/{gt_counts[cls_name]}"
+                # Parts to draw: (Text, Color)
+                parts = [
+                    (f"{cls_name}: ", "white"),
+                    (f"{pred_counts[cls_name]}", "red"),
+                    ("/", "white"),
+                    (f"{gt_counts[cls_name]}", "green")
+                ]
                 
-                # Draw text with shadow/outline for visibility
-                text_bbox = draw.textbbox((text_x, text_y), text, font=self.font)
-                text_width = text_bbox[2] - text_bbox[0]
+                # Calculate total width to align right
+                total_width = 0
+                for text, _ in parts:
+                    bbox = draw.textbbox((0, 0), text, font=self.font)
+                    total_width += bbox[2] - bbox[0]
                 
-                # Ensure it fits on screen, shift left if needed
-                actual_x = image.width - text_width - 10
+                current_x = image.width - total_width - 10
                 
-                draw.text((actual_x + 1, text_y + 1), text, fill="black", font=self.font) # Shadow
-                draw.text((actual_x, text_y), text, fill="white", font=self.font)
+                for text, color in parts:
+                    # Draw shadow
+                    draw.text((current_x + 1, text_y + 1), text, fill="black", font=self.font)
+                    # Draw text
+                    draw.text((current_x, text_y), text, fill=color, font=self.font)
+                    
+                    # Advance cursor
+                    bbox = draw.textbbox((0, 0), text, font=self.font)
+                    current_x += bbox[2] - bbox[0]
+                
                 text_y += line_height
 
             # Construct new filename

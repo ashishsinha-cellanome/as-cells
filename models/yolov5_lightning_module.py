@@ -142,7 +142,7 @@ class YOLOv5LightningModule(pl.LightningModule):
             (128, 255, 64), (64, 128, 255), (255, 128, 128), (128, 255, 128), (128, 128, 255)
         ]
         try:
-            self.font = ImageFont.truetype("arial.ttf", 15)
+            self.font = ImageFont.truetype("arial.ttf", 17)
         except IOError:
             self.font = ImageFont.load_default()
             
@@ -882,20 +882,38 @@ class YOLOv5LightningModule(pl.LightningModule):
             
             # Draw Counts on Image (Top Right)
             draw = ImageDraw.Draw(image)
-            text_x = image.width - 200 
             text_y = 10
-            line_height = 20
+            line_height = 24
             
             all_classes = set(gt_counts.keys()) | set(pred_counts.keys())
             
             for cls_name in sorted(all_classes):
-                text = f"{cls_name}: {pred_counts[cls_name]}/{gt_counts[cls_name]}"
-                text_bbox = draw.textbbox((text_x, text_y), text, font=self.font)
-                text_width = text_bbox[2] - text_bbox[0]
-                actual_x = image.width - text_width - 10
+                # Parts to draw: (Text, Color)
+                parts = [
+                    (f"{cls_name}: ", "white"),
+                    (f"{pred_counts[cls_name]}", "red"),
+                    ("/", "white"),
+                    (f"{gt_counts[cls_name]}", "green")
+                ]
                 
-                draw.text((actual_x + 1, text_y + 1), text, fill="black", font=self.font) 
-                draw.text((actual_x, text_y), text, fill="white", font=self.font)
+                # Calculate total width to align right
+                total_width = 0
+                for text, _ in parts:
+                    bbox = draw.textbbox((0, 0), text, font=self.font)
+                    total_width += bbox[2] - bbox[0]
+                
+                current_x = image.width - total_width - 10
+                
+                for text, color in parts:
+                    # Draw shadow
+                    draw.text((current_x + 1, text_y + 1), text, fill="black", font=self.font)
+                    # Draw text
+                    draw.text((current_x, text_y), text, fill=color, font=self.font)
+                    
+                    # Advance cursor
+                    bbox = draw.textbbox((0, 0), text, font=self.font)
+                    current_x += bbox[2] - bbox[0]
+                
                 text_y += line_height
 
             # Construct new filename

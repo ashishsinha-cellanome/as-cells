@@ -42,7 +42,7 @@ class RFDETRLightningModule(pl.LightningModule):
             (100, 170, 30), (220, 220, 0), (175, 116, 175), (250, 0, 30), (165, 42, 42)
         ]
         try:
-            self.font = ImageFont.truetype("arial.ttf", 15)
+            self.font = ImageFont.truetype("arial.ttf", 17)
         except IOError:
             self.font = ImageFont.load_default()
 
@@ -287,7 +287,7 @@ class RFDETRLightningModule(pl.LightningModule):
                 ema_image_ids = []
                 for batch_out in all_ema_outputs:
                     ema_predictions.extend(convert_preds_to_coco(batch_out["predictions"]))
-                    ema_image_ids.extend(batch_out["image_ids"])
+                    ema_image_ids.extend(output_batch["image_ids"])
 
                 if len(ema_predictions) > 0:
                     ema_metrics = compute_coco_metrics(
@@ -481,18 +481,37 @@ class RFDETRLightningModule(pl.LightningModule):
             pred_counts = Counter(pred_class_names)
             
             draw = ImageDraw.Draw(image)
-            text_x = image.width - 200 
             text_y = 10
-            line_height = 20
+            line_height = 24
             
             all_classes = set(gt_counts.keys()) | set(pred_counts.keys())
             for cls_name in sorted(all_classes):
-                text = f"{cls_name}: {pred_counts[cls_name]}/{gt_counts[cls_name]}"
-                text_bbox = draw.textbbox((text_x, text_y), text, font=self.font)
-                text_width = text_bbox[2] - text_bbox[0]
-                actual_x = image.width - text_width - 10
-                draw.text((actual_x + 1, text_y + 1), text, fill="black", font=self.font) 
-                draw.text((actual_x, text_y), text, fill="white", font=self.font)
+                # Parts to draw: (Text, Color)
+                parts = [
+                    (f"{cls_name}: ", "white"),
+                    (f"{pred_counts[cls_name]}", "red"),
+                    ("/", "white"),
+                    (f"{gt_counts[cls_name]}", "green")
+                ]
+                
+                # Calculate total width to align right
+                total_width = 0
+                for text, _ in parts:
+                    bbox = draw.textbbox((0, 0), text, font=self.font)
+                    total_width += bbox[2] - bbox[0]
+                
+                current_x = image.width - total_width - 10
+                
+                for text, color in parts:
+                    # Draw shadow
+                    draw.text((current_x + 1, text_y + 1), text, fill="black", font=self.font)
+                    # Draw text
+                    draw.text((current_x, text_y), text, fill=color, font=self.font)
+                    
+                    # Advance cursor
+                    bbox = draw.textbbox((0, 0), text, font=self.font)
+                    current_x += bbox[2] - bbox[0]
+                
                 text_y += line_height
 
             detected_classes = sorted(list(set(pred_class_names)))
