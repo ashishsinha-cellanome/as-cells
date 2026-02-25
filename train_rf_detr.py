@@ -229,6 +229,8 @@ def main(config: DictConfig):
     logger = _setup_logger(config)
     if logger:
         logger.experiment.save("models/rf_detr_lightning_module.py")
+        logger.watch(lightning_model, log='gradients', log_freq=100)
+        rank_zero_print("✓ WandB logger watching model for gradients")
 
     callbacks = _setup_callbacks(config)
     profiler = _get_profiler(config)

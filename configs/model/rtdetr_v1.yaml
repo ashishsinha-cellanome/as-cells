@@ -11,7 +11,7 @@ rtdetr:
   input_size: 640
   
   freeze_backbone_batch_norms: true
-  normalize_before: true
+  normalize_before: false
 
   # --- SWEEP PARAMETERS ---
   config_overrides: 

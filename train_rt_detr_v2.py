@@ -10,6 +10,31 @@ import warnings
 warnings.filterwarnings("ignore", category=FutureWarning)
 import shutil
 import time
+import torch
+
+# --- Monkey-patch for generalized_box_iou to prevent crash on degenerate boxes ---
+import transformers.loss.loss_for_object_detection as loss_utils
+def patched_generalized_box_iou(boxes1, boxes2):
+    """
+    Patched version of generalized_box_iou that handles degenerate boxes 
+    by ensuring x2 >= x1 and y2 >= y1 using out-of-place operations.
+    """
+    # Ensure x2 >= x1 and y2 >= y1 without in-place modification
+    # This avoids "variable modified by an inplace operation" errors in autograd
+    boxes1 = torch.cat([boxes1[..., :2], torch.max(boxes1[..., 2:], boxes1[..., :2])], dim=-1)
+    boxes2 = torch.cat([boxes2[..., :2], torch.max(boxes2[..., 2:], boxes2[..., :2])], dim=-1)
+    return loss_utils.original_generalized_box_iou(boxes1, boxes2)
+
+if not hasattr(loss_utils, 'original_generalized_box_iou'):
+    loss_utils.original_generalized_box_iou = loss_utils.generalized_box_iou
+    loss_utils.generalized_box_iou = patched_generalized_box_iou
+
+try:
+    import transformers.loss.loss_rt_detr as loss_rt_detr
+    loss_rt_detr.generalized_box_iou = patched_generalized_box_iou
+except (ImportError, AttributeError):
+    pass
+# --------------------------------------------------------------------------------
 
 # --- Multi-node Stability Fixes ---
 # 1. Map SLURM variables to standard Distributed variables
