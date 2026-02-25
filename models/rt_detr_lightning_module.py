@@ -102,7 +102,7 @@ class RTDETRLightningModule(pl.LightningModule):
             self.validation_step_outputs_ema = []
             self.test_step_outputs_ema = []
 
-        self.save_hyperparameters(ignore=['image_processor', 'val_coco_gt', 'test_coco_gt', 'train_coco_gt'])
+        self.save_hyperparameters(ignore=['model', 'image_processor', 'val_coco_gt', 'test_coco_gt', 'train_coco_gt'])
 
 
     def forward(self, pixel_values, labels=None):

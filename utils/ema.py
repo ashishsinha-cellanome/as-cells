@@ -87,6 +87,9 @@ class EMACallback(pl.Callback):
                 pl_module.print(f"[EMA Callback] Warmup enabled: EMA updates will start after {self.warmup_steps} steps")
             self.ema_model = ModelEma(pl_module.model, decay=self.decay, tau=self.tau)
 
+        # Ensure EMA model is on the correct device
+        self.ema_model.to(pl_module.device)
+
         # Always sync at start of fit to ensure valid state
         pl_module.print("[EMA Callback] Synchronizing EMA weights with model weights...")
         self.ema_model.set(pl_module.model)

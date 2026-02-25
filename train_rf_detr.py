@@ -151,6 +151,11 @@ def main(config: DictConfig):
         if "=" in override:
             key, value = override.split("=", 1)
             short_key = key.split(".")[-1]
+            
+            # Skip adding load_from_checkpoint as a tag (it exceeds 64 char limit in wandb and is already logged in config)
+            if short_key == "load_from_checkpoint":
+                continue
+                
             tag = f"{short_key}={value}"
             config.logging.wandb.tags.append(tag)
             rank_zero_print(f"   -> Added WandB tag: {tag}")

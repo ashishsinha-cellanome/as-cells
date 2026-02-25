@@ -134,6 +134,7 @@ def create_initial_checkpoint(config: DictConfig) -> str:
 
     # get nas path
     nas_base = checkpoint_config.get("nas_initial_checkpoint")
+    # TODO: remove this when running on denvr
     nas_path = None
     if nas_base:
         nas_path = f"{hydra.utils.to_absolute_path(nas_base)}{full_suffix}"
@@ -501,13 +502,16 @@ def setup_logger(config: DictConfig):
         name=config.run_name,
         tags=list(wandb_config.tags), # Convert OmegaConf list to plain list
         notes=wandb_config.notes,
-        group=wandb_config.get("group"),
+        # group=wandb_config.get("group"),
         config=wandb_log_config, # Log full config with extra filter keys
         # Hydra changes CWD, so we save logs to the new CWD
         save_dir=os.getcwd(), 
     )
     
     rank_zero_print(f"✓ WandB logger configured - Project: {wandb_config.project}")
+    # logger.watch(model, log='gradients', log_freq=100)
+    # rank_zero_print("✓ WandB logger watching model for gradients")
+
     return logger
 
 @hydra.main(config_path="configs", config_name="config.yaml", version_base=None)
@@ -549,14 +553,20 @@ def main(config: DictConfig):
     hydra_cfg = HydraConfig.get()
     
     # Convert overrides to WandB tags for easy identification
-    job_overrides = hydra_cfg.overrides.task
-    for override in job_overrides:
-        if "=" in override:
-            key, value = override.split("=", 1)
-            short_key = key.split(".")[-1]
-            tag = f"{short_key}={value}"
-            config.logging.wandb.tags.append(tag)
-            rank_zero_print(f"   -> Added WandB tag: {tag}")
+    if hasattr(hydra_cfg.overrides, "task"):
+        job_overrides = hydra_cfg.overrides.task
+        for override in job_overrides:
+            if "=" in override:
+                key, value = override.split("=", 1)
+                short_key = key.split(".")[-1]
+                
+                # Skip adding load_from_checkpoint as a tag (it exceeds 64 char limit in wandb and is already logged in config)
+                if short_key == "load_from_checkpoint":
+                    continue
+                    
+                tag = f"{short_key}={value}"
+                config.logging.wandb.tags.append(tag)
+                rank_zero_print(f"   -> Added WandB tag: {tag}")
 
     if hydra_cfg.mode == RunMode.MULTIRUN:
         rank_zero_print(f"Detected Hydra Sweep (Job {hydra_cfg.job.num})")
@@ -572,22 +582,6 @@ def main(config: DictConfig):
             # This keeps all runs in this sweep together in the UI
             sweep_id = os.path.basename(os.path.normpath(hydra_cfg.sweep.dir))
             config.logging.wandb.group = f"sweep_{sweep_id}"
-
-        # B. Convert Overrides to Tags
-        # Get list of overrides for this specific job (e.g. ["model.x=1", "data.y=2"])
-        # job_overrides = hydra_cfg.overrides.task
-        
-        # for override in job_overrides:
-        #     # Split "key=value"
-        #     if "=" in override:
-        #         key, value = override.split("=", 1)
-        #         # Shorten the key (e.g. "model.rtdetr.config_overrides.aux_loss" -> "aux_loss")
-        #         short_key = key.split(".")[-1] 
-        #         tag = f"{short_key}={value}"
-                
-        #         # Add to WandB tags
-        #         config.logging.wandb.tags.append(tag)
-        #         rank_zero_print(f"   -> Added WandB tag: {tag}")
 
     # --- Hydra handles all config loading and merging ---
     # The 'config' object is already the final, merged config
@@ -619,10 +613,10 @@ def main(config: DictConfig):
         last_ckpt = os.path.join(run_save_dir, 'ckpts', "last.ckpt")
         
         if os.path.exists(last_ckpt):
-            rank_zero_print (f"🔄 Auto-Resume: Found existing 'last.ckpt' at {last_ckpt}")
+            rank_zero_print (f"Auto-Resume: Found existing 'last.ckpt' at {last_ckpt}")
             ckpt_path = last_ckpt
         else:
-            rank_zero_print (f"ℹ️  Auto-Resume: No 'last.ckpt' found in {last_ckpt}. Starting fresh.")
+            rank_zero_print (f"Auto-Resume: No 'last.ckpt' found in {last_ckpt}. Starting fresh.")
             ckpt_path = None
     else:
         ckpt_path = None
@@ -664,6 +658,8 @@ def main(config: DictConfig):
             logger.experiment.save(source_path)
         else:
             rank_zero_print(f"Warning: Could not find model source file at {source_path}")
+        logger.watch(model, log='gradients', log_freq=100)
+        rank_zero_print("✓ WandB logger watching model for gradients")
 
     profiler = setup_profiler(config)
     # breakpoint()

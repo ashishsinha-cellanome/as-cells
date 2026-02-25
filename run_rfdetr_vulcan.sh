@@ -10,7 +10,7 @@ NODES=1
 GPUS=4
 CPUS_PER_TASK=4
 MEM_PER_GPU=32G
-TIME="24:00:00"
+TIME="7:59:00"
 
 echo "🚀 Requesting allocation and starting RF-DETR training..."
 echo "Account: $ACCOUNT | Nodes: $NODES | GPUs: $GPUS"
@@ -34,7 +34,7 @@ salloc --account=$ACCOUNT \
          echo \"Allocation granted. Starting training...\"
          srun uv run train_rf_detr.py \
               data=vulcan \
-              model=rtdetr_v2_dinov2_backbone \
+              model=rfdetr \
               trainer.devices=4 \
               trainer.strategy=ddp \
               logging.wandb.project='cell-detection' \
