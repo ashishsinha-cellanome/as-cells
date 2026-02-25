@@ -10,7 +10,7 @@ optimizer:
   # Optional: Fine-grained control over parameter groups using regex
   # Groups are matched in order; first match wins.
   param_groups:
-    - params: "backbone"
+    - params: "backbone|input_proj"
       lr: ${oc.eval:"${optimizer.optimizer.lr} / 10"}
       # lr: ${oc.eval:"${optimizer.lr} / 10"}
       # 1e-5 # ${optimizer.lr}

@@ -14,24 +14,77 @@ import torch
 
 # --- Monkey-patch for generalized_box_iou to prevent crash on degenerate boxes ---
 import transformers.loss.loss_for_object_detection as loss_utils
+# 1. Zero-Overhead GIoU Patch
 def patched_generalized_box_iou(boxes1, boxes2):
-    """
-    Patched version of generalized_box_iou that handles degenerate boxes 
-    by ensuring x2 >= x1 and y2 >= y1 using out-of-place operations.
-    """
-    # Ensure x2 >= x1 and y2 >= y1 without in-place modification
-    # This avoids "variable modified by an inplace operation" errors in autograd
-    boxes1 = torch.cat([boxes1[..., :2], torch.max(boxes1[..., 2:], boxes1[..., :2])], dim=-1)
-    boxes2 = torch.cat([boxes2[..., :2], torch.max(boxes2[..., 2:], boxes2[..., :2])], dim=-1)
-    return loss_utils.original_generalized_box_iou(boxes1, boxes2)
+    try:
+        return loss_utils.original_generalized_box_iou(boxes1, boxes2)
+    except ValueError:
+        # Repair only on failure
+        boxes1 = torch.nan_to_num(boxes1, 0.0, 1.0, 0.0)
+        boxes2 = torch.nan_to_num(boxes2, 0.0, 1.0, 0.0)
+        boxes1 = torch.cat([boxes1[..., :2], torch.maximum(boxes1[..., 2:], boxes1[..., :2])], dim=-1)
+        boxes2 = torch.cat([boxes2[..., :2], torch.maximum(boxes2[..., 2:], boxes2[..., :2])], dim=-1)
+        return loss_utils.original_generalized_box_iou(boxes1, boxes2)
 
-if not hasattr(loss_utils, 'original_generalized_box_iou'):
-    loss_utils.original_generalized_box_iou = loss_utils.generalized_box_iou
-    loss_utils.generalized_box_iou = patched_generalized_box_iou
+# 2. Matcher "NaN Sentinel" Patch
+import transformers.loss.loss_rt_detr as loss_rt_detr
+from transformers.image_transforms import center_to_corners_format
+from scipy.optimize import linear_sum_assignment
+import torch.nn.functional as F
+
+def patched_matcher_forward(self, outputs, targets):
+    try:
+        return self.original_forward(outputs, targets)
+    except ValueError as e:
+        if "matrix contains invalid numeric entries" not in str(e):
+            raise e
+        
+        from utils.distributed_utils import rank_zero_print
+        rank_zero_print("\n" + "!"*80 + "\n🚨 [NaN Sentinel] Invalid numeric entries detected in Matcher!\n" + "!"*80)
+        
+        with torch.no_grad():
+            batch_size, num_queries = outputs["logits"].shape[:2]
+            out_bbox = outputs["pred_boxes"].flatten(0, 1)
+            target_ids = torch.cat([v["class_labels"] for v in targets])
+            target_bbox = torch.cat([v["boxes"] for v in targets])
+            
+            # Diagnostic: where is the NaN?
+            if not torch.isfinite(outputs["logits"]).all():
+                rank_zero_print("   -> Source: NaNs found in LOGITS")
+            if not torch.isfinite(out_bbox).all():
+                rank_zero_print("   -> Source: NaNs found in PRED_BOXES")
+                
+            # Sanitization logic
+            if self.use_focal_loss:
+                out_prob = F.sigmoid(outputs["logits"].flatten(0, 1))
+                out_prob = out_prob[:, target_ids]
+                neg_cost_class = (1 - self.alpha) * (out_prob**self.gamma) * (-(1 - out_prob + 1e-8).log())
+                pos_cost_class = self.alpha * ((1 - out_prob) ** self.gamma) * (-(out_prob + 1e-8).log())
+                class_cost = pos_cost_class - neg_cost_class
+            else:
+                out_prob = outputs["logits"].flatten(0, 1).softmax(-1)
+                class_cost = -out_prob[:, target_ids]
+
+            bbox_cost = torch.cdist(out_bbox, target_bbox, p=1)
+            giou_cost = -patched_generalized_box_iou(center_to_corners_format(out_bbox), center_to_corners_format(target_bbox))
+            
+            # Combine and sanitize the entire matrix
+            cost_matrix = self.bbox_cost * bbox_cost + self.class_cost * class_cost + self.giou_cost * giou_cost
+            cost_matrix = torch.nan_to_num(cost_matrix, nan=0.0, posinf=1e6, neginf=-1e6)
+            cost_matrix = cost_matrix.view(batch_size, num_queries, -1).cpu()
+
+            sizes = [len(v["boxes"]) for v in targets]
+            indices = [linear_sum_assignment(c[i]) for i, c in enumerate(cost_matrix.split(sizes, -1))]
+            return [(torch.as_tensor(i, dtype=torch.int64), torch.as_tensor(j, dtype=torch.int64)) for i, j in indices]
+
+# Apply patches early
+loss_utils.original_generalized_box_iou = loss_utils.generalized_box_iou
+loss_utils.generalized_box_iou = patched_generalized_box_iou
 
 try:
-    import transformers.loss.loss_rt_detr as loss_rt_detr
-    loss_rt_detr.generalized_box_iou = patched_generalized_box_iou
+    if not hasattr(loss_rt_detr.RTDetrHungarianMatcher, 'original_forward'):
+        loss_rt_detr.RTDetrHungarianMatcher.original_forward = loss_rt_detr.RTDetrHungarianMatcher.forward
+        loss_rt_detr.RTDetrHungarianMatcher.forward = patched_matcher_forward
 except (ImportError, AttributeError):
     pass
 # --------------------------------------------------------------------------------
@@ -740,6 +793,29 @@ def main(config: DictConfig):
         rank_zero_print("\n" + "="*80)
         rank_zero_print("Starting Training")
         rank_zero_print("="*80 + "\n")
+
+        # Logic to handle optimizer group changes or fine-tuning from a full checkpoint
+        resume_weights_only = config.initialization.get("resume_weights_only", False)
+        
+        if ckpt_path and resume_weights_only:
+            rank_zero_print(f"\n📢 [Warm Start] Loading weights ONLY from {ckpt_path}")
+            rank_zero_print("   -> Optimizer and Scheduler will be re-initialized.\n")
+            
+            # Load checkpoint on the correct device (weights_only=False to allow custom classes)
+            checkpoint = torch.load(ckpt_path, map_location=model.device, weights_only=False)
+            
+            # Extract state_dict (standard PL checkpoint format)
+            if "state_dict" in checkpoint:
+                state_dict = checkpoint["state_dict"]
+            else:
+                state_dict = checkpoint
+                
+            # Load state_dict into the model instance
+            msg = model.load_state_dict(state_dict, strict=False)
+            rank_zero_print(f"   -> Result: {msg}\n")
+            
+            # Clear ckpt_path so trainer.fit doesn't try a full resume of optimizer/epoch
+            ckpt_path = None
 
         trainer.fit(model, datamodule=data_module, ckpt_path=ckpt_path)
         

@@ -2,7 +2,8 @@
 # Default initialization settings
 
 # initialization:
-  create_initial_checkpoint: true
+  create_initial_checkpoint: false
+  resume_weights_only: false
   load_from_checkpoint: null # Set to a .ckpt path to resume
   # load_from_checkpoint: /project/aip-robsc/asinha/cellanome/DATA/checkpoints/rtdetrv2_rtdetr_v2_r18vd_2026-02-13_3738093/ckpts/rtdetr-ema-epoch=22-val_map_ema=0.5420.ckpt
   # load_from_checkpoint: /project/aip-robsc/asinha/cellanome/DATA/checkpoints/rtdetrv2_rtdetr_r50vd_2026-02-13_3738081/ckpts/rtdetr-regular-epoch=05-val_map=0.5325.ckpt
