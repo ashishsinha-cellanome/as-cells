@@ -12,6 +12,8 @@ import shutil
 import time
 import torch
 
+from utils.distributed_utils import setup_cluster_env, rank_print
+
 # --- Monkey-patch for generalized_box_iou to prevent crash on degenerate boxes ---
 import transformers.loss.loss_for_object_detection as loss_utils
 # 1. Zero-Overhead GIoU Patch
@@ -40,7 +42,7 @@ def patched_matcher_forward(self, outputs, targets):
             raise e
         
         from utils.distributed_utils import rank_zero_print
-        rank_zero_print("\n" + "!"*80 + "\n🚨 [NaN Sentinel] Invalid numeric entries detected in Matcher!\n" + "!"*80)
+        # rank_zero_print("\n" + "!"*80 + "\n🚨 [NaN Sentinel] Invalid numeric entries detected in Matcher!\n" + "!"*80)
         
         with torch.no_grad():
             batch_size, num_queries = outputs["logits"].shape[:2]
@@ -82,57 +84,20 @@ loss_utils.original_generalized_box_iou = loss_utils.generalized_box_iou
 loss_utils.generalized_box_iou = patched_generalized_box_iou
 
 try:
+    loss_rt_detr.generalized_box_iou = patched_generalized_box_iou
     if not hasattr(loss_rt_detr.RTDetrHungarianMatcher, 'original_forward'):
         loss_rt_detr.RTDetrHungarianMatcher.original_forward = loss_rt_detr.RTDetrHungarianMatcher.forward
         loss_rt_detr.RTDetrHungarianMatcher.forward = patched_matcher_forward
 except (ImportError, AttributeError):
     pass
-# --------------------------------------------------------------------------------
 
-# --- Multi-node Stability Fixes ---
-# 1. Map SLURM variables to standard Distributed variables
-if "SLURM_PROCID" in os.environ:
-    os.environ["RANK"] = os.environ["SLURM_PROCID"]
-    os.environ["LOCAL_RANK"] = os.environ.get("SLURM_LOCALID", "0")
-    os.environ["WORLD_SIZE"] = os.environ.get("SLURM_NTASKS", "1")
-
-# 2. Derive MASTER_PORT from SLURM_JOB_ID to avoid collisions
-if "MASTER_PORT" not in os.environ:
-    job_id = os.environ.get("SLURM_JOB_ID")
-    if job_id:
-        try:
-            # Use a deterministic port in the ephemeral range
-            port = 20000 + (int(job_id) % 10000)
-            os.environ["MASTER_PORT"] = str(port)
-        except ValueError:
-            os.environ["MASTER_PORT"] = "29505"
-    else:
-        os.environ["MASTER_PORT"] = "29505"
-
-# 3. Detect MASTER_ADDR from SLURM_NODELIST
-if "MASTER_ADDR" not in os.environ and "SLURM_NODELIST" in os.environ:
-    import subprocess
-    try:
-        node_list = os.environ["SLURM_NODELIST"]
-        # Use scontrol to get the first node name
-        master_node = subprocess.check_output(["scontrol", "show", "hostnames", node_list], stderr=subprocess.DEVNULL).decode().splitlines()[0]
-        os.environ["MASTER_ADDR"] = master_node
-    except Exception:
-        # Fallback to localhost if scontrol fails (though unlikely on SLURM)
-        if "RANK" in os.environ and os.environ["RANK"] == "0":
-            import socket
-            os.environ["MASTER_ADDR"] = socket.gethostname()
-
-# 4. NCCL stability settings
-os.environ["NCCL_P2P_DISABLE"] = "1"
-os.environ["NCCL_IB_DISABLE"] = "1"
-# os.environ["NCCL_DEBUG"] = "INFO" 
+setup_cluster_env()
 
 import torch
 torch.set_float32_matmul_precision('medium')
 
 import pytorch_lightning as pl
-from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor, ModelSummary
+from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor, ModelSummary, EarlyStopping
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.plugins.environments import SLURMEnvironment
 from lightning.pytorch.profilers import SimpleProfiler, AdvancedProfiler
@@ -541,6 +506,12 @@ def setup_callbacks(config: DictConfig):
 
     callbacks.append(LearningRateMonitor(logging_interval='step'))
     callbacks.append(ModelSummary(max_depth=3))
+    callbacks.append(EarlyStopping(
+        monitor=checkpoint_config.monitor,
+        mode=checkpoint_config.mode,
+        patience=10,
+        verbose=True
+    ))
 
     if "backup_dir" in checkpoint_config and checkpoint_config.backup_dir:
         # Resolve path (handle ${hydra...} if needed, though usually resolved by now)
@@ -771,7 +742,7 @@ def main(config: DictConfig):
         limit_train_batches = data_config.limit_train_batches if not config.debug else 10,
         limit_val_batches = data_config.limit_val_batches,
         profiler = None if config.debug else profiler,
-        plugins=[SLURMEnvironment(auto_requeue=False)] if "SLURM_JOB_ID" in os.environ else None,
+        plugins=[SLURMEnvironment(auto_requeue=True)] if "SLURM_JOB_ID" in os.environ else None,
     )
     
     # Handle checkpoint path (must be absolute)

@@ -79,3 +79,8 @@ def get_rank():
 def rank_zero_print(*args, **kwargs):
     if get_rank() == 0:
         print(*args, **kwargs)
+
+def rank_print(*args, **kwargs):
+    """Print on all processes, prefixed with rank."""
+    rank = get_rank()
+    print(f"[rank: {rank}] ", *args, **kwargs)

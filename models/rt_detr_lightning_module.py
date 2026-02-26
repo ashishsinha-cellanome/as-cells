@@ -4,10 +4,12 @@ import torch.distributed as dist
 import os
 import cv2
 import pytorch_lightning as pl
+from collections import Counter
 from tqdm import tqdm
 from pycocotools.cocoeval import COCOeval
 from PIL import Image, ImageDraw, ImageFont
 from models.custom_rt_detr_with_dinov2_backbone import RTDetrV2ForObjectDetectionWithCustomBackbone
+from utils.distributed_utils import rank_print
 
 def to_cpu_device(tensor):
     """Move a CUDA torch tensor to CPU memory."""
@@ -131,7 +133,6 @@ class RTDETRLightningModule(pl.LightningModule):
                 
                 if has_params and all_frozen:
                     m.eval()
-        # breakpoint()
     
     def training_step(self, batch, batch_idx):
         """Training step."""
@@ -141,8 +142,21 @@ class RTDETRLightningModule(pl.LightningModule):
         labels = [{k: v.to(self.device) for k, v in sample.items()} for sample in batch["labels"]]
         
         outputs = self.model(pixel_values=pixel_values, labels=labels)
-        
         loss = outputs.loss
+
+        # --- High-Stability NaN Sentinel ---
+        # if not torch.isfinite(loss):
+        #     rank_print("\n" + "!"*80 + f"\n🚨 [LOSS NAN] NaN/Inf detected in loss at epoch {self.current_epoch}!\n" + "!"*80)
+            
+        #     # Diagnostic logging
+        #     # if hasattr(outputs, 'loss_dict'):
+        #     #      rank_print(f"   -> Loss components: {outputs.loss_dict}")
+            
+        #     # Zero out gradient for this step to prevent model corruption
+        #     loss = torch.where(torch.isfinite(loss), loss, torch.zeros_like(loss))
+        #     loss.requires_grad_(True) # Ensure it stays differentiable
+        # # ----------------------------------
+
         for label_dict in labels:
             self.debug_train_image_ids.add(int(label_dict["image_id"].item()))
 
@@ -193,7 +207,6 @@ class RTDETRLightningModule(pl.LightningModule):
         ]
         
         if (self.current_epoch) % self.config.checkpointing.visualize_every_n_epochs == 0 and \
-           self.trainer.is_global_zero and \
            (self.val_viz_counter < self.config.checkpointing.visualize_samples or self.config.checkpointing.visualize_samples == -1):
             
             save_dir = os.path.join(
@@ -411,8 +424,7 @@ class RTDETRLightningModule(pl.LightningModule):
         ]
         if self.config.checkpointing.visualize_samples ==-1:
             self.config.checkpointing.visualize_samples = float('inf')
-        if self.trainer.is_global_zero and \
-            (self.test_viz_counter < self.config.checkpointing.visualize_samples): # or self.config.checkpointing.visualize_samples ==-1):
+        if (self.test_viz_counter < self.config.checkpointing.visualize_samples): # or self.config.checkpointing.visualize_samples ==-1):
             save_dir = os.path.join(
                 self.config.checkpointing.save_dir,
                 # self.config.run_name, 
@@ -471,56 +483,77 @@ class RTDETRLightningModule(pl.LightningModule):
     
     def on_test_epoch_end(self):
         """Compute test metrics at epoch end."""
-        if not self.test_step_outputs:
-            self.print ("No test predictions found.")
-            return
         
-        # --- Collate results from all GPUs/steps ---
-        test_predictions = []
-        test_image_ids = []
-        for output_batch in self.test_step_outputs:
-            test_predictions.extend(convert_preds_to_coco(output_batch["predictions"]))
-            test_image_ids.extend(output_batch["image_ids"])
-
-        if len(test_predictions) == 0:
-            self.print ("No test predictions found.")
-            return
-
-        # Compute COCO metrics
-        if self.test_coco_gt is not None:
-            metrics = self._compute_coco_metrics(
-                predictions=test_predictions,
-                # image_ids=self.test_image_ids,
-                image_ids = list(set(test_image_ids)),
-                coco_gt=self.test_coco_gt  
-            )
+        # 1. Gather Standard Model Predictions from all ranks
+        all_outputs = self._gather_all_outputs(self.test_step_outputs)
+        
+        metrics = {}
+        # Only compute metrics on Rank 0
+        if self.trainer.is_global_zero:
+            test_predictions = []
+            test_image_ids = []
+            for output_batch in all_outputs:
+                test_predictions.extend(convert_preds_to_coco(output_batch["predictions"]))
+                test_image_ids.extend(output_batch["image_ids"])
             
-            # Log metrics
-            for key, value in metrics.items():
-                self.log(f"test/{key}", value, prog_bar=True, sync_dist=True)  
+            if len(test_predictions) > 0:
+                # Compute COCO metrics
+                if self.test_coco_gt is not None:
+                    metrics = self._compute_coco_metrics(
+                        predictions=test_predictions,
+                        image_ids=list(set(test_image_ids)),
+                        coco_gt=self.test_coco_gt
+                    )
+            else:
+                self.print(f"[Test] WARNING: No predictions made! Logging 0.0 metrics.")
+                metrics = {'map': 0.0, 'map_50': 0.0, 'map_75': 0.0}
+
+        # Broadcast metrics from Rank 0 to all other ranks
+        if dist.is_available() and dist.is_initialized():
+            object_list = [metrics]
+            dist.broadcast_object_list(object_list, src=0)
+            metrics = object_list[0]
+
+        # Log metrics on ALL ranks
+        for key, value in metrics.items():
+            self.log(f"test/{key}", value, prog_bar=True, sync_dist=True)
+
+        # 2. Gather EMA Model Predictions from all ranks
+        all_ema_outputs = self._gather_all_outputs(getattr(self, 'test_step_outputs_ema', []))
         
-        # --- EMA Metrics ---
         if hasattr(self, 'test_step_outputs_ema') and self.test_step_outputs_ema:
-            ema_predictions = []
-            ema_image_ids = []
-            for output_batch in self.test_step_outputs_ema:
-                ema_predictions.extend(convert_preds_to_coco(output_batch["predictions"]))
-                ema_image_ids.extend(output_batch["image_ids"])
+            ema_metrics = {}
+            if self.trainer.is_global_zero:
+                ema_predictions = []
+                ema_image_ids = []
+                for output_batch in all_ema_outputs:
+                    ema_predictions.extend(convert_preds_to_coco(output_batch["predictions"]))
+                    ema_image_ids.extend(output_batch["image_ids"])
+
+                if len(ema_predictions) > 0:
+                    self.print(f"[Test] EMA validation ran: {len(ema_predictions)} predictions on {len(set(ema_image_ids))} images")
+                    ema_metrics = self._compute_coco_metrics(
+                        predictions=ema_predictions,
+                        image_ids=list(set(ema_image_ids)),
+                        coco_gt=self.test_coco_gt
+                    )
+                else:
+                    self.print(f"[Test] EMA validation FAILED: No predictions collected!")
+                    ema_metrics = {'map': 0.0, 'map_50': 0.0, 'map_75': 0.0}
             
-            if len(ema_predictions) > 0:
-                ema_metrics = self._compute_coco_metrics(
-                    predictions=ema_predictions,
-                    image_ids=list(set(ema_image_ids)),
-                    coco_gt=self.test_coco_gt
-                )
-                for key, value in ema_metrics.items():
-                    self.log(f"test/{key}_ema", value, prog_bar=True, sync_dist=True)
-            
+            # Broadcast EMA metrics to all ranks
+            if dist.is_available() and dist.is_initialized():
+                object_list = [ema_metrics]
+                dist.broadcast_object_list(object_list, src=0)
+                ema_metrics = object_list[0]
+
+            # Log EMA metrics on ALL ranks
+            for key, value in ema_metrics.items():
+                self.log(f"test/{key}_ema", value, prog_bar=True, sync_dist=True)
+
             self.test_step_outputs_ema.clear()
 
         # Clear accumulated predictions
-        self.test_predictions = []
-        self.test_image_ids = []
         self.test_step_outputs.clear()
         
     def on_test_start(self):
@@ -1101,7 +1134,6 @@ class RTDETRLightningModule(pl.LightningModule):
             
             # --- 3. Visualization Counts & Filename ---
             # Compute counts
-            from collections import Counter
             label_map = self.config.model.label_map
             
             # GT Counts
