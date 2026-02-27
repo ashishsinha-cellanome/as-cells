@@ -121,37 +121,10 @@ from models.rt_detr_lightning_module import RTDETRLightningModule
 from data.coco_data_module import COCODataModule
 from models.backbone_factory import build_backbone,freeze_backbone_layers, get_backbone_unique_id
 from utils.train_utils import BackupToNASCallback
+from utils.distributed_utils import get_rank, rank_zero_print, rank_print, setup_cluster_env
 
-def get_rank():
-    """Get the current process rank, checking multiple common cluster/launcher variables."""
-    # 1. Official PyTorch distributed (if already initialized)
-    if dist.is_initialized():
-        return dist.get_rank()
-    
-    # 2. SLURM
-    if "SLURM_PROCID" in os.environ:
-        return int(os.environ["SLURM_PROCID"])
-        
-    # 3. Standard Distributed Launchers (torchrun, accelerate, etc.)
-    if "RANK" in os.environ:
-        return int(os.environ["RANK"])
-        
-    # 4. Other clusters (PBS/Torque, LSF)
-    for var in ["OMPI_COMM_WORLD_RANK", "PMI_RANK", "LSB_RANK"]:
-        if var in os.environ:
-            return int(os.environ[var])
-            
-    return 0
 
-def rank_zero_print(*args, **kwargs):
-    """Print only on the main process (Rank 0)."""
-    if get_rank() == 0:
-        print(*args, **kwargs)
-
-def rank_print(*args, **kwargs):
-    """Print on all processes, prefixed with rank."""
-    rank = get_rank()
-    print(f"[rank: {rank}] ", *args, **kwargs)
+setup_cluster_env()
 
 def create_initial_checkpoint(config: DictConfig) -> str:
     """

@@ -415,19 +415,6 @@ class YOLOv5LightningModule(pl.LightningModule):
             outputs = self.model(images)
             infer_out, train_out = self._extract_model_outputs(outputs)
 
-        # Diagnostic: what did the model actually return?
-        # if self.config.debug and self.trainer.is_global_zero:
-        #     self.print(f"[DEBUG] Model forward mode={self.model.training}, "
-        #               f"infer_out type={type(infer_out)}, "
-        #               f"train_out type={type(train_out)}")
-        #     if torch.is_tensor(infer_out):
-        #         # Shape: [batch, num_anchors, 5 + nc]
-        #         max_obj = float(infer_out[..., 4].sigmoid().max())
-        #         self.print(f"[DEBUG] Raw max objectness (sigmoid): {max_obj:.6f}")
-        #         if infer_out.ndim == 3 and infer_out.shape[-1] > 5:
-        #             max_cls = float(infer_out[..., 5:].sigmoid().max())
-        #             self.print(f"[DEBUG] Raw max class score (sigmoid): {max_cls:.6f}")
-
         if infer_out is None and train_out is not None:
             # Fallback for models that might not have custom multi-head forward
             infer_out = train_out
@@ -451,17 +438,6 @@ class YOLOv5LightningModule(pl.LightningModule):
             image_id = int(batch_image_ids[sample_idx])
             image_ids.append(int(image_id))
             
-            # DIAGNOSTIC: Show GT info for the first sample in the batch regardless of predictions
-            # if self.config.debug and self.trainer.is_global_zero and sample_idx == 0:
-            #     coco_gt = self.val_coco_gt if split_name == "val" else self.test_coco_gt
-            #     if coco_gt is not None:
-            #         gt_ann_ids = coco_gt.getAnnIds(imgIds=[image_id])
-            #         gt_anns = coco_gt.loadAnns(gt_ann_ids)
-            #         if len(gt_anns) > 0:
-            #             self.print(f"[DEBUG] Image {image_id} COMPARISON (Split: {split_name}):")
-            #             self.print(f"  GT (first 2 boxes xywh): {[a['bbox'] for a in gt_anns[:2]]}")
-            #             self.print(f"  GT (first 2 categories): {[a['category_id'] for a in gt_anns[:2]]}")
-
             if pred is None or len(pred) == 0:
                 result_map[int(image_id)] = {
                     "boxes": torch.empty((0, 4), dtype=torch.float32),
@@ -598,6 +574,10 @@ class YOLOv5LightningModule(pl.LightningModule):
             #     self.print(f"[DEBUG] Final COCO preds for eval (first 3): {predictions[:3]}")
 
             if len(predictions) > 0:
+                model_type = "Regular Model"
+                print(f"\n{'='*50}")
+                print(f" COCO EVALUATION: VAL | {model_type}")
+                print(f"{'='*50}")
                 metrics = compute_coco_metrics(
                     coco_gt=self.val_coco_gt,
                     predictions=predictions,
@@ -628,6 +608,12 @@ class YOLOv5LightningModule(pl.LightningModule):
                     ema_image_ids.extend(batch_out["image_ids"])
                     
                 if len(ema_predictions) > 0:
+
+                    model_type = "EMA Model"
+                    print(f"\n{'='*50}")
+                    print(f" COCO EVALUATION: VAL | {model_type}")
+                    print(f"{'='*50}")
+
                     ema_metrics = compute_coco_metrics(
                         coco_gt=self.val_coco_gt,
                         predictions=ema_predictions,
@@ -700,6 +686,10 @@ class YOLOv5LightningModule(pl.LightningModule):
                 image_ids.extend(batch_out["image_ids"])
 
             if len(predictions) > 0:
+                model_type = "Regular Model"
+                print(f"\n{'='*50}")
+                print(f" COCO EVALUATION: TEST | {model_type}")
+                print(f"{'='*50}")
                 metrics = compute_coco_metrics(
                     coco_gt=self.test_coco_gt,
                     predictions=predictions,
@@ -726,6 +716,10 @@ class YOLOv5LightningModule(pl.LightningModule):
                     ema_image_ids.extend(batch_out["image_ids"])
                     
                 if len(ema_predictions) > 0:
+                    model_type = "EMA Model"
+                    print(f"\n{'='*50}")
+                    print(f" COCO EVALUATION: TEST | {model_type}")
+                    print(f"{'='*50}")
                     ema_metrics = compute_coco_metrics(
                         coco_gt=self.test_coco_gt,
                         predictions=ema_predictions,

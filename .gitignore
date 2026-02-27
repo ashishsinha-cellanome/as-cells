@@ -2,6 +2,7 @@
 *.ckpt
 *.pt
 *.pth
+.cache
 test_ema_safety.py
 GEMINI.md
 ClAUDE.md

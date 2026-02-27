@@ -8,8 +8,8 @@
 #SBATCH --ntasks-per-node=4
 #SBATCH --cpus-per-task=4
 #SBATCH --mem-per-gpu=32G
-#SBATCH --time=7-00:00:00
-#SBATCH --array=0-59  # 🟢 Launches 60 jobs (0 through 59)
+#SBATCH --time=1-02:00:00
+#SBATCH --array=0-15  # 🟢 Launches 60 jobs (0 through 59)
 #SBATCH --output=logs/%x-%A_%a.out  # %A is the array job ID, %a is the specific task ID
 #SBATCH --error=logs/%x-%A_%a.err
 
@@ -20,7 +20,7 @@ ACCOUNT="aip-robsc"
 if [ -z "$SLURM_JOB_ID" ]; then
     echo "Submitting job array with account: $ACCOUNT"
     # Ensure logs directory exists before submitting, or SLURM will fail silently
-    mkdir -p logs
+    mkdir -p logs   
     sbatch --account=$ACCOUNT "$0"
     exit
 fi
@@ -36,8 +36,8 @@ echo "Account used: $SLURM_JOB_ACCOUNT"
 echo "Array Task ID: $SLURM_ARRAY_TASK_ID"
 
 # 1. Define the parameter arrays
-YOLO_SIZES=("s" "m" "n" "l" "x")
-LRS=("0.01" "0.001" "0.0001")
+YOLO_SIZES=("m" "l")
+LRS=("0.01" "0.001")
 SCHEDULERS=("cosine_warmup" "step" "reduce_lr_on_plateau" "onecycle")
 
 # 2. Build a flat list of all combinations in memory
@@ -62,6 +62,11 @@ echo "======================================================================"
 # 4. Run the training script using the selected config
 # Notice we pass $MY_CONFIG unquoted so Bash expands it into separate arguments
 srun uv run train_yolov5.py \
+    data=vulcan \
+    model=yolov5 \
+    $MY_CONFIG
+
+srun uv run train_yolo.py \
     data=vulcan \
     model=yolov5 \
     $MY_CONFIG
