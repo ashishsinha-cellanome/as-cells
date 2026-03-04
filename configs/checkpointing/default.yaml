@@ -19,4 +19,4 @@
   val_image_dir: "${hydra:runtime.cwd}"
   visualization_dir: "predictions"
   visualize_every_n_epochs: 5
-  visualize_samples: -1 # all samples
+  visualize_samples: 200 # set -1 to save all samples (can be very slow on large val/test sets)

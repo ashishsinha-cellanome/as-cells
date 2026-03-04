@@ -3,6 +3,7 @@
 import datetime
 import os
 import warnings
+from typing import Any, Dict, Literal, Optional
 warnings.filterwarnings("ignore", category=FutureWarning)
 
 import hydra
@@ -28,6 +29,13 @@ from models.yolov5_lightning_module import YOLOv5LightningModule
 from utils.distributed_utils import rank_zero_print, setup_cluster_env
 from utils.train_utils import BackupToNASCallback
 from utils.ema import EMACallback
+from utils.test_only_checkpoint_restore import (
+    _load_ckpt,
+    _load_selected_weights,
+    _merge_test_only_config_from_ckpt,
+    _resolve_ckpt_path,
+    _select_eval_weights_source,
+)
 
 import torch.distributed as dist
 import wandb
@@ -128,6 +136,10 @@ def _resolve_run_name(config: DictConfig):
 
 @hydra.main(config_path="configs", config_name="config.yaml", version_base=None)
 def main(config: DictConfig):
+    test_only_checkpoint: Optional[Dict[str, Any]] = None
+    test_only_weight_source: Optional[Literal["ema", "regular"]] = None
+    early_ckpt_path: Optional[str] = None
+
     OmegaConf.set_struct(config, False)
     setup_cluster_env()
     # breakpoint()
@@ -173,7 +185,32 @@ def main(config: DictConfig):
         config.run_name = f"DEBUG_{config.run_name}"
 
     base_save_dir = to_absolute_path(config.checkpointing.save_dir)
-    config.checkpointing.save_dir = os.path.join(base_save_dir, config.run_name)
+    run_save_dir = os.path.join(base_save_dir, config.run_name)
+    config.checkpointing.save_dir = run_save_dir
+
+    if config.test_only:
+        early_ckpt_path = _resolve_ckpt_path(config, run_save_dir=run_save_dir)
+        if not early_ckpt_path:
+            raise ValueError(
+                "test_only=true requires a valid checkpoint path. "
+                "Check for typos and trailing punctuation (e.g., '.ckpt.'), and pass "
+                "'initialization.load_from_checkpoint=/abs/path/model.ckpt'."
+            )
+
+        test_only_checkpoint = _load_ckpt(early_ckpt_path)
+        config = _merge_test_only_config_from_ckpt(config, test_only_checkpoint)
+        OmegaConf.set_struct(config, False)
+        config.initialization.load_from_checkpoint = early_ckpt_path
+        config.checkpointing.save_dir = run_save_dir
+
+        # Single selected-model evaluation in test_only mode (no EMA callback branch).
+        if hasattr(config, "model") and hasattr(config.model, "ema") and config.model.ema is not None:
+            config.model.ema.enabled = False
+            rank_zero_print("test_only: disabled EMA callback/branch for single selected-model evaluation.")
+
+        test_only_weight_source = _select_eval_weights_source(early_ckpt_path, test_only_checkpoint)
+        rank_zero_print(f"test_only: selected checkpoint weight source = {test_only_weight_source.upper()}")
+
     OmegaConf.set_struct(config, True)
 
     pl.seed_everything(config.seed, workers=True)
@@ -232,25 +269,30 @@ def main(config: DictConfig):
         plugins=[SLURMEnvironment(auto_requeue=False)] if "SLURM_JOB_ID" in os.environ else None,
     )
 
-    ckpt_path = config.initialization.load_from_checkpoint
-    if ckpt_path:
-        ckpt_path = to_absolute_path(ckpt_path)
-        if not os.path.exists(ckpt_path):
-            rank_zero_print(f"Checkpoint not found: {ckpt_path}")
-            ckpt_path = None
-    elif config.initialization.auto_resume:
-        candidate = os.path.join(config.checkpointing.save_dir, "ckpts", "last.ckpt")
-        ckpt_path = candidate if os.path.exists(candidate) else None
-    else:
-        ckpt_path = None
+    ckpt_path = _resolve_ckpt_path(config, run_save_dir=config.checkpointing.save_dir)
 
     rank_zero_print(OmegaConf.to_yaml(config))
     if config.test_only:
         if not ckpt_path:
             raise ValueError("test_only=true requires initialization.load_from_checkpoint")
-        trainer.test(lightning_model, datamodule=data_module, ckpt_path=ckpt_path)
+        if test_only_checkpoint is None:
+            test_only_checkpoint = _load_ckpt(ckpt_path)
+        if test_only_weight_source is None:
+            test_only_weight_source = _select_eval_weights_source(ckpt_path, test_only_checkpoint)
+
+        rank_zero_print(f"Loading {test_only_weight_source.upper()} weights for test-only evaluation...")
+        missing_keys, unexpected_keys = _load_selected_weights(
+            lightning_model, test_only_checkpoint, test_only_weight_source
+        )
+        if missing_keys:
+            rank_zero_print(f"⚠️  Missing keys during test-only load: {missing_keys[:10]} ...")
+        if unexpected_keys:
+            rank_zero_print(f"⚠️  Unexpected keys during test-only load: {unexpected_keys[:10]} ...")
+
+        # Manual weight loading above; do not ask Lightning to restore checkpoint again.
+        trainer.test(lightning_model, datamodule=data_module)
     else:
-        trainer.fit(lightning_model, datamodule=data_module, ckpt_path=ckpt_path)
+        trainer.fit(lightning_model, datamodule=data_module, ckpt_path=ckpt_path, weights_only=False)
         
         # Test the best model
         best_path = None
@@ -274,7 +316,7 @@ def main(config: DictConfig):
                     break
                     
         eval_ckpt = best_path if best_path else "best"
-        trainer.test(lightning_model, datamodule=data_module, ckpt_path=eval_ckpt)
+        trainer.test(lightning_model, datamodule=data_module, ckpt_path=eval_ckpt, weights_only=False)
 
     # 1. Stop all GPUs and ensure testing is 100% complete across the cluster
     if dist.is_initialized():
@@ -284,16 +326,6 @@ def main(config: DictConfig):
     # Lightning's global zero is the only one maintaining the WandB connection
     if trainer.is_global_zero:
         wandb.finish()
-
-    # 3. Wait for Rank 0 to finish uploading logs to the WandB servers
-    # if dist.is_initialized():
-    #     dist.barrier()
-        
-    # # 4. Tear down the distributed process group. 
-    # # This ensures the next Hydra iteration boots up a completely fresh DDP environment.
-    # if dist.is_initialized():
-    #     dist.destroy_process_group()
-
 
 if __name__ == "__main__":
     main()

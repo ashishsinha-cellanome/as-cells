@@ -75,8 +75,8 @@ def get_transform(
                 # interpolation=cv2.INTER_CUBIC, mask_interpolation=cv2.INTER_NEAREST, area_for_downscale = "image", 
                 p=1.0
             ),
-            A.PadIfNeeded(min_height = model_input_height, min_width = model_input_width, position = 'random'),
-            A.RandomCrop(height = model_input_height, width=model_input_width, pad_if_needed=False, p=1.0),
+            A.PadIfNeeded(min_height = model_input_height, min_width = model_input_width),
+            A.RandomCrop(height = model_input_height, width=model_input_width, p=1.0),
             A.RandomRotate90(),
             A.Perspective(p=p_noise),
             A.RandomBrightnessContrast(p=p_noise),
@@ -93,7 +93,7 @@ def get_transform(
             #     p = p_noise,
             # ),
             A.HueSaturationValue(p=p_noise),
-            A.AdditiveNoise(
+            A.GaussNoise(
                 # noise_type='gaussian', 
                 # noise_params={'mean_range': (0, 0), 'std_range': (0, 0.04)}, 
                 p=p_noise, 
@@ -105,7 +105,9 @@ def get_transform(
         trsfms = [A.NoOp()]
 
     # bbox format is defined as COCO xywh
-    return A.Compose(trsfms, bbox_params=A.BboxParams(format="coco", label_fields=["category"], clip=True, min_area=MIN_AREA))
+    return A.Compose(trsfms, bbox_params=A.BboxParams(format="coco", label_fields=["category"], 
+    # clip=True,
+    min_area=MIN_AREA))
 
 
 def expand_bbox(

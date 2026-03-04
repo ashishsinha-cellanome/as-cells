@@ -117,9 +117,51 @@ class YOLOv5DataModule(pl.LightningDataModule):
         imgsz = self.config.model.input_size
         bs, nw = self.data_config.batch_size, self.data_config.num_workers
         
-        self.train_loader, _ = create_dataloader(str(self.cache_dir / 'images' / self.data_config.train_name), imgsz, bs, 32, single_cls=False, hyp=hyp, augment=True, cache=self.yolo_config.cache_images, rect=False, rank=-1, workers=nw, image_weights=False, quad=False, prefix="[Train] ", shuffle=True, seed=self.config.seed)
-        self.val_loader, _ = create_dataloader(str(self.cache_dir / 'images' / self.data_config.val_name), imgsz, bs * 2, 32, single_cls=False, hyp=hyp, augment=False, cache=self.yolo_config.cache_images, rect=True, rank=-1, workers=nw, pad=0.5, prefix="[Val] ")
-        self.test_loader, _ = create_dataloader(str(self.cache_dir / 'images' / self.data_config.test_name), imgsz, bs * 2, 32, single_cls=False, hyp=hyp, augment=False, cache=self.yolo_config.cache_images, rect=True, rank=-1, workers=nw, pad=0.5, prefix="[Test] ")
+        self.train_loader, _ = create_dataloader(
+            str(self.cache_dir / 'images' / self.data_config.train_name),
+            imgsz,
+            bs,
+            32, # stride
+            single_cls=False, 
+            hyp=hyp, 
+            augment=True, 
+            cache=self.yolo_config.cache_images, 
+            rect=False, 
+            rank=-1, 
+            workers=nw, 
+            image_weights=False, 
+            quad=False, 
+            prefix="[Train] ", 
+            shuffle=True, 
+            seed=self.config.seed)
+        self.val_loader, _ = create_dataloader(
+            str(self.cache_dir / 'images' / self.data_config.val_name),
+            imgsz,
+            1,
+            32, # stride
+            single_cls=False, 
+            hyp=hyp, 
+            augment=False, 
+            cache=self.yolo_config.cache_images, 
+            rect=True, 
+            rank=-1, 
+            workers=nw, 
+            pad=0.0, # 0.5 
+            prefix="[Val] ")
+        self.test_loader, _ = create_dataloader(
+            str(self.cache_dir / 'images' / self.data_config.test_name),
+            imgsz,
+            1,
+            32, # stride
+            single_cls=False, 
+            hyp=hyp, 
+            augment=False, 
+            cache=self.yolo_config.cache_images, 
+            rect=True, 
+            rank=-1, 
+            workers=nw, 
+            pad=0., # 0.5
+            prefix="[Test] ")
         self._setup_called = True
 
     def train_dataloader(self): return self.train_loader

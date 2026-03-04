@@ -325,6 +325,7 @@ class RTDETRLightningModule(pl.LightningModule):
                 
                 # Compute COCO metrics
                 if self.val_coco_gt is not None:
+                    self.print (f"[Val] Computing COCO metrics on {len(validation_predictions)} predictions across {len(set(validation_image_ids))} images...")
                     metrics = self._compute_coco_metrics(
                         predictions=validation_predictions,
                         image_ids=list(set(validation_image_ids)),
@@ -361,6 +362,7 @@ class RTDETRLightningModule(pl.LightningModule):
 
                 if len(ema_predictions) > 0:
                     self.print(f"[Val] EMA validation ran: {len(ema_predictions)} predictions on {len(set(ema_image_ids))} images")
+                    self.print (f"[Val] Computing EMA COCO metrics...")
                     ema_metrics = self._compute_coco_metrics(
                         predictions=ema_predictions,
                         image_ids=list(set(ema_image_ids)),
@@ -499,6 +501,7 @@ class RTDETRLightningModule(pl.LightningModule):
             if len(test_predictions) > 0:
                 # Compute COCO metrics
                 if self.test_coco_gt is not None:
+                    self.print(f"[Test] Computing COCO metrics on {len(test_predictions)} predictions across {len(set(test_image_ids))} images...")
                     metrics = self._compute_coco_metrics(
                         predictions=test_predictions,
                         image_ids=list(set(test_image_ids)),
@@ -532,6 +535,7 @@ class RTDETRLightningModule(pl.LightningModule):
 
                 if len(ema_predictions) > 0:
                     self.print(f"[Test] EMA validation ran: {len(ema_predictions)} predictions on {len(set(ema_image_ids))} images")
+                    self.print (f"[Test] Computing EMA COCO metrics...")
                     ema_metrics = self._compute_coco_metrics(
                         predictions=ema_predictions,
                         image_ids=list(set(ema_image_ids)),
@@ -558,25 +562,30 @@ class RTDETRLightningModule(pl.LightningModule):
         
     def on_test_start(self):
         """
-        Ensures the model (and its internal HuggingFace model) are in the correct
-        precision (HalfTensor) and on the correct device after the checkpoint
-        has been loaded by the Trainer and before testing begins.
-        This handles cases where the state_dict might overwrite float16 weights with float32.
+        Ensure dtype/device are compatible with the configured precision mode.
+        For mixed precision, keep FP32 weights and rely on autocast.
+        For true precision modes, cast model weights explicitly.
         """
-        if self.trainer.precision == "16-mixed":
-            # Ensure on CUDA
-            if next(self.parameters()).device.type == 'cpu':
-                self.to("cuda")
-                self.print(f"[INFO] Forcing LightningModule to CUDA on test start.")
+        precision_mode = str(self.trainer.precision).lower()
 
-            # Ensure float16 precision
-            if next(self.parameters()).dtype != torch.float16:
-                self.half()
-                # Also ensure the underlying HuggingFace model (self.model) is half()
-                # as Lightning's .half() might only apply to the LightningModule's direct params.
-                if hasattr(self, 'model') and next(self.model.parameters(), torch.tensor(0.0)).dtype != torch.float16:
-                    self.model.half()
-                self.print(f"[INFO] Forcing LightningModule to Half precision (float16) on test start.")
+        # Mixed precision keeps model weights in FP32.
+        if precision_mode in {"16-mixed", "bf16-mixed"}:
+            return
+
+        target_dtype = None
+        if precision_mode in {"16-true", "16"}:
+            target_dtype = torch.float16
+        elif precision_mode in {"bf16-true", "bf16"}:
+            target_dtype = torch.bfloat16
+
+        if target_dtype is None:
+            return
+
+        if next(self.parameters()).dtype != target_dtype:
+            self.to(dtype=target_dtype)
+            if hasattr(self, "model"):
+                self.model.to(dtype=target_dtype)
+            self.print(f"[INFO] Cast model weights to {target_dtype} for precision={self.trainer.precision}.")
             
     def on_load_checkpoint(self, checkpoint: dict) -> None:
         """
@@ -1067,7 +1076,7 @@ class RTDETRLightningModule(pl.LightningModule):
         # Un-normalize the entire batch
         unnormalized_images = torch.clamp((pixel_values * std) + mean, 0, 1)
         
-        for i in tqdm(range(len(labels)), desc="Visualizing Batch", leave=False):
+        for i in range(len(labels)):
             if max_samples != -1 and counter >= max_samples:
                 break
             
@@ -1213,10 +1222,3 @@ class RTDETRLightningModule(pl.LightningModule):
         
         return counter
     
-    # def on_before_optimizer_step(self, optimizer):
-    #     """Clip gradients before optimizer step."""
-    #     if self.max_grad_norm > 0:
-    #         torch.nn.utils.clip_grad_norm_(
-    #             self.model.parameters(),
-    #             self.max_grad_norm
-    #         )

@@ -1,4 +1,7 @@
 import os
+from collections import Counter
+from pathlib import Path
+
 import cv2
 from tqdm import tqdm
 from PIL import Image, ImageDraw, ImageFont
@@ -17,14 +20,29 @@ from utils.coco_eval_utils import (
 class RFDETRLightningModule(pl.LightningModule):
     """PyTorch Lightning module for RF-DETR training/evaluation."""
 
-    def __init__(self, model, criterion, postprocess, config, val_coco_gt=None, test_coco_gt=None):
+    def __init__(
+        self,
+        model,
+        criterion,
+        postprocess,
+        config,
+        model_to_coco=None,
+        val_coco_gt=None,
+        test_coco_gt=None,
+        val_image_root=None,
+        test_image_root=None,
+    ):
         super().__init__()
         self.model = model
         self.criterion = criterion
         self.postprocess = postprocess
         self.config = config
+        self.model_to_coco = {int(k): int(v) for k, v in (model_to_coco or {}).items()}
+        self.coco_to_model = {int(v): int(k) for k, v in self.model_to_coco.items()}
         self.val_coco_gt = val_coco_gt
         self.test_coco_gt = test_coco_gt
+        self.val_image_root = val_image_root
+        self.test_image_root = test_image_root
 
         self.validation_step_outputs = []
         self.test_step_outputs = []
@@ -58,28 +76,69 @@ class RFDETRLightningModule(pl.LightningModule):
         loss = sum(loss_dict[k] * weight_dict[k] for k in loss_dict if k in weight_dict)
         return loss, loss_dict, weight_dict
 
-    def _log_loss_dict(self, split: str, loss_dict, weight_dict):
+    def _log_loss_dict(self, split: str, loss_dict, weight_dict, batch_size: int):
         """
         Log all loss terms from RF-DETR criterion.
         For weighted terms we log both unscaled and scaled values.
         """
         for key, value in loss_dict.items():
-            self.log(f"{split}/{key}_unscaled", value, on_step=False, on_epoch=True, sync_dist=True)
+            self.log(
+                f"{split}/{key}_unscaled",
+                value,
+                batch_size=batch_size,
+                on_step=False,
+                on_epoch=True,
+                sync_dist=True,
+            )
             if key in weight_dict:
-                self.log(f"{split}/{key}", value * weight_dict[key], on_step=False, on_epoch=True, sync_dist=True)
+                self.log(
+                    f"{split}/{key}",
+                    value * weight_dict[key],
+                    batch_size=batch_size,
+                    on_step=False,
+                    on_epoch=True,
+                    sync_dist=True,
+                )
             else:
-                self.log(f"{split}/{key}", value, on_step=False, on_epoch=True, sync_dist=True)
+                self.log(
+                    f"{split}/{key}",
+                    value,
+                    batch_size=batch_size,
+                    on_step=False,
+                    on_epoch=True,
+                    sync_dist=True,
+                )
 
     def training_step(self, batch, batch_idx):
         samples, targets = batch
+        batch_size = int(samples.shape[0]) if isinstance(samples, torch.Tensor) else len(targets)
         samples = samples.to(self.device)
         targets = self._move_targets(targets)
 
         outputs = self.model(samples, targets)
         loss, loss_dict, weight_dict = self._compute_loss(outputs, targets)
 
-        self.log("train/loss", loss, on_step=True, on_epoch=True, prog_bar=True, sync_dist=True)
-        self._log_loss_dict("train", loss_dict, weight_dict)
+        self.log(
+            "train/loss",
+            loss,
+            batch_size=batch_size,
+            on_step=True,
+            on_epoch=True,
+            prog_bar=True,
+            sync_dist=True,
+        )
+        self._log_loss_dict("train", loss_dict, weight_dict, batch_size=batch_size)
+
+        # Heartbeat logs for long epochs when progress bars are not visible in tmux/srun.
+        heartbeat_interval = 500
+        if self.trainer.is_global_zero and (batch_idx == 0 or (batch_idx + 1) % heartbeat_interval == 0):
+            total_batches = getattr(self.trainer, "num_training_batches", None)
+            total_batches_str = str(total_batches) if isinstance(total_batches, int) else "?"
+            self.print(
+                f"[TRAIN] epoch={self.current_epoch + 1} "
+                f"batch={batch_idx + 1}/{total_batches_str} "
+                f"loss={float(loss.detach().item()):.4f}"
+            )
 
         return loss
 
@@ -96,17 +155,28 @@ class RFDETRLightningModule(pl.LightningModule):
     def on_validation_epoch_start(self):
         """Reset validation visualization counter."""
         self.val_viz_counter = 0
+        if self.trainer.is_global_zero:
+            self.print(f"[VAL] Starting validation for epoch {self.current_epoch + 1}...")
 
     @torch.no_grad()
     def validation_step(self, batch, batch_idx):
         samples, targets = batch
+        batch_size = int(samples.shape[0]) if isinstance(samples, torch.Tensor) else len(targets)
         samples = samples.to(self.device)
         targets = self._move_targets(targets)
 
         outputs = self.model(samples)
         loss, loss_dict, weight_dict = self._compute_loss(outputs, targets)
-        self.log("val/loss", loss, on_step=False, on_epoch=True, prog_bar=False, sync_dist=True)
-        self._log_loss_dict("val", loss_dict, weight_dict)
+        self.log(
+            "val/loss",
+            loss,
+            batch_size=batch_size,
+            on_step=False,
+            on_epoch=True,
+            prog_bar=False,
+            sync_dist=True,
+        )
+        self._log_loss_dict("val", loss_dict, weight_dict, batch_size=batch_size)
 
         predictions, image_ids = self._collect_batch_predictions(outputs, targets)
         self.validation_step_outputs.append({"predictions": predictions, "image_ids": image_ids})
@@ -118,47 +188,28 @@ class RFDETRLightningModule(pl.LightningModule):
             ema_outputs = ema_callback.ema_model.module(samples)
             ema_predictions, ema_image_ids = self._collect_batch_predictions(ema_outputs, targets)
             self.validation_step_outputs_ema.append({"predictions": ema_predictions, "image_ids": ema_image_ids})
-            
-        # Visualization
-        if (self.current_epoch) % self.config.checkpointing.visualize_every_n_epochs == 0 and \
-           self.trainer.is_global_zero and \
-           (self.val_viz_counter < self.config.checkpointing.visualize_samples or self.config.checkpointing.visualize_samples == -1):
-            
-            save_dir = os.path.join(
-                self.config.checkpointing.save_dir,
-                self.config.checkpointing.visualization_dir, 
-                f"epoch_{(self.current_epoch+1):03d}", 
-                "val"
-            )
-            # Prefer EMA predictions if available
-            viz_preds = ema_predictions if (ema_callback and ema_callback.ema_model) else predictions
-            
-            self.val_viz_counter = self._visualize_batch(
-                save_dir, 
-                viz_preds, 
-                samples,
-                targets, 
-                self.val_viz_counter,
-                split="val"
-            )
 
         return {"predictions": predictions, "image_ids": image_ids}
 
     def on_validation_epoch_end(self):
         all_outputs = gather_outputs_across_processes(self.validation_step_outputs)
+        merged_predictions = self._merge_predictions_map(all_outputs)
         metrics = {}
+        viz_predictions = merged_predictions
         if self.trainer.is_global_zero:
             val_predictions = []
             val_image_ids = []
             for batch_out in all_outputs:
-                val_predictions.extend(convert_preds_to_coco(batch_out["predictions"]))
+                val_predictions.extend(
+                    convert_preds_to_coco(batch_out["predictions"], model_to_coco=self.model_to_coco)
+                )
                 val_image_ids.extend(batch_out["image_ids"])
 
-            if len(val_predictions) > 0:
+            if val_predictions:
                 metrics = compute_coco_metrics(
                     coco_gt=self.val_coco_gt,
                     predictions=val_predictions,
-                    image_ids=list(set(val_image_ids)),
+                    image_ids=sorted(set(val_image_ids)),
                     max_detections=int(self.config.model.max_detections),
                     label_map=self.config.model.label_map,
                 )
@@ -172,26 +223,29 @@ class RFDETRLightningModule(pl.LightningModule):
                 self.log("val_map", value, prog_bar=False, sync_dist=True)
 
         self.validation_step_outputs.clear()
-        
-        # Compute EMA metrics
-        all_ema_outputs = gather_outputs_across_processes(getattr(self, 'validation_step_outputs_ema', []))
-        if hasattr(self, 'validation_step_outputs_ema'):
+
+        all_ema_outputs = gather_outputs_across_processes(getattr(self, "validation_step_outputs_ema", []))
+        if hasattr(self, "validation_step_outputs_ema"):
             ema_metrics = {}
+            merged_ema_predictions = self._merge_predictions_map(all_ema_outputs)
             if self.trainer.is_global_zero:
                 ema_predictions = []
                 ema_image_ids = []
                 for batch_out in all_ema_outputs:
-                    ema_predictions.extend(convert_preds_to_coco(batch_out["predictions"]))
+                    ema_predictions.extend(
+                        convert_preds_to_coco(batch_out["predictions"], model_to_coco=self.model_to_coco)
+                    )
                     ema_image_ids.extend(batch_out["image_ids"])
 
-                if len(ema_predictions) > 0:
+                if ema_predictions:
                     ema_metrics = compute_coco_metrics(
                         coco_gt=self.val_coco_gt,
                         predictions=ema_predictions,
-                        image_ids=list(set(ema_image_ids)),
+                        image_ids=sorted(set(ema_image_ids)),
                         max_detections=int(self.config.model.max_detections),
                         label_map=self.config.model.label_map,
                     )
+                    viz_predictions = merged_ema_predictions
                 else:
                     ema_metrics = {"map": 0.0, "map_50": 0.0, "map_75": 0.0}
 
@@ -203,9 +257,36 @@ class RFDETRLightningModule(pl.LightningModule):
 
             self.validation_step_outputs_ema.clear()
 
+        if self.trainer.is_global_zero:
+            self._visualize_aggregated_predictions(viz_predictions, split="val")
+            self.print(f"[VAL] Completed validation for epoch {self.current_epoch + 1}.")
+
     def on_test_epoch_start(self):
         """Reset test visualization counter."""
         self.test_viz_counter = 0
+
+    def on_test_start(self):
+        """
+        Ensure dtype/device are compatible with the configured precision mode.
+        For mixed precision, keep FP32 weights and rely on autocast.
+        For true precision modes, cast model weights explicitly.
+        """
+        self.model = self.model.to(self.device)
+        precision_mode = str(self.trainer.precision).lower()
+
+        if precision_mode in {"16-mixed", "bf16-mixed"}:
+            self.model = self.model.float()
+            return
+
+        target_dtype = None
+        if precision_mode in {"16-true", "16"}:
+            target_dtype = torch.float16
+        elif precision_mode in {"bf16-true", "bf16"}:
+            target_dtype = torch.bfloat16
+
+        if target_dtype is not None:
+            self.model = self.model.to(dtype=target_dtype)
+            self.print(f"[INFO] Cast model weights to {target_dtype} for precision={self.trainer.precision}.")
 
     @torch.no_grad()
     def test_step(self, batch, batch_idx):
@@ -224,48 +305,28 @@ class RFDETRLightningModule(pl.LightningModule):
             ema_outputs = ema_callback.ema_model.module(samples)
             ema_predictions, ema_image_ids = self._collect_batch_predictions(ema_outputs, targets)
             self.test_step_outputs_ema.append({"predictions": ema_predictions, "image_ids": ema_image_ids})
-        
-        # Visualization
-        if self.config.checkpointing.visualize_samples == -1:
-             self.config.checkpointing.visualize_samples = float('inf')
-
-        if self.trainer.is_global_zero and \
-           (self.test_viz_counter < self.config.checkpointing.visualize_samples):
-            
-            save_dir = os.path.join(
-                self.config.checkpointing.save_dir,
-                self.config.checkpointing.visualization_dir, 
-                "test"
-            )
-            # Prefer EMA predictions if available
-            viz_preds = ema_predictions if (ema_callback and ema_callback.ema_model) else predictions
-            
-            self.test_viz_counter = self._visualize_batch(
-                save_dir, 
-                viz_preds, 
-                samples,
-                targets, 
-                self.test_viz_counter,
-                split="test"
-            )
 
         return {"predictions": predictions, "image_ids": image_ids}
 
     def on_test_epoch_end(self):
         all_outputs = gather_outputs_across_processes(self.test_step_outputs)
+        merged_predictions = self._merge_predictions_map(all_outputs)
         metrics = {}
+        viz_predictions = merged_predictions
         if self.trainer.is_global_zero:
             test_predictions = []
             test_image_ids = []
             for batch_out in all_outputs:
-                test_predictions.extend(convert_preds_to_coco(batch_out["predictions"]))
+                test_predictions.extend(
+                    convert_preds_to_coco(batch_out["predictions"], model_to_coco=self.model_to_coco)
+                )
                 test_image_ids.extend(batch_out["image_ids"])
 
-            if len(test_predictions) > 0:
+            if test_predictions:
                 metrics = compute_coco_metrics(
                     coco_gt=self.test_coco_gt,
                     predictions=test_predictions,
-                    image_ids=list(set(test_image_ids)),
+                    image_ids=sorted(set(test_image_ids)),
                     max_detections=int(self.config.model.max_detections),
                     label_map=self.config.model.label_map,
                 )
@@ -277,26 +338,29 @@ class RFDETRLightningModule(pl.LightningModule):
             self.log(f"test/{key}", value, prog_bar=(key in {"map", "map_50"}), sync_dist=True)
 
         self.test_step_outputs.clear()
-        
-        # Compute EMA metrics for Test
-        all_ema_outputs = gather_outputs_across_processes(getattr(self, 'test_step_outputs_ema', []))
-        if hasattr(self, 'test_step_outputs_ema'):
+
+        all_ema_outputs = gather_outputs_across_processes(getattr(self, "test_step_outputs_ema", []))
+        if hasattr(self, "test_step_outputs_ema"):
             ema_metrics = {}
+            merged_ema_predictions = self._merge_predictions_map(all_ema_outputs)
             if self.trainer.is_global_zero:
                 ema_predictions = []
                 ema_image_ids = []
                 for batch_out in all_ema_outputs:
-                    ema_predictions.extend(convert_preds_to_coco(batch_out["predictions"]))
-                    ema_image_ids.extend(output_batch["image_ids"])
+                    ema_predictions.extend(
+                        convert_preds_to_coco(batch_out["predictions"], model_to_coco=self.model_to_coco)
+                    )
+                    ema_image_ids.extend(batch_out["image_ids"])
 
-                if len(ema_predictions) > 0:
+                if ema_predictions:
                     ema_metrics = compute_coco_metrics(
                         coco_gt=self.test_coco_gt,
                         predictions=ema_predictions,
-                        image_ids=list(set(ema_image_ids)),
+                        image_ids=sorted(set(ema_image_ids)),
                         max_detections=int(self.config.model.max_detections),
                         label_map=self.config.model.label_map,
                     )
+                    viz_predictions = merged_ema_predictions
                 else:
                     ema_metrics = {"map": 0.0, "map_50": 0.0, "map_75": 0.0}
 
@@ -305,6 +369,190 @@ class RFDETRLightningModule(pl.LightningModule):
                 self.log(f"test/{key}_ema", value, prog_bar=True, sync_dist=True)
 
             self.test_step_outputs_ema.clear()
+
+        if self.trainer.is_global_zero:
+            self._visualize_aggregated_predictions(viz_predictions, split="test")
+
+    def _merge_predictions_map(self, gathered_outputs):
+        merged = {}
+        for batch_out in gathered_outputs:
+            merged.update(batch_out.get("predictions", {}))
+        return merged
+
+    def _get_visualization_limit(self):
+        raw_value = self.config.checkpointing.visualize_samples
+        if raw_value == -1:
+            return None
+        try:
+            numeric = float(raw_value)
+        except (TypeError, ValueError):
+            return None
+        if numeric < 0 or numeric == float("inf"):
+            return None
+        return int(numeric)
+
+    def _should_visualize(self, split: str) -> bool:
+        if split == "val":
+            every_n = max(1, int(self.config.checkpointing.visualize_every_n_epochs))
+            return (self.current_epoch + 1) % every_n == 0
+        return True
+
+    def _resolve_image_path(self, image_root, file_name):
+        if not file_name:
+            return None
+
+        candidate = Path(file_name)
+        if candidate.is_absolute() and candidate.exists():
+            return candidate
+
+        if image_root:
+            root_path = Path(image_root)
+            candidate = root_path / file_name
+            if candidate.exists():
+                return candidate
+            candidate = root_path / os.path.basename(file_name)
+            if candidate.exists():
+                return candidate
+
+        return None
+
+    def _visualize_aggregated_predictions(self, predictions_map, split="val"):
+        if not self.trainer.is_global_zero:
+            return
+        if not predictions_map:
+            return
+        if not self._should_visualize(split):
+            return
+
+        max_samples = self._get_visualization_limit()
+        coco_gt = self.test_coco_gt if split == "test" else self.val_coco_gt
+        image_root = self.test_image_root if split == "test" else self.val_image_root
+        label_map = self.config.model.label_map
+        viz_threshold = float(self.config.model.draw_threshold)
+
+        if split == "val":
+            save_dir = os.path.join(
+                self.config.checkpointing.save_dir,
+                self.config.checkpointing.visualization_dir,
+                f"epoch_{(self.current_epoch + 1):03d}",
+                "val",
+            )
+        else:
+            save_dir = os.path.join(
+                self.config.checkpointing.save_dir,
+                self.config.checkpointing.visualization_dir,
+                "test",
+            )
+
+        os.makedirs(save_dir, exist_ok=True)
+        saved_count = 0
+        self.print(
+            f"[VIZ] Saving {split.upper()} visualizations to: {save_dir} "
+            f"(max_samples={'all' if max_samples is None else max_samples})"
+        )
+        if max_samples is None:
+            self.print(
+                "[VIZ] WARNING: Unlimited visualization enabled. "
+                "This can be very slow on large datasets."
+            )
+
+        for image_id in sorted(predictions_map.keys()):
+            if max_samples is not None and saved_count >= max_samples:
+                break
+
+            img_info = {"file_name": f"image_{image_id}.png"}
+            if coco_gt and int(image_id) in getattr(coco_gt, "imgs", {}):
+                img_info = coco_gt.imgs[int(image_id)]
+
+            image_path = self._resolve_image_path(image_root, img_info.get("file_name"))
+            if image_path is None:
+                continue
+
+            try:
+                image = Image.open(image_path).convert("RGB")
+            except Exception:
+                continue
+
+            gt_boxes = []
+            gt_labels = []
+            if coco_gt:
+                try:
+                    gt_anns = coco_gt.loadAnns(coco_gt.getAnnIds(imgIds=[int(image_id)]))
+                    for ann in gt_anns:
+                        x, y, w, h = ann["bbox"]
+                        gt_boxes.append([x, y, x + w, y + h])
+                        gt_labels.append(self.coco_to_model.get(int(ann["category_id"]), int(ann["category_id"])))
+                except Exception:
+                    gt_boxes = []
+                    gt_labels = []
+
+            if gt_boxes:
+                image = self.draw_boxes(
+                    image,
+                    gt_boxes,
+                    gt_labels,
+                    scores=None,
+                    id2label=label_map,
+                    color_override=(0, 255, 0),
+                    label_prefix="",
+                )
+
+            pred_class_names = []
+            preds = predictions_map.get(image_id, {})
+            if "boxes" in preds and len(preds["boxes"]) > 0:
+                valid_indices = preds["scores"] >= viz_threshold
+                valid_labels = preds["labels"][valid_indices]
+                for label in valid_labels:
+                    label_item = label.item() if torch.is_tensor(label) else int(label)
+                    class_name = label_map.get(int(label_item)) or label_map.get(str(int(label_item))) or str(label_item)
+                    pred_class_names.append(class_name)
+
+                image = self.draw_boxes(
+                    image,
+                    preds["boxes"],
+                    preds["labels"],
+                    preds["scores"],
+                    id2label=label_map,
+                    color_override=(255, 0, 0),
+                    label_prefix="",
+                    threshold_override=viz_threshold,
+                )
+
+            gt_counts = Counter([label_map.get(int(l)) or label_map.get(str(int(l))) or str(l) for l in gt_labels])
+            pred_counts = Counter(pred_class_names)
+
+            draw = ImageDraw.Draw(image)
+            text_y = 10
+            line_height = 24
+            all_classes = set(gt_counts.keys()) | set(pred_counts.keys())
+            for cls_name in sorted(all_classes):
+                parts = [
+                    (f"{cls_name}: ", "white"),
+                    (f"{pred_counts[cls_name]}", "red"),
+                    ("/", "white"),
+                    (f"{gt_counts[cls_name]}", "green"),
+                ]
+                total_width = 0
+                for text, _ in parts:
+                    bbox = draw.textbbox((0, 0), text, font=self.font)
+                    total_width += bbox[2] - bbox[0]
+
+                current_x = image.width - total_width - 10
+                for text, color in parts:
+                    draw.text((current_x + 1, text_y + 1), text, fill="black", font=self.font)
+                    draw.text((current_x, text_y), text, fill=color, font=self.font)
+                    bbox = draw.textbbox((0, 0), text, font=self.font)
+                    current_x += bbox[2] - bbox[0]
+                text_y += line_height
+
+            original_filename = os.path.basename(img_info.get("file_name", f"image_{image_id}.png"))
+            save_path = os.path.join(save_dir, f"image_{int(image_id)}_{original_filename}")
+            image.save(save_path)
+            saved_count += 1
+            if saved_count % 500 == 0:
+                self.print(f"[VIZ] {split.upper()} progress: saved {saved_count} images...")
+
+        self.print(f"[VIZ] {split.upper()} saved {saved_count} aggregated visualizations to: {save_dir}")
 
     @torch.no_grad()
     def predict_batch(self, samples, score_threshold=0.25):
@@ -588,3 +836,20 @@ class RFDETRLightningModule(pl.LightningModule):
             }
 
         return {"optimizer": optimizer, "lr_scheduler": scheduler}
+
+    def lr_scheduler_step(self, scheduler, metric):
+        """
+        Keep scheduler progression aligned with real optimizer updates.
+        This avoids stepping LR when AMP/overflow skips optimizer.step().
+        """
+        optimizer = getattr(scheduler, "optimizer", None)
+        optimizer_has_stepped = optimizer is None or getattr(optimizer, "_step_count", 0) > 0
+        if not optimizer_has_stepped:
+            return
+
+        if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
+            if metric is not None:
+                scheduler.step(metric)
+            return
+
+        scheduler.step()

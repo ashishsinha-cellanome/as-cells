@@ -22,12 +22,15 @@ def convert_to_xywh(boxes):
     return torch.stack((xmin, ymin, xmax - xmin, ymax - ymin), dim=1)
 
 
-def convert_preds_to_coco(predictions):
+def convert_preds_to_coco(predictions, model_to_coco=None):
     """
     Convert predictions from:
       {image_id: {"boxes": Tensor[N,4], "scores": Tensor[N], "labels": Tensor[N]}}
     to COCO list[dict].
     """
+    model_to_coco = {
+        int(k): int(v) for k, v in (model_to_coco or {}).items()
+    }
     coco_results = []
     for image_id, prediction in predictions.items():
         if len(prediction) == 0:
@@ -42,7 +45,7 @@ def convert_preds_to_coco(predictions):
             [
                 {
                     "image_id": int(image_id),
-                    "category_id": int(labels[idx]),
+                    "category_id": int(model_to_coco.get(int(labels[idx]), int(labels[idx]))),
                     "bbox": boxes[idx],
                     "score": float(scores[idx]),
                 }
@@ -114,14 +117,15 @@ def compute_coco_metrics(coco_gt, predictions, image_ids, max_detections=100, la
 
         if hasattr(coco_eval, "eval") and "precision" in coco_eval.eval:
             precisions = coco_eval.eval["precision"]
+            recalls = coco_eval.eval.get("recall")
             import numpy as np
 
             for class_idx, cat_id in enumerate(coco_eval.params.catIds):
                 class_name = None
-                if label_map is not None:
-                    class_name = label_map.get(int(cat_id)) or label_map.get(str(cat_id))
-                if class_name is None and int(cat_id) in coco_gt.cats:
+                if int(cat_id) in coco_gt.cats:
                     class_name = coco_gt.cats[int(cat_id)]["name"]
+                if class_name is None and label_map is not None:
+                    class_name = label_map.get(int(cat_id)) or label_map.get(str(cat_id))
                 if class_name is None:
                     class_name = f"class_{cat_id}"
 
@@ -134,13 +138,15 @@ def compute_coco_metrics(coco_gt, predictions, image_ids, max_detections=100, la
                 valid_50 = p_50[p_50 > -1]
                 if len(valid_50) > 0:
                     metrics[f"map_50_{class_name}"] = round(float(np.mean(valid_50)), 4)
-                
-                # Add per-class recall metrics
-                for recall_idx, recall_val in enumerate([1, 10, max_detections]):
-                    r_all = precisions[:, :, class_idx, recall_idx, -1]
-                    valid_r_all = r_all[r_all > -1]
-                    if len(valid_r_all) > 0:
-                        metrics[f"mar_{recall_val}_{class_name}"] = round(float(np.mean(valid_r_all)), 4)
+
+                if recalls is not None:
+                    for recall_idx, recall_val in enumerate([1, 10, max_detections]):
+                        if recall_idx >= recalls.shape[3]:
+                            continue
+                        r_all = recalls[:, class_idx, 0, recall_idx]
+                        valid_r_all = r_all[r_all > -1]
+                        if len(valid_r_all) > 0:
+                            metrics[f"mar_{recall_val}_{class_name}"] = round(float(np.mean(valid_r_all)), 4)
                         
     except Exception as e:
         import traceback

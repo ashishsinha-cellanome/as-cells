@@ -61,6 +61,10 @@ class RFDETRDataModule(pl.LightningDataModule):
         args.segmentation_head = False
         args.run_test = True
         args.device = "cuda"
+        if model_cfg.get("num_queries") is not None:
+            args.num_queries = int(model_cfg.num_queries)
+        if model_cfg.get("num_select") is not None:
+            args.num_select = int(model_cfg.num_select)
         return args
 
     def _build_transforms(self, image_set: str):
@@ -115,6 +119,14 @@ class RFDETRDataModule(pl.LightningDataModule):
         if self.test_dataset is None:
             return None
         return getattr(self.test_dataset, "coco", None)
+
+    @property
+    def val_image_root(self):
+        return str(Path(self.dataset_path) / "images" / self.config.val_name)
+
+    @property
+    def test_image_root(self):
+        return str(Path(self.dataset_path) / "images" / self.config.test_name)
 
     def train_dataloader(self):
         return DataLoader(

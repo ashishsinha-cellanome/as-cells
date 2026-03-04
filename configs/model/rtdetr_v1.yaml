@@ -2,7 +2,7 @@ defaults:
   - backbone: resnet50
 
 name: rtdetr_v1_${model.backbone.model_name}
-input_size: ${model.rtdetr.input_size}
+input_size: 640 #$${model.rtdetr.input_size}
 
 rtdetr:
   # RT-DETRv1 Configuration
@@ -41,6 +41,8 @@ rtdetr:
   decoder_n_levels: 3
   decoder_n_points: 4
   num_feature_levels: ${model.rtdetr.decoder_n_levels}
+  
+  num_queries: 600
 
   # denoising params
   num_denoising: 0

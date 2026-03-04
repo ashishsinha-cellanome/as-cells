@@ -2,6 +2,7 @@
 import os
 import sys
 import datetime
+from typing import Any, Dict, Literal, Optional
 import torch
 import pytorch_lightning as pl
 from pycocotools.coco import COCO
@@ -23,6 +24,13 @@ from pytorch_lightning.plugins.environments import SLURMEnvironment
 
 from utils.train_utils import BackupToNASCallback
 from utils.ema import EMACallback
+from utils.test_only_checkpoint_restore import (
+    _load_ckpt,
+    _load_selected_weights,
+    _merge_test_only_config_from_ckpt,
+    _resolve_ckpt_path,
+    _select_eval_weights_source,
+)
 
 import torch.distributed as dist
 import wandb
@@ -102,6 +110,10 @@ def setup_callbacks(config: DictConfig):
 
 @hydra.main(config_path="configs", config_name="config.yaml", version_base=None)
 def main(config: DictConfig):
+    test_only_checkpoint: Optional[Dict[str, Any]] = None
+    test_only_weight_source: Optional[Literal["ema", "regular"]] = None
+    early_ckpt_path: Optional[str] = None
+
     pl.seed_everything(config.seed, workers=True)
     setup_cluster_env()
     
@@ -110,11 +122,30 @@ def main(config: DictConfig):
     run_save_dir = os.path.join(base_save_dir, config.run_name)
     config.checkpointing.save_dir = run_save_dir
     
-    ckpt_path = config.initialization.get("load_from_checkpoint", None)
-    if not ckpt_path and config.initialization.get("auto_resume"):
-        last_ckpt = os.path.join(run_save_dir, 'ckpts', "last.ckpt")
-        if os.path.exists(last_ckpt):
-            ckpt_path = last_ckpt
+    if config.test_only:
+        early_ckpt_path = _resolve_ckpt_path(config, run_save_dir=run_save_dir)
+        if not early_ckpt_path:
+            raise ValueError(
+                "test_only=true requires a valid checkpoint path. "
+                "Check for typos and trailing punctuation (e.g., '.ckpt.'), and pass "
+                "'initialization.load_from_checkpoint=/abs/path/model.ckpt'."
+            )
+
+        test_only_checkpoint = _load_ckpt(early_ckpt_path)
+        config = _merge_test_only_config_from_ckpt(config, test_only_checkpoint)
+        OmegaConf.set_struct(config, False)
+        config.initialization.load_from_checkpoint = early_ckpt_path
+        config.checkpointing.save_dir = run_save_dir
+
+        # Single selected-model evaluation in test_only mode (no EMA callback branch).
+        if hasattr(config, "model") and hasattr(config.model, "ema") and config.model.ema is not None:
+            config.model.ema.enabled = False
+            rank_zero_print("test_only: disabled EMA callback/branch for single selected-model evaluation.")
+
+        test_only_weight_source = _select_eval_weights_source(early_ckpt_path, test_only_checkpoint)
+        rank_zero_print(f"test_only: selected checkpoint weight source = {test_only_weight_source.upper()}")
+
+    ckpt_path = _resolve_ckpt_path(config, run_save_dir=run_save_dir)
     OmegaConf.set_struct(config, True)
     
     data_path = hydra.utils.to_absolute_path(config.data.path)
@@ -182,12 +213,27 @@ def main(config: DictConfig):
     
     if config.get("test_only", False):
         if not ckpt_path: raise ValueError("Must provide load_from_checkpoint for test-only.")
-        trainer.test(model, datamodule=data_module, ckpt_path=ckpt_path)
+        if test_only_checkpoint is None:
+            test_only_checkpoint = _load_ckpt(ckpt_path)
+        if test_only_weight_source is None:
+            test_only_weight_source = _select_eval_weights_source(ckpt_path, test_only_checkpoint)
+
+        rank_zero_print(f"Loading {test_only_weight_source.upper()} weights for test-only evaluation...")
+        missing_keys, unexpected_keys = _load_selected_weights(
+            model, test_only_checkpoint, test_only_weight_source
+        )
+        if missing_keys:
+            rank_zero_print(f"⚠️  Missing keys during test-only load: {missing_keys[:10]} ...")
+        if unexpected_keys:
+            rank_zero_print(f"⚠️  Unexpected keys during test-only load: {unexpected_keys[:10]} ...")
+
+        # Manual weight loading above; do not ask Lightning to restore checkpoint again.
+        trainer.test(model, datamodule=data_module)
     else:
-        trainer.fit(model, datamodule=data_module, ckpt_path=ckpt_path)
+        trainer.fit(model, datamodule=data_module, ckpt_path=ckpt_path, weights_only=False)
         if torch.distributed.is_available() and torch.distributed.is_initialized():
             torch.distributed.barrier()
-        trainer.test(model, datamodule=data_module, ckpt_path="best")
+        trainer.test(model, datamodule=data_module, ckpt_path="best", weights_only=False)
 
 if __name__ == "__main__":
     main()

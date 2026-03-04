@@ -11,10 +11,10 @@ yolov5:
   # Optional pretrained checkpoint (.pt). Leave null for random init.
   # Use 'yolov5s', 'yolov5m', etc. to load from torch hub dynamically.
   # Use 'yolov5s.pt' etc. to load from local file.
-  weights: yolov5${model.yolov5.yolo_size}
+  weights: /project/aip-robsc/asinha/cellanome/as-cells/yolov5${model.yolov5.yolo_size}.pt
 
   # YOLO inference/eval settings
-  iou_threshold: 0.3 # 0.45
+  iou_threshold: 0.2 # 0.45
   cache_images: false
 
   # Native YOLO hyperparameters passed into dataloader/train behavior.
@@ -37,16 +37,16 @@ yolov5:
     hsv_h: 0.015
     hsv_s: 0.7
     hsv_v: 0.4
-    degrees: 0.0
-    translate: 0.1
-    scale: 0.5
+    degrees: 1.0
+    translate: 1.0
+    scale: 1.0
     shear: 0.0
     perspective: 0.0
-    flipud: 0.0
-    fliplr: 0.5
-    mosaic: 0.0
-    mixup: 0.0
-    copy_paste: 0.0
+    flipud: 1.0
+    fliplr: 1.5
+    mosaic: 1.0
+    mixup: 1.0
+    copy_paste: 1.0
 
   optimizer:
     type: sgd

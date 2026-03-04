@@ -15,7 +15,7 @@ defaults:
 # --- Top-Level Global Settings ---
 seed: 42
 # run_name: "rtdetr_dinov2_${now:%Y-%m-%d_%H-%M-%S}"
-run_name: "${model.name}_${now:%Y-%m-%d}"
+run_name: "${model.name}_${now:%Y-%m-%d_%H}"
 debug: false
 
 # allow remapping of labels

@@ -11,6 +11,9 @@ from pathlib import Path
 from pycocotools.cocoeval import COCOeval
 from PIL import Image, ImageDraw, ImageFont
 
+from utils.distributed_utils import rank_zero_print
+# from models.yolov5.utils.augmentations import normalize, denormalize
+
 def _import_from_yolo_repo(repo_path: str, module_name: str):
     repo = Path(repo_path).expanduser().resolve()
     if not repo.exists():
@@ -52,10 +55,14 @@ class YOLOv5LightningModule(pl.LightningModule):
         yolo_module = _import_from_yolo_repo(self.yolo_repo_path, "models.yolo")
         utils_loss = _import_from_yolo_repo(self.yolo_repo_path, "utils.loss")
         utils_general = _import_from_yolo_repo(self.yolo_repo_path, "utils.general")
+        utils_aug = _import_from_yolo_repo(self.yolo_repo_path, "utils.augmentations")
         
         self._ComputeLossClass = utils_loss.ComputeLoss
         self._non_max_suppression = utils_general.non_max_suppression
         self._scale_boxes = utils_general.scale_boxes
+        self.normalize = utils_aug.normalize
+        self.denormalize = utils_aug.denormalize
+
 
         model_cfg = self.config.model.yolov5
         nc = len(self.config.model.label_map)
@@ -68,11 +75,13 @@ class YOLOv5LightningModule(pl.LightningModule):
         if model_cfg.weights:
             weights_path = model_cfg.weights if str(model_cfg.weights).endswith('.pt') else f"{model_cfg.weights}.pt"
             if os.path.exists(weights_path):
-                # FIX: Explicitly set weights_only=False for PyTorch 2.6+ compatibility
                 ckpt = torch.load(weights_path, map_location='cpu', weights_only=False)
                 csd = ckpt['model'].float().state_dict()
                 csd = {k: v for k, v in csd.items() if model.state_dict()[k].shape == v.shape}
                 model.load_state_dict(csd, strict=False)
+                rank_zero_print(f"[INFO] Successfully loaded pretrained weights from: {weights_path}")
+            else:
+                rank_zero_print(f"[INFO] Pretrained weights not found at: {weights_path}")
 
         model.hyp = dict(model_cfg.hyp)
         self.model = model
@@ -108,11 +117,33 @@ class YOLOv5LightningModule(pl.LightningModule):
 
     def setup(self, stage=None):
         pass
-        # if self._compute_loss is None:
-        #     self._compute_loss = self._ComputeLossClass(self.model)
 
     def forward(self, x):
         return self.model(x)
+
+    def on_test_start(self):
+        """
+        Ensure dtype/device are compatible with the configured precision mode.
+        For mixed precision, keep FP32 weights and rely on autocast.
+        For true precision modes, cast model weights explicitly.
+        """
+        self.model = self.model.to(self.device)
+        precision_mode = str(self.trainer.precision).lower()
+
+        # Mixed precision keeps model weights in FP32.
+        if precision_mode in {"16-mixed", "bf16-mixed"}:
+            self.model = self.model.float()
+            return
+
+        target_dtype = None
+        if precision_mode in {"16-true", "16"}:
+            target_dtype = torch.float16
+        elif precision_mode in {"bf16-true", "bf16"}:
+            target_dtype = torch.bfloat16
+
+        if target_dtype is not None:
+            self.model = self.model.to(dtype=target_dtype)
+            self.print(f"[INFO] Cast model weights to {target_dtype} for precision={self.trainer.precision}.")
 
     def _get_ema_model(self):
         """Safely extracts the EMA model instance from PL callbacks."""
@@ -124,30 +155,35 @@ class YOLOv5LightningModule(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         if self._compute_loss is None:
             self._compute_loss = self._ComputeLossClass(self.model)
-
+        # breakpoint()
         imgs, targets, paths, _ = batch
-        imgs = imgs.float() / 255.0  # Normalize to 0.0 - 1.0
+        # imgs = imgs.float() / 255.0  # Normalize to 0.0 - 1.0
+        
+        imgs = self.normalize(imgs)
         
         pred = self.model(imgs)
         loss, loss_items = self._compute_loss(pred, targets)
         
         batch_size = imgs.shape[0]
         self.log("train/loss", loss, batch_size=batch_size, on_step=True, on_epoch=True, sync_dist=True)
-        self.log("train/box_loss", loss_items[0], batch_size=batch_size, on_step=False, on_epoch=True, sync_dist=True)
-        self.log("train/obj_loss", loss_items[1], batch_size=batch_size, on_step=False, on_epoch=True, sync_dist=True)
-        self.log("train/cls_loss", loss_items[2], batch_size=batch_size, on_step=False, on_epoch=True, sync_dist=True)
+        self.log("train/box_loss", loss_items[0], batch_size=batch_size, on_step=True, on_epoch=True, sync_dist=True)
+        self.log("train/obj_loss", loss_items[1], batch_size=batch_size, on_step=True, on_epoch=True, sync_dist=True)
+        self.log("train/cls_loss", loss_items[2], batch_size=batch_size, on_step=True, on_epoch=True, sync_dist=True)
         return loss
 
     def _shared_eval_step(self, batch, batch_idx, model_instance, prefix="val", visualize=True):
         """Executes forward pass, NMS, and evaluation scaling. Can run on regular or EMA model."""
         imgs, targets, paths, shapes = batch
-        imgs = imgs.float() / 255.0 
+        # breakpoint()
+        # imgs = imgs.float() / 255.0 
+
+        imgs = self.normalize(imgs)
         
         preds, _ = model_instance(imgs)
         
         preds = self._non_max_suppression(
             preds, 
-            conf_thres=0.001, 
+            conf_thres=self.config.model.detection_threshold, 
             iou_thres=self.config.model.yolov5.iou_threshold, 
             labels=[], multi_label=True, agnostic=False, 
             max_det=self.config.model.max_detections
@@ -356,6 +392,14 @@ class YOLOv5LightningModule(pl.LightningModule):
         os.makedirs(save_dir, exist_ok=True)
         max_samples = self.config.checkpointing.visualize_samples
         coco_gt = self.test_coco_gt if prefix == "test" else self.val_coco_gt
+        if counter == 0:
+            self.print(f"[VIZ] Saving visualizations to: {save_dir}")
+            self.print(f"[VIZ] Max samples: {max_samples}")
+            if max_samples == -1 or max_samples == float("inf"):
+                self.print(
+                    f"[VIZ] WARNING: Unlimited visualization enabled for {prefix}. "
+                    "This can be very slow on large datasets."
+                )
         
         for i in range(len(paths)):
             if max_samples != -1 and counter >= max_samples: break
@@ -386,6 +430,8 @@ class YOLOv5LightningModule(pl.LightningModule):
             new_filename = f"rank{rank}_{filename}"
             image.save(os.path.join(save_dir, new_filename))
             counter += 1
+            if counter % 500 == 0:
+                self.print(f"[VIZ] {prefix.upper()} progress: saved {counter} images...")
         return counter
 
     def configure_optimizers(self):
@@ -405,3 +451,20 @@ class YOLOv5LightningModule(pl.LightningModule):
         lf = lambda x: (1 - x / self.trainer.max_epochs) * (1.0 - self.config.model.yolov5.hyp.lrf) + self.config.model.yolov5.hyp.lrf
         scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lf)
         return [optimizer], [{"scheduler": scheduler, "interval": "epoch"}]
+
+    def lr_scheduler_step(self, scheduler, metric):
+        """
+        Keep scheduler progression aligned with real optimizer updates.
+        This avoids stepping LR when AMP/overflow skips optimizer.step().
+        """
+        optimizer = getattr(scheduler, "optimizer", None)
+        optimizer_has_stepped = optimizer is None or getattr(optimizer, "_step_count", 0) > 0
+        if not optimizer_has_stepped:
+            return
+
+        if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
+            if metric is not None:
+                scheduler.step(metric)
+            return
+
+        scheduler.step()

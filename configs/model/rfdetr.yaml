@@ -1,9 +1,11 @@
-name: rf_detr_${rfdetr.size}
+name: rf_detr_${model.rfdetr.size}
 input_size: 560
 
 rfdetr:
-  size: base            # base|small|medium|large|nano
-  pretrain_weights: rf-detr-base.pth
+  size: base             # base|small|medium|large|nano
+  pretrain_weights: null # auto-select size-matched defaults unless explicitly overridden
+  num_queries: null
+  num_select: null
 
   # RF-DETR data/training behavior
   multi_scale: true
@@ -30,6 +32,6 @@ max_detections: 100
 
 ema:
   enabled: true
-  decay: 0.9999
-  tau: 2000
+  decay: 0.993
+  tau: 100
   warmup_steps: 100

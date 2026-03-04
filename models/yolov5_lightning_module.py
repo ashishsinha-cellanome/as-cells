@@ -246,6 +246,30 @@ class YOLOv5LightningModule(pl.LightningModule):
         """Move model to device at training start."""
         self.model = self.model.to(self.device)
 
+    def on_test_start(self):
+        """
+        Ensure dtype/device are compatible with the configured precision mode.
+        For mixed precision, keep FP32 weights and rely on autocast.
+        For true precision modes, cast model weights explicitly.
+        """
+        self.model = self.model.to(self.device)
+        precision_mode = str(self.trainer.precision).lower()
+
+        # Mixed precision keeps model weights in FP32.
+        if precision_mode in {"16-mixed", "bf16-mixed"}:
+            self.model = self.model.float()
+            return
+
+        target_dtype = None
+        if precision_mode in {"16-true", "16"}:
+            target_dtype = torch.float16
+        elif precision_mode in {"bf16-true", "bf16"}:
+            target_dtype = torch.bfloat16
+
+        if target_dtype is not None:
+            self.model = self.model.to(dtype=target_dtype)
+            self.print(f"[INFO] Cast model weights to {target_dtype} for precision={self.trainer.precision}.")
+
     @property
     def stride(self):
         s = int(max(self.model.stride)) if hasattr(self.model, "stride") else 32
@@ -319,7 +343,7 @@ class YOLOv5LightningModule(pl.LightningModule):
 
         return {"predictions": result_map, "image_ids": image_ids}
 
-    def _log_loss_items(self, split: str, loss_items):
+    def _log_loss_items(self, split: str, loss_items, batch_size: int):
         """
         Log all available YOLO loss components.
         Official YOLOv5 typically returns [box, obj, cls], but we keep this dynamic
@@ -346,10 +370,18 @@ class YOLOv5LightningModule(pl.LightningModule):
                 name = default_names[idx]
             else:
                 name = f"loss_{idx}"
-            self.log(f"{split}/{name}", value, on_step=False, on_epoch=True, sync_dist=True)
+            self.log(
+                f"{split}/{name}",
+                value,
+                batch_size=batch_size,
+                on_step=False,
+                on_epoch=True,
+                sync_dist=True,
+            )
 
     def training_step(self, batch, batch_idx):
         images, targets = batch[0], batch[1]
+        batch_size = int(images.shape[0]) if isinstance(images, torch.Tensor) else len(targets)
         images = images.to(self.device, non_blocking=True).float() / 255.0
         targets = targets.to(self.device, non_blocking=True).float()
 
@@ -398,13 +430,22 @@ class YOLOv5LightningModule(pl.LightningModule):
         #         if l_vals[0] < 1e-4:  # box loss is near zero
         #             self.print("[WARNING] BOX LOSS IS ZERO! This means NO ANCHORS MATCHED the ground truth.")
 
-        self.log("train/loss", loss, on_step=True, on_epoch=True, prog_bar=True, sync_dist=True)
-        self._log_loss_items("train", loss_items)
+        self.log(
+            "train/loss",
+            loss,
+            batch_size=batch_size,
+            on_step=True,
+            on_epoch=True,
+            prog_bar=True,
+            sync_dist=True,
+        )
+        self._log_loss_items("train", loss_items, batch_size=batch_size)
         return loss
 
     @torch.no_grad()
     def _run_eval_step(self, batch, split_name: str):
         images, targets, paths, shapes, batch_image_ids = batch
+        batch_size = int(images.shape[0]) if isinstance(images, torch.Tensor) else len(batch_image_ids)
         images = images.to(self.device, non_blocking=True).float() / 255.0
         targets = targets.to(self.device, non_blocking=True).float()
 
@@ -422,8 +463,15 @@ class YOLOv5LightningModule(pl.LightningModule):
         if train_out is not None:
             # Note: ComputeLoss expects the raw training output (usually a list of tensors)
             val_loss, loss_items = self.compute_loss(train_out, targets)
-            self.log(f"{split_name}/loss", val_loss, on_step=False, on_epoch=True, sync_dist=True)
-            self._log_loss_items(split_name, loss_items)
+            self.log(
+                f"{split_name}/loss",
+                val_loss,
+                batch_size=batch_size,
+                on_step=False,
+                on_epoch=True,
+                sync_dist=True,
+            )
+            self._log_loss_items(split_name, loss_items, batch_size=batch_size)
 
         pred_list = self._non_max_suppression(
             infer_out,
@@ -786,6 +834,11 @@ class YOLOv5LightningModule(pl.LightningModule):
         if counter == 0:
             self.print(f"[VIZ] Saving visualizations to: {save_dir}")
             self.print(f"[VIZ] Max samples: {max_samples}")
+            if max_samples == -1 or max_samples == float("inf"):
+                self.print(
+                    f"[VIZ] WARNING: Unlimited visualization enabled for {split}. "
+                    "This can be very slow on large datasets."
+                )
 
         coco_gt = self.test_coco_gt if split == "test" else self.val_coco_gt
         
@@ -793,7 +846,7 @@ class YOLOv5LightningModule(pl.LightningModule):
         # detection_threshold is still used for the actual metrics/COCO eval.
         viz_threshold = float(self.config.model.draw_threshold)
         
-        for i, (path, img_id) in enumerate(tqdm(zip(paths, image_ids), desc=f"Visualizing on {split}")):
+        for i, (path, img_id) in enumerate(zip(paths, image_ids)):
             if counter >= max_samples and max_samples != -1:
                 break
                 
@@ -925,6 +978,8 @@ class YOLOv5LightningModule(pl.LightningModule):
             save_path = os.path.join(save_dir, new_filename)
             image.save(save_path)
             counter += 1
+            if counter % 500 == 0:
+                self.print(f"[VIZ] {split.upper()} progress: saved {counter} images...")
             
         return counter
         
@@ -1008,3 +1063,20 @@ class YOLOv5LightningModule(pl.LightningModule):
             }
 
         return {"optimizer": optimizer, "lr_scheduler": scheduler}
+
+    def lr_scheduler_step(self, scheduler, metric):
+        """
+        Keep scheduler progression aligned with real optimizer updates.
+        This avoids stepping LR when AMP/overflow skips optimizer.step().
+        """
+        optimizer = getattr(scheduler, "optimizer", None)
+        optimizer_has_stepped = optimizer is None or getattr(optimizer, "_step_count", 0) > 0
+        if not optimizer_has_stepped:
+            return
+
+        if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
+            if metric is not None:
+                scheduler.step(metric)
+            return
+
+        scheduler.step()

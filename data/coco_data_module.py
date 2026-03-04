@@ -125,8 +125,6 @@ class COCODataModule(pl.LightningDataModule):
         self.val_dataset = None
         self.test_dataset = None
 
-        # Track if setup has been called to avoid re-loading
-        self._setup_called = False
     
     def _get_remap_dict(self, coco_dataset: CocoDetection) -> Optional[Dict[int, int]]:
         """Builds a dictionary to map dataset category IDs to model class IDs."""
@@ -174,127 +172,125 @@ class COCODataModule(pl.LightningDataModule):
 
     def setup(self, stage: Optional[str] = None):
         """Setup datasets for each stage."""
+        stage_str = str(stage).lower() if stage is not None else None
+        is_fit_stage = stage is None or stage == "fit" or (stage_str is not None and "fit" in stage_str)
+        is_test_stage = stage is None or stage == "test" or (stage_str is not None and "test" in stage_str)
 
-        # Skip if already set up to avoid re-loading data
-        if self._setup_called:
-            return
-
-        if stage == "fit" or stage is None:
-            # Training dataset
-            train_images_path = os.path.join(self.dataset_path, 'images', self.config.train_name)
-            train_annot_path = os.path.join(self.dataset_path, f'{ self.config.train_name}_annotations.json')
-            
-            if self.config.debug:
-                train_images_path = os.path.join(self.dataset_path, 'images', self.config.val_name)
-                train_annot_path = os.path.join(self.dataset_path, f'{self.config.val_name}_annotations.json')
+        if is_fit_stage:
+            if self.train_dataset is None or self.val_dataset is None:
+                # Training dataset
+                train_images_path = os.path.join(self.dataset_path, 'images', self.config.train_name)
+                train_annot_path = os.path.join(self.dataset_path, f'{ self.config.train_name}_annotations.json')
                 
-            train_coco = CocoDetection(
-                root=train_images_path,
-                annFile=train_annot_path,
-                transforms=None
-            )
-            train_remap = self._get_remap_dict(train_coco)
+                if self.config.debug:
+                    train_images_path = os.path.join(self.dataset_path, 'images', self.config.val_name)
+                    train_annot_path = os.path.join(self.dataset_path, f'{self.config.val_name}_annotations.json')
+                    
+                train_coco = CocoDetection(
+                    root=train_images_path,
+                    annFile=train_annot_path,
+                    transforms=None
+                )
+                train_remap = self._get_remap_dict(train_coco)
 
-            # Check for transforms config
-            transforms_config_train = None
-            if hasattr(self.config, 'data') and hasattr(self.config.data, 'transforms') and hasattr(self.config.data.transforms, 'train'):
-                transforms_config_train = OmegaConf.to_container(self.config.data.transforms.train, resolve=True)
+                # Check for transforms config
+                transforms_config_train = None
+                if hasattr(self.config, 'data') and hasattr(self.config.data, 'transforms') and hasattr(self.config.data.transforms, 'train'):
+                    transforms_config_train = OmegaConf.to_container(self.config.data.transforms.train, resolve=True)
 
-            train_transforms = get_transform(
-                model_input_width=self.model_input_size,
-                model_input_height=self.model_input_size,
-                min_random_scale=self.min_random_scale,
-                max_random_scale=self.max_random_scale,
-                p_noise=self.p_noise,
-                org_images_in_model_input_size=self.org_images_in_model_input_size,
-                train=True,
-                transforms_config=transforms_config_train
-            )
-            
-            self.train_dataset = CocoDataset(
-                dataset_coco=train_coco,
-                processor=self.processor,
-                transforms=train_transforms,
-                remap_dict=train_remap
-            )
-            
-            # Validation dataset
-            val_images_path = os.path.join(self.dataset_path, 'images', self.config.val_name)
-            val_annot_path = os.path.join(self.dataset_path, f'{self.config.val_name}_annotations.json')
-            
-            val_coco = CocoDetection(
-                root=val_images_path,
-                annFile=val_annot_path,
-                transforms=None
-            )
-            
-            val_remap = self._get_remap_dict(val_coco)
+                train_transforms = get_transform(
+                    model_input_width=self.model_input_size,
+                    model_input_height=self.model_input_size,
+                    min_random_scale=self.min_random_scale,
+                    max_random_scale=self.max_random_scale,
+                    p_noise=self.p_noise,
+                    org_images_in_model_input_size=self.org_images_in_model_input_size,
+                    train=True,
+                    transforms_config=transforms_config_train
+                )
+                
+                self.train_dataset = CocoDataset(
+                    dataset_coco=train_coco,
+                    processor=self.processor,
+                    transforms=train_transforms,
+                    remap_dict=train_remap
+                )
+                
+                # Validation dataset
+                val_images_path = os.path.join(self.dataset_path, 'images', self.config.val_name)
+                val_annot_path = os.path.join(self.dataset_path, f'{self.config.val_name}_annotations.json')
+                
+                val_coco = CocoDetection(
+                    root=val_images_path,
+                    annFile=val_annot_path,
+                    transforms=None
+                )
+                
+                val_remap = self._get_remap_dict(val_coco)
 
-            transforms_config_test = None
-            if hasattr(self.config, 'data') and hasattr(self.config.data, 'transforms') and hasattr(self.config.data.transforms, 'test'):
-                 transforms_config_test = OmegaConf.to_container(self.config.data.transforms.test, resolve=True)
+                transforms_config_test = None
+                if hasattr(self.config, 'data') and hasattr(self.config.data, 'transforms') and hasattr(self.config.data.transforms, 'test'):
+                    transforms_config_test = OmegaConf.to_container(self.config.data.transforms.test, resolve=True)
 
-            val_transforms = get_transform(
-                model_input_width=self.model_input_size,
-                model_input_height=self.model_input_size,
-                min_random_scale=self.min_random_scale,
-                max_random_scale=self.max_random_scale,
-                p_noise=self.p_noise,
-                org_images_in_model_input_size=self.org_images_in_model_input_size,
-                train=False,
-                transforms_config=transforms_config_test
-            )
-            
-            self.val_dataset = CocoDataset(
-                dataset_coco=val_coco,
-                processor=self.processor,
-                transforms=val_transforms,
-                remap_dict=val_remap
-            )
-            print('Training set includes %d annotated images.' %len(self.train_dataset))
-            print('Validation set includes %d annotated images.' %len(self.val_dataset))
+                val_transforms = get_transform(
+                    model_input_width=self.model_input_size,
+                    model_input_height=self.model_input_size,
+                    min_random_scale=self.min_random_scale,
+                    max_random_scale=self.max_random_scale,
+                    p_noise=self.p_noise,
+                    org_images_in_model_input_size=self.org_images_in_model_input_size,
+                    train=False,
+                    transforms_config=transforms_config_test
+                )
+                
+                self.val_dataset = CocoDataset(
+                    dataset_coco=val_coco,
+                    processor=self.processor,
+                    transforms=val_transforms,
+                    remap_dict=val_remap
+                )
+                print('Training set includes %d annotated images.' %len(self.train_dataset))
+                print('Validation set includes %d annotated images.' %len(self.val_dataset))
         
-        if stage == "test" or stage is None:
-            # Test dataset
-            test_images_path = os.path.join(self.dataset_path, 'images', self.config.test_name)
-            test_annot_path = os.path.join(self.dataset_path, f'{self.config.test_name}_annotations.json')
-            if self.config.debug:
-                test_images_path = os.path.join(self.dataset_path, 'images', self.config.val_name)
-                test_annot_path = os.path.join(self.dataset_path, f'{self.config.val_name}_annotations.json')
-            
-            test_coco = CocoDetection(
-                root=test_images_path,
-                annFile=test_annot_path,
-                transforms=None
-            )
-            
-            test_remap = self._get_remap_dict(test_coco)
+        if is_test_stage:
+            if self.test_dataset is None:
+                # Test dataset
+                test_images_path = os.path.join(self.dataset_path, 'images', self.config.test_name)
+                test_annot_path = os.path.join(self.dataset_path, f'{self.config.test_name}_annotations.json')
+                if self.config.debug:
+                    test_images_path = os.path.join(self.dataset_path, 'images', self.config.val_name)
+                    test_annot_path = os.path.join(self.dataset_path, f'{self.config.val_name}_annotations.json')
+                
+                test_coco = CocoDetection(
+                    root=test_images_path,
+                    annFile=test_annot_path,
+                    transforms=None
+                )
+                
+                test_remap = self._get_remap_dict(test_coco)
 
-            transforms_config_test = None
-            if hasattr(self.config, 'data') and hasattr(self.config.data, 'transforms') and hasattr(self.config.data.transforms, 'test'):
-                 transforms_config_test = OmegaConf.to_container(self.config.data.transforms.test, resolve=True)
+                transforms_config_test = None
+                if hasattr(self.config, 'data') and hasattr(self.config.data, 'transforms') and hasattr(self.config.data.transforms, 'test'):
+                     transforms_config_test = OmegaConf.to_container(self.config.data.transforms.test, resolve=True)
 
-            test_transforms = get_transform(
-                model_input_width=self.model_input_size,
-                model_input_height=self.model_input_size,
-                min_random_scale=self.min_random_scale,
-                max_random_scale=self.max_random_scale,
-                p_noise=self.p_noise,
-                org_images_in_model_input_size=self.org_images_in_model_input_size,
-                train=False,
-                transforms_config=transforms_config_test
-            )
-            
-            self.test_dataset = CocoDataset(
-                dataset_coco=test_coco,
-                processor=self.processor,
-                transforms=test_transforms,
-                remap_dict=test_remap
-            )
-            print ('Test set includes %d annotated images.' %len(self.test_dataset))
-
-        # Mark setup as called
-        self._setup_called = True
+                test_transforms = get_transform(
+                    model_input_width=self.model_input_size,
+                    model_input_height=self.model_input_size,
+                    min_random_scale=self.min_random_scale,
+                    max_random_scale=self.max_random_scale,
+                    p_noise=self.p_noise,
+                    org_images_in_model_input_size=self.org_images_in_model_input_size,
+                    train=False,
+                    transforms_config=transforms_config_test
+                )
+                
+                self.test_dataset = CocoDataset(
+                    dataset_coco=test_coco,
+                    processor=self.processor,
+                    transforms=test_transforms,
+                    remap_dict=test_remap
+                )
+                print ('Test set includes %d annotated images.' %len(self.test_dataset))
     
     @staticmethod
     def collate_fn(batch):
@@ -325,6 +321,11 @@ class COCODataModule(pl.LightningDataModule):
         )
     
     def test_dataloader(self):
+        # Defensive fallback in case trainer did not trigger setup("test") as expected.
+        if self.test_dataset is None:
+            self.setup(stage="test")
+        if self.test_dataset is None:
+            raise RuntimeError("test_dataset is not initialized. setup(stage='test') did not create it.")
         return DataLoader(
             self.test_dataset,
             batch_size=1,

@@ -2,33 +2,56 @@
 
 import datetime
 import os
+import time
 import warnings
-warnings.filterwarnings("ignore", category=FutureWarning)
+from typing import Any, Dict, Literal, Optional
 
 import hydra
 import pytorch_lightning as pl
 import torch
+import torch.distributed as dist
 import wandb
-from hydra.utils import to_absolute_path
 from hydra.core.hydra_config import HydraConfig
 from hydra.types import RunMode
+from hydra.utils import to_absolute_path
 from lightning.pytorch.profilers import AdvancedProfiler, SimpleProfiler
 from omegaconf import DictConfig, OmegaConf
 from pytorch_lightning.callbacks import EarlyStopping, LearningRateMonitor, ModelCheckpoint, ModelSummary
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.plugins.environments import SLURMEnvironment
+from rfdetr.assets.model_weights import ModelWeights, download_pretrain_weights
 from rfdetr import RFDETRBase, RFDETRLarge, RFDETRMedium, RFDETRNano, RFDETRSmall
 from rfdetr.models import build_criterion_and_postprocessors
 
 from data.rf_detr_data_module import RFDETRDataModule
 from models.rf_detr_lightning_module import RFDETRLightningModule
-from utils.distributed_utils import rank_zero_print, setup_cluster_env
+from utils.distributed_utils import get_rank, rank_zero_print, setup_cluster_env
+from utils.test_only_checkpoint_restore import (
+    _load_ckpt,
+    _load_selected_weights,
+    _merge_test_only_config_from_ckpt,
+    _resolve_ckpt_path,
+    _select_eval_weights_source,
+)
 from utils.train_utils import BackupToNASCallback
-OmegaConf.register_new_resolver("extract_name", lambda path: path.split("/")[-1])
-OmegaConf.register_new_resolver("oc.eval", eval)
+
+warnings.filterwarnings("ignore", category=FutureWarning)
+OmegaConf.register_new_resolver("extract_name", lambda path: path.split("/")[-1], replace=True)
+OmegaConf.register_new_resolver("oc.eval", eval, replace=True)
 
 setup_cluster_env()
 torch.set_float32_matmul_precision("medium")
+
+_DEFAULT_PRETRAIN_WEIGHTS_BY_SIZE: Dict[str, str] = {
+    "base": "rf-detr-base.pth",
+    "small": "rf-detr-small.pth",
+    "medium": "rf-detr-medium.pth",
+    "nano": "rf-detr-nano.pth",
+    "large": "rf-detr-large-2026.pth",
+}
+
+_PRETRAIN_DOWNLOAD_WAIT_TIMEOUT_SEC = 300
+_PRETRAIN_DOWNLOAD_WAIT_POLL_SEC = 2
 
 
 def _get_profiler(config: DictConfig):
@@ -55,6 +78,161 @@ def _get_model_class(size_name: str):
     raise ValueError(f"Unsupported RF-DETR size: {size_name}")
 
 
+def _ensure_pretrain_weights_available(pretrain_weights: str) -> str:
+    weight_name = os.path.basename(pretrain_weights)
+    resolved_local_path = os.path.realpath(pretrain_weights)
+    known_hosted_weight = ModelWeights.from_filename(weight_name) is not None
+
+    # Any explicit path (absolute or nested relative) is treated as custom
+    # and must already exist.
+    dirname = os.path.dirname(pretrain_weights)
+    is_explicit_custom_path = dirname not in ("", ".")
+
+    if is_explicit_custom_path or not known_hosted_weight:
+        if os.path.exists(resolved_local_path):
+            rank_zero_print(f"[Startup] Using RF-DETR pretrain weights at: {resolved_local_path}")
+            return resolved_local_path
+        raise FileNotFoundError(
+            "RF-DETR pretrain weights file not found. "
+            f"Configured value: '{pretrain_weights}', resolved path: '{resolved_local_path}'. "
+            "For custom weights, provide an existing file path. "
+            "For hosted defaults, use a known filename like 'rf-detr-medium.pth'."
+        )
+
+    if os.path.exists(resolved_local_path):
+        rank_zero_print(f"[Startup] Using RF-DETR pretrain weights at: {resolved_local_path}")
+        return resolved_local_path
+
+    rank = get_rank()
+    if rank == 0:
+        rank_zero_print(
+            f"[Startup] RF-DETR pretrain weights missing at '{resolved_local_path}'. "
+            f"Auto-downloading hosted weights '{weight_name}'."
+        )
+        download_pretrain_weights(weight_name)
+    else:
+        deadline = time.time() + _PRETRAIN_DOWNLOAD_WAIT_TIMEOUT_SEC
+        while time.time() < deadline and not os.path.exists(resolved_local_path):
+            time.sleep(_PRETRAIN_DOWNLOAD_WAIT_POLL_SEC)
+        if not os.path.exists(resolved_local_path):
+            # Fallback in case rank 0 download failed or is not visible yet.
+            download_pretrain_weights(weight_name)
+
+    if not os.path.exists(resolved_local_path):
+        raise FileNotFoundError(
+            f"RF-DETR pretrain weights '{weight_name}' are still missing after download attempts. "
+            f"Expected local path: '{resolved_local_path}'."
+        )
+
+    rank_zero_print(f"[Startup] Using RF-DETR pretrain weights at: {resolved_local_path}")
+    return resolved_local_path
+
+
+def _build_rfdetr_model_kwargs(config: DictConfig, num_classes: int, device: str) -> Dict[str, Any]:
+    rfdetr_cfg = config.model.rfdetr
+    size = str(rfdetr_cfg.size).lower()
+    if size not in _DEFAULT_PRETRAIN_WEIGHTS_BY_SIZE:
+        raise ValueError(f"Unsupported RF-DETR size: {size}")
+
+    raw_pretrain_weights = rfdetr_cfg.get("pretrain_weights")
+    if raw_pretrain_weights in (None, ""):
+        pretrain_weights = _DEFAULT_PRETRAIN_WEIGHTS_BY_SIZE[size]
+        rank_zero_print(
+            f"[Startup] `model.rfdetr.pretrain_weights` is unset; using size-matched default '{pretrain_weights}'."
+        )
+    else:
+        pretrain_weights = str(raw_pretrain_weights)
+        lower_name = os.path.basename(pretrain_weights).lower()
+        inferred_weight_size = next(
+            (
+                candidate
+                for candidate in ("base", "small", "medium", "nano", "large")
+                if candidate in lower_name
+            ),
+            None,
+        )
+        if inferred_weight_size is not None and inferred_weight_size != size:
+            raise ValueError(
+                "RF-DETR size/weights mismatch: "
+                f"`model.rfdetr.size={size}` but `model.rfdetr.pretrain_weights={pretrain_weights}` "
+                f"looks like {inferred_weight_size} weights. "
+                f"Use '{_DEFAULT_PRETRAIN_WEIGHTS_BY_SIZE[size]}' for size={size}, or switch size."
+            )
+
+    pretrain_weights = _ensure_pretrain_weights_available(pretrain_weights)
+
+    kwargs: Dict[str, Any] = {
+        "pretrain_weights": pretrain_weights,
+        "resolution": int(config.model.input_size),
+        "num_classes": int(num_classes),
+        "device": device,
+    }
+
+    requested_num_queries = rfdetr_cfg.get("num_queries")
+    requested_num_select = rfdetr_cfg.get("num_select")
+
+    if size == "large":
+        if requested_num_queries is not None or requested_num_select is not None:
+            rank_zero_print(
+                "[Startup] WARNING: RF-DETR large does not support configurable "
+                "`num_queries`/`num_select`; ignoring these overrides."
+            )
+        return kwargs
+
+    if requested_num_queries is not None:
+        kwargs["num_queries"] = int(requested_num_queries)
+        if requested_num_select is None:
+            requested_num_select = int(requested_num_queries)
+            rank_zero_print(
+                f"[Startup] `model.rfdetr.num_select` not set; defaulting to num_queries={requested_num_select}."
+            )
+
+    if requested_num_select is not None:
+        kwargs["num_select"] = int(requested_num_select)
+
+    return kwargs
+
+
+def _log_effective_model_config(size_name: str, kwargs: Dict[str, Any]) -> None:
+    rank_zero_print(f"[Startup] Building RF-DETR model ({size_name})...")
+    rank_zero_print("[Startup] Effective RF-DETR model config:")
+    for key in sorted(kwargs.keys()):
+        rank_zero_print(f"  - {key}: {kwargs[key]}")
+
+
+def _build_model_to_coco_map(coco_gt, label_map: Dict[int, str]) -> Dict[int, int]:
+    name_to_model_id = {str(name): int(idx) for idx, name in label_map.items()}
+    model_to_coco: Dict[int, int] = {}
+
+    if coco_gt is None or not getattr(coco_gt, "cats", None):
+        for model_id in sorted(name_to_model_id.values()):
+            model_to_coco[model_id] = model_id
+        rank_zero_print("[Startup] WARNING: COCO categories unavailable. Falling back to identity model->COCO mapping.")
+        return model_to_coco
+
+    unmatched_coco_names = []
+    for coco_cat_id, cat_info in coco_gt.cats.items():
+        cat_name = cat_info.get("name")
+        if cat_name in name_to_model_id:
+            model_id = name_to_model_id[cat_name]
+            if model_id not in model_to_coco:
+                model_to_coco[model_id] = int(coco_cat_id)
+        else:
+            unmatched_coco_names.append(str(cat_name))
+
+    for model_id in sorted(name_to_model_id.values()):
+        if model_id not in model_to_coco:
+            model_to_coco[model_id] = model_id
+
+    rank_zero_print(f"[Startup] RF-DETR model_to_coco mapping: {model_to_coco}")
+    if unmatched_coco_names:
+        rank_zero_print(
+            f"[Startup] NOTE: COCO categories not present in model label_map: {sorted(set(unmatched_coco_names))}"
+        )
+
+    return model_to_coco
+
+
 def _setup_logger(config: DictConfig):
     wandb_cfg = config.logging.wandb
     if not wandb_cfg.enabled:
@@ -68,7 +246,7 @@ def _setup_logger(config: DictConfig):
         group=wandb_cfg.get("group"),
         config=cfg_for_log,
         save_dir=os.getcwd(),
-        reinit='finish_previous',
+        reinit="finish_previous",
     )
 
 
@@ -96,13 +274,16 @@ def _setup_callbacks(config: DictConfig):
             verbose=True,
         ),
     ]
-    
-    # EMA Callback and Checkpoint (If enabled)
-    if hasattr(config.model, 'ema') and config.model.ema.enabled:
+
+    if hasattr(config.model, "ema") and config.model.ema.enabled:
         from utils.ema import EMACallback
-        warmup_steps = config.model.ema.get('warmup_steps', 0)
-        tau = config.model.ema.get('tau', 2000)
-        rank_zero_print(f"💡 EMA enabled: Adding EMACallback with decay={config.model.ema.decay}, tau={tau}, warmup_steps={warmup_steps}")
+
+        warmup_steps = config.model.ema.get("warmup_steps", 0)
+        tau = config.model.ema.get("tau", 2000)
+        rank_zero_print(
+            f"💡 EMA enabled: Adding EMACallback with decay={config.model.ema.decay}, "
+            f"tau={tau}, warmup_steps={warmup_steps}"
+        )
         callbacks.append(EMACallback(decay=config.model.ema.decay, tau=tau, warmup_steps=warmup_steps))
 
         ema_monitor = "val/map_ema"
@@ -119,7 +300,7 @@ def _setup_callbacks(config: DictConfig):
                 verbose=True,
             )
         )
-        
+
     if "backup_dir" in ckpt_cfg and ckpt_cfg.backup_dir:
         callbacks.append(BackupToNASCallback(backup_dir=to_absolute_path(ckpt_cfg.backup_dir)))
     return callbacks
@@ -139,56 +320,65 @@ def _resolve_run_name(config: DictConfig):
 
 @hydra.main(config_path="configs", config_name="config.yaml", version_base=None)
 def main(config: DictConfig):
+    test_only_checkpoint: Optional[Dict[str, Any]] = None
+    test_only_weight_source: Optional[Literal["ema", "regular"]] = None
+    early_ckpt_path: Optional[str] = None
+
     OmegaConf.set_struct(config, False)
     _resolve_run_name(config)
 
-    # --- Handle Hydra Sweep Logic ---
     hydra_cfg = HydraConfig.get()
 
-    # Convert overrides to WandB tags for easy identification
     job_overrides = hydra_cfg.overrides.task
     for override in job_overrides:
         if "=" in override:
             key, value = override.split("=", 1)
             short_key = key.split(".")[-1]
-            
-            # Skip adding load_from_checkpoint as a tag (it exceeds 64 char limit in wandb and is already logged in config)
             if short_key == "load_from_checkpoint":
                 continue
-                
             tag = f"{short_key}={value}"
             config.logging.wandb.tags.append(tag)
             rank_zero_print(f"   -> Added WandB tag: {tag}")
+
     if hydra_cfg.mode == RunMode.MULTIRUN:
         rank_zero_print(f"Detected Hydra Sweep (Job {hydra_cfg.job.num})")
-
-        # Append sweep job index to run_name for unique directories
         config.run_name = f"{config.run_name}_run{hydra_cfg.job.num}"
-
-        # Set WandB Group so all sweep runs are grouped together
         if not config.logging.wandb.get("group"):
             sweep_id = os.path.basename(os.path.normpath(hydra_cfg.sweep.dir))
             config.logging.wandb.group = f"sweep_{sweep_id}"
 
-        # # Convert overrides to WandB tags for easy identification
-        # job_overrides = hydra_cfg.overrides.task
-        # for override in job_overrides:
-        #     if "=" in override:
-        #         key, value = override.split("=", 1)
-        #         short_key = key.split(".")[-1]
-        #         tag = f"{short_key}={value}"
-        #         config.logging.wandb.tags.append(tag)
-        #         rank_zero_print(f"   -> Added WandB tag: {tag}")
-
-    # --- Debug Mode ---
     if config.debug:
         rank_zero_print(f"{'!'*80}\n[DEBUG] Running in DEBUG/OVERFIT mode\n{'!'*80}")
-        config.trainer.num_overfit_samples = 1 # Overfit on a single batch
-        config.data.eval_batch_size = config.data.batch_size # Sync batch sizes
+        config.trainer.num_overfit_samples = 1
+        config.data.eval_batch_size = config.data.batch_size
         config.run_name = f"DEBUG_{config.run_name}"
 
     base_save_dir = to_absolute_path(config.checkpointing.save_dir)
-    config.checkpointing.save_dir = os.path.join(base_save_dir, config.run_name)
+    run_save_dir = os.path.join(base_save_dir, config.run_name)
+    config.checkpointing.save_dir = run_save_dir
+
+    if config.test_only:
+        early_ckpt_path = _resolve_ckpt_path(config, run_save_dir=run_save_dir)
+        if not early_ckpt_path:
+            raise ValueError(
+                "test_only=true requires a valid checkpoint path. "
+                "Check for typos/trailing punctuation and pass "
+                "'initialization.load_from_checkpoint=/abs/path/model.ckpt'."
+            )
+
+        test_only_checkpoint = _load_ckpt(early_ckpt_path)
+        config = _merge_test_only_config_from_ckpt(config, test_only_checkpoint)
+        OmegaConf.set_struct(config, False)
+        config.initialization.load_from_checkpoint = early_ckpt_path
+        config.checkpointing.save_dir = run_save_dir
+
+        if hasattr(config, "model") and hasattr(config.model, "ema") and config.model.ema is not None:
+            config.model.ema.enabled = False
+            rank_zero_print("test_only: disabled EMA callback/branch for single selected-model evaluation.")
+
+        test_only_weight_source = _select_eval_weights_source(early_ckpt_path, test_only_checkpoint)
+        rank_zero_print(f"test_only: selected checkpoint weight source = {test_only_weight_source.upper()}")
+
     OmegaConf.set_struct(config, True)
 
     pl.seed_everything(config.seed, workers=True)
@@ -200,15 +390,21 @@ def main(config: DictConfig):
     class_names = [label_map[idx] for idx in sorted(label_map.keys())]
 
     rf_model_cls = _get_model_class(config.model.rfdetr.size)
-    rank_zero_print(f"[Startup] Building RF-DETR model ({config.model.rfdetr.size})...")
-    rf_wrapper = rf_model_cls(
-        pretrain_weights=config.model.rfdetr.pretrain_weights,
-        resolution=int(config.model.input_size),
+    model_kwargs = _build_rfdetr_model_kwargs(
+        config=config,
         num_classes=len(label_map),
-        class_names=class_names,
         device="cuda" if torch.cuda.is_available() else "cpu",
     )
-    # Ensure detection head is resized for custom classes.
+    _log_effective_model_config(config.model.rfdetr.size, model_kwargs)
+
+    rf_wrapper = rf_model_cls(**model_kwargs)
+
+    if hasattr(rf_wrapper, "model") and hasattr(rf_wrapper.model, "args"):
+        rf_wrapper.model.args.class_names = class_names
+        rf_wrapper.model.args.num_classes = len(label_map)
+    if hasattr(rf_wrapper.model, "class_names"):
+        rf_wrapper.model.class_names = class_names
+
     rf_wrapper.model.reinitialize_detection_head(len(label_map))
 
     base_args = rf_wrapper.model.args
@@ -216,20 +412,29 @@ def main(config: DictConfig):
     data_module.setup("fit")
     data_module.setup("test")
 
+    for coco_gt in [data_module.val_coco_gt, data_module.test_coco_gt]:
+        if coco_gt is not None and "info" not in coco_gt.dataset:
+            coco_gt.dataset["info"] = {}
+
+    model_to_coco = _build_model_to_coco_map(data_module.val_coco_gt, label_map)
+
     criterion, postprocess = build_criterion_and_postprocessors(data_module.args)
     lightning_model = RFDETRLightningModule(
         model=rf_wrapper.model.model,
         criterion=criterion,
         postprocess=postprocess,
         config=config,
+        model_to_coco=model_to_coco,
         val_coco_gt=data_module.val_coco_gt,
         test_coco_gt=data_module.val_coco_gt if config.debug else data_module.test_coco_gt,
+        val_image_root=data_module.val_image_root,
+        test_image_root=data_module.test_image_root,
     )
 
     logger = _setup_logger(config)
     if logger:
         logger.experiment.save("models/rf_detr_lightning_module.py")
-        logger.watch(lightning_model, log='gradients', log_freq=100)
+        logger.watch(lightning_model, log="gradients", log_freq=100)
         rank_zero_print("✓ WandB logger watching model for gradients")
 
     callbacks = _setup_callbacks(config)
@@ -249,6 +454,7 @@ def main(config: DictConfig):
         accumulate_grad_batches=config.trainer.accumulate_grad_batches,
         deterministic=config.trainer.deterministic,
         benchmark=config.trainer.benchmark,
+        enable_progress_bar=True,
         callbacks=callbacks,
         logger=logger,
         overfit_batches=config.trainer.num_overfit_samples if config.debug else 0,
@@ -259,39 +465,40 @@ def main(config: DictConfig):
         plugins=[SLURMEnvironment(auto_requeue=False)] if "SLURM_JOB_ID" in os.environ else None,
     )
 
-    ckpt_path = config.initialization.load_from_checkpoint
-    if ckpt_path:
-        ckpt_path = to_absolute_path(ckpt_path)
-        if not os.path.exists(ckpt_path):
-            rank_zero_print(f"Checkpoint not found: {ckpt_path}")
-            ckpt_path = None
-    elif config.initialization.auto_resume:
-        candidate = os.path.join(config.checkpointing.save_dir, "ckpts", "last.ckpt")
-        ckpt_path = candidate if os.path.exists(candidate) else None
-    else:
-        ckpt_path = None
+    ckpt_path = _resolve_ckpt_path(config, run_save_dir=config.checkpointing.save_dir)
 
     rank_zero_print(OmegaConf.to_yaml(config))
     if config.test_only:
         if not ckpt_path:
             raise ValueError("test_only=true requires initialization.load_from_checkpoint")
-        trainer.test(lightning_model, datamodule=data_module, ckpt_path=ckpt_path)
+        if test_only_checkpoint is None:
+            test_only_checkpoint = _load_ckpt(ckpt_path)
+        if test_only_weight_source is None:
+            test_only_weight_source = _select_eval_weights_source(ckpt_path, test_only_checkpoint)
+
+        rank_zero_print(f"Loading {test_only_weight_source.upper()} weights for test-only evaluation...")
+        missing_keys, unexpected_keys = _load_selected_weights(
+            lightning_model, test_only_checkpoint, test_only_weight_source
+        )
+        if missing_keys:
+            rank_zero_print(f"⚠️  Missing keys during test-only load: {missing_keys[:10]} ...")
+        if unexpected_keys:
+            rank_zero_print(f"⚠️  Unexpected keys during test-only load: {unexpected_keys[:10]} ...")
+
+        trainer.test(lightning_model, datamodule=data_module)
     else:
-        trainer.fit(lightning_model, datamodule=data_module, ckpt_path=ckpt_path)
-        
-        # Test the best model
+        trainer.fit(lightning_model, datamodule=data_module, ckpt_path=ckpt_path, weights_only=False)
+
         best_path = None
-        
-        # Priority 1: EMA checkpoint
-        if hasattr(config.model, 'ema') and config.model.ema.enabled:
+
+        if hasattr(config.model, "ema") and config.model.ema.enabled:
             for cb in trainer.callbacks:
                 if isinstance(cb, ModelCheckpoint) and cb.monitor == "val/map_ema":
                     if cb.best_model_path:
                         best_path = cb.best_model_path
                         rank_zero_print(f"🎯 Selected BEST EMA checkpoint (monitor: {cb.monitor}): {best_path}")
                     break
-        
-        # Priority 2: Regular checkpoint
+
         if not best_path:
             for cb in trainer.callbacks:
                 if isinstance(cb, ModelCheckpoint) and cb.monitor == config.checkpointing.monitor:
@@ -299,10 +506,16 @@ def main(config: DictConfig):
                         best_path = cb.best_model_path
                         rank_zero_print(f"🎯 Selected BEST REGULAR checkpoint (monitor: {cb.monitor}): {best_path}")
                     break
-                    
+
         eval_ckpt = best_path if best_path else "best"
-        trainer.test(lightning_model, datamodule=data_module, ckpt_path=eval_ckpt)
-    wandb.finish()
+        trainer.test(lightning_model, datamodule=data_module, ckpt_path=eval_ckpt, weights_only=False)
+
+    if dist.is_available() and dist.is_initialized():
+        dist.barrier()
+
+    if trainer.is_global_zero:
+        wandb.finish()
+
 
 if __name__ == "__main__":
     main()

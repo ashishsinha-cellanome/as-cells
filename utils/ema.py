@@ -191,4 +191,15 @@ class EMACallback(pl.Callback):
             if self.ema_model is None:
                 self.ema_model = ModelEma(pl_module.model, decay=self.decay, tau=self.tau)
             self.ema_model.module.load_state_dict(checkpoint['ema_state_dict'], strict=False)
+            self.ema_model.to(pl_module.device)
+
+            precision_mode = str(getattr(trainer, "precision", "")).lower()
+            target_dtype = None
+            if precision_mode in {"16-true", "16"}:
+                target_dtype = torch.float16
+            elif precision_mode in {"bf16-true", "bf16"}:
+                target_dtype = torch.bfloat16
+
+            if target_dtype is not None:
+                self.ema_model.module.to(dtype=target_dtype)
             pl_module.print("[EMA Callback] Restored EMA state from checkpoint.")

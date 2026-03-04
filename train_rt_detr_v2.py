@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+from __future__ import annotations
+
 """
 Training script for RT-DETR with DINOv2 backbone using PyTorch Lightning.
 Powered by Hydra for flexible configuration.
@@ -11,6 +13,7 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 import shutil
 import time
 import torch
+from typing import Any, Dict, Literal, Optional, Tuple
 
 from utils.distributed_utils import setup_cluster_env, rank_print
 
@@ -93,6 +96,173 @@ except (ImportError, AttributeError):
 
 setup_cluster_env()
 
+
+def _resolve_ckpt_path(config: DictConfig, run_save_dir: Optional[str] = None) -> Optional[str]:
+    """Resolve checkpoint path from manual override or auto-resume."""
+    ckpt_path = config.initialization.get("load_from_checkpoint")
+    if ckpt_path:
+        raw = str(ckpt_path).strip().strip('"').strip("'")
+        # Common copy/paste issue: trailing punctuation after .ckpt
+        raw = raw.rstrip(".,;:)]}>")
+
+        candidates = []
+        for candidate in [
+            raw,
+            os.path.expanduser(raw),
+            os.path.expandvars(raw),
+            hydra.utils.to_absolute_path(raw),
+        ]:
+            if candidate and candidate not in candidates:
+                candidates.append(candidate)
+
+        for candidate in candidates:
+            if os.path.exists(candidate):
+                rank_zero_print(f"🔄 Manual checkpoint path: {candidate}")
+                return candidate
+
+        rank_zero_print("WARNING: Provided checkpoint path was not found.")
+        rank_zero_print(f"  raw: {raw}")
+        for idx, candidate in enumerate(candidates):
+            rank_zero_print(f"  candidate[{idx}]: {candidate}")
+        return None
+
+    if run_save_dir and config.initialization.get("auto_resume", False):
+        last_ckpt = os.path.join(run_save_dir, "ckpts", "last.ckpt")
+        if os.path.exists(last_ckpt):
+            rank_zero_print(f"Auto-Resume: Found existing 'last.ckpt' at {last_ckpt}")
+            return last_ckpt
+        rank_zero_print(f"Auto-Resume: No 'last.ckpt' found in {last_ckpt}. Starting fresh.")
+
+    return None
+
+
+def _load_ckpt(ckpt_path: str) -> Dict[str, Any]:
+    """Load checkpoint on CPU with trusted full object unpickling."""
+    rank_zero_print(f"Loading checkpoint object from: {ckpt_path}")
+    checkpoint = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+    if not isinstance(checkpoint, dict):
+        raise TypeError(f"Expected checkpoint to be a dict, got {type(checkpoint)}")
+    return checkpoint
+
+
+def _set_nested_value(cfg: DictConfig, dotted_key: str, value: Any) -> None:
+    """Set nested DictConfig value, creating intermediate dicts as needed."""
+    if value is None:
+        return
+    node = cfg
+    parts = dotted_key.split(".")
+    for part in parts[:-1]:
+        if part not in node or node[part] is None:
+            node[part] = OmegaConf.create({})
+        node = node[part]
+    node[parts[-1]] = value
+
+
+def _merge_test_only_config_from_ckpt(current_cfg: DictConfig, ckpt: Dict[str, Any]) -> DictConfig:
+    """Use checkpoint config as base and re-apply runtime/test-only overrides."""
+    hp = ckpt.get("hyper_parameters", {})
+    ckpt_cfg_raw = hp.get("config") if isinstance(hp, dict) else None
+    if ckpt_cfg_raw is None:
+        rank_zero_print("WARNING: No 'hyper_parameters.config' found in checkpoint. Using current CLI config.")
+        return current_cfg
+
+    ckpt_cfg = OmegaConf.create(
+        OmegaConf.to_container(ckpt_cfg_raw, resolve=False) if OmegaConf.is_config(ckpt_cfg_raw) else ckpt_cfg_raw
+    )
+    merged_cfg = OmegaConf.create(OmegaConf.to_container(ckpt_cfg, resolve=False))
+    OmegaConf.set_struct(merged_cfg, False)
+
+    # Runtime/test-only override policy
+    merged_cfg.test_only = current_cfg.test_only
+    merged_cfg.debug = current_cfg.debug
+    merged_cfg.seed = current_cfg.seed
+    merged_cfg.run_name = current_cfg.run_name
+    merged_cfg.val_name = current_cfg.val_name
+    merged_cfg.test_name = current_cfg.test_name
+    merged_cfg.train_name = current_cfg.train_name
+
+    _set_nested_value(
+        merged_cfg,
+        "initialization.load_from_checkpoint",
+        current_cfg.initialization.get("load_from_checkpoint"),
+    )
+
+    if hasattr(current_cfg, "trainer") and current_cfg.trainer is not None:
+        merged_cfg.trainer = OmegaConf.create(OmegaConf.to_container(current_cfg.trainer, resolve=False))
+
+    if hasattr(current_cfg, "data") and current_cfg.data is not None:
+        _set_nested_value(merged_cfg, "data.path", current_cfg.data.get("path"))
+        _set_nested_value(merged_cfg, "data.limit_test_batches", current_cfg.data.get("limit_test_batches"))
+        _set_nested_value(merged_cfg, "data.num_workers", current_cfg.data.get("num_workers"))
+        _set_nested_value(merged_cfg, "data.batch_size", current_cfg.data.get("batch_size"))
+
+    if hasattr(current_cfg, "logging") and current_cfg.logging is not None:
+        merged_cfg.logging = OmegaConf.create(OmegaConf.to_container(current_cfg.logging, resolve=False))
+
+    if hasattr(current_cfg, "inference") and current_cfg.inference is not None:
+        merged_cfg.inference = OmegaConf.create(OmegaConf.to_container(current_cfg.inference, resolve=False))
+
+    rank_zero_print("Using checkpoint config as base for test_only; reapplied runtime/test CLI overrides.")
+    return merged_cfg
+
+
+def _extract_regular_state_dict(ckpt: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Get regular model state dict from Lightning checkpoint or raw state dict checkpoint."""
+    state_dict = ckpt.get("state_dict")
+    if isinstance(state_dict, dict):
+        return state_dict
+
+    # Fallback: checkpoint may itself be a state_dict-like mapping
+    tensor_items = [(k, v) for k, v in ckpt.items() if isinstance(k, str) and isinstance(v, torch.Tensor)]
+    if tensor_items and all("." in k for k, _ in tensor_items[: min(8, len(tensor_items))]):
+        return ckpt
+    return None
+
+
+def _select_eval_weights_source(ckpt_path: str, ckpt: Dict[str, Any]) -> Literal["ema", "regular"]:
+    """Choose EMA vs regular weights for evaluation using path hint + key availability."""
+    path_has_ema = "ema" in os.path.basename(ckpt_path).lower()
+    has_ema = isinstance(ckpt.get("ema_state_dict"), dict)
+    has_regular = _extract_regular_state_dict(ckpt) is not None
+
+    if path_has_ema and has_ema:
+        return "ema"
+    if path_has_ema and not has_ema and has_regular:
+        rank_zero_print("WARNING: Checkpoint path suggests EMA but 'ema_state_dict' missing. Falling back to regular weights.")
+        return "regular"
+    if (not path_has_ema) and has_regular:
+        return "regular"
+    if (not path_has_ema) and (not has_regular) and has_ema:
+        rank_zero_print("WARNING: Regular state_dict missing; using EMA weights.")
+        return "ema"
+
+    raise ValueError(
+        "Checkpoint does not contain usable weights. Expected one of: "
+        "'state_dict' (regular) or 'ema_state_dict' (EMA)."
+    )
+
+
+def _load_selected_weights(
+    lightning_module: RTDETRLightningModule,
+    ckpt: Dict[str, Any],
+    source: Literal["ema", "regular"],
+) -> Tuple[list, list]:
+    """Load selected evaluation weights and return missing/unexpected keys."""
+    if source == "ema":
+        ema_state = ckpt.get("ema_state_dict")
+        if not isinstance(ema_state, dict):
+            raise ValueError("Requested EMA weights but checkpoint has no valid 'ema_state_dict'.")
+        result = lightning_module.model.load_state_dict(ema_state, strict=False)
+    else:
+        regular_state = _extract_regular_state_dict(ckpt)
+        if regular_state is None:
+            raise ValueError("Requested regular weights but checkpoint has no valid 'state_dict'.")
+        result = lightning_module.load_state_dict(regular_state, strict=False)
+
+    missing = list(getattr(result, "missing_keys", []))
+    unexpected = list(getattr(result, "unexpected_keys", []))
+    return missing, unexpected
+
 import torch
 torch.set_float32_matmul_precision('medium')
 
@@ -145,6 +315,9 @@ def create_initial_checkpoint(config: DictConfig) -> str:
         full_suffix = f"{unique_suffix}" 
     else:
         full_suffix = f"{unique_suffix}_{model_config.rtdetr.model_name}"
+    # Include num_queries in the cache name so we don't accidentally load models with mismatched query sizes
+    if hasattr(model_config.rtdetr, 'num_queries'):
+        full_suffix += f"_q{model_config.rtdetr.num_queries}"
     base_rtdetr_path = hydra.utils.to_absolute_path(checkpoint_config.rtdetr_initial_checkpoint)
     local_path = f"{base_rtdetr_path}{full_suffix}"
 
@@ -540,6 +713,32 @@ def setup_logger(config: DictConfig):
 def main(config: DictConfig):
     # Unlock config to make changes
     OmegaConf.set_struct(config, False)
+    test_only_checkpoint: Optional[Dict[str, Any]] = None
+    test_only_weight_source: Optional[Literal["ema", "regular"]] = None
+    early_ckpt_path: Optional[str] = None
+
+    if config.test_only:
+        early_ckpt_path = _resolve_ckpt_path(config)
+        if not early_ckpt_path:
+            raise ValueError(
+                "test_only=true requires a valid checkpoint path. "
+                "Check for typos and trailing punctuation (e.g., '.ckpt.'), and pass "
+                "'initialization.load_from_checkpoint=/abs/path/model.ckpt'."
+            )
+
+        test_only_checkpoint = _load_ckpt(early_ckpt_path)
+        config = _merge_test_only_config_from_ckpt(config, test_only_checkpoint)
+        OmegaConf.set_struct(config, False)
+        config.initialization.load_from_checkpoint = early_ckpt_path
+
+        # Single selected-model evaluation in test_only mode (no EMA callback branch).
+        if hasattr(config, "model") and hasattr(config.model, "ema") and config.model.ema is not None:
+            config.model.ema.enabled = False
+            rank_zero_print("test_only: disabled EMA callback/branch for single selected-model evaluation.")
+
+        test_only_weight_source = _select_eval_weights_source(early_ckpt_path, test_only_checkpoint)
+        rank_zero_print(f"test_only: selected checkpoint weight source = {test_only_weight_source.upper()}")
+
     # breakpoint()
     # --- 1. Handle Run Naming (Cluster Agnostic) ---
     # Try to find a shared ID from common cluster/launcher environment variables
@@ -624,24 +823,8 @@ def main(config: DictConfig):
     run_save_dir = os.path.join(base_save_dir, config.run_name)
     config.checkpointing.save_dir = run_save_dir
     
-    # breakpoint()
-    ckpt_path = config.initialization.load_from_checkpoint
-    if ckpt_path:
-        rank_zero_print(f"🔄 Manual Resume: Loading specified checkpoint: {ckpt_path}")
-        ckpt_path = hydra.utils.to_absolute_path(ckpt_path)
-    
-    elif config.initialization.auto_resume:
-        # FIX: Look inside the 'ckpts' subdirectory
-        last_ckpt = os.path.join(run_save_dir, 'ckpts', "last.ckpt")
-        
-        if os.path.exists(last_ckpt):
-            rank_zero_print (f"Auto-Resume: Found existing 'last.ckpt' at {last_ckpt}")
-            ckpt_path = last_ckpt
-        else:
-            rank_zero_print (f"Auto-Resume: No 'last.ckpt' found in {last_ckpt}. Starting fresh.")
-            ckpt_path = None
-    else:
-        ckpt_path = None
+    # Resolve checkpoint path once (manual override or auto-resume).
+    ckpt_path = _resolve_ckpt_path(config, run_save_dir=run_save_dir)
 
     OmegaConf.set_struct(config, True) # Re-lock config
     # Set dynamic save_dir (relative to hydra's CWD)
@@ -718,21 +901,33 @@ def main(config: DictConfig):
         plugins=[SLURMEnvironment(auto_requeue=True)] if "SLURM_JOB_ID" in os.environ else None,
     )
     
-    # Handle checkpoint path (must be absolute)
-    ckpt_path = config.initialization.load_from_checkpoint
-    if ckpt_path:
-        ckpt_path = hydra.utils.to_absolute_path(ckpt_path)
-        if not os.path.exists(ckpt_path):
-            rank_zero_print(f"WARNING: Checkpoint path not found: {ckpt_path}")
-            ckpt_path = None
-    
     if config.test_only:
         rank_zero_print("\n" + "="*80)
         rank_zero_print("Running in TEST-ONLY mode")
         rank_zero_print("="*80 + "\n")
         if not ckpt_path:
             raise ValueError("Must provide a checkpoint path via 'initialization.load_from_checkpoint' for test-only mode.")
-        trainer.test(model, datamodule=data_module, ckpt_path=ckpt_path)
+
+        if test_only_checkpoint is None:
+            test_only_checkpoint = _load_ckpt(ckpt_path)
+        if test_only_weight_source is None:
+            test_only_weight_source = _select_eval_weights_source(ckpt_path, test_only_checkpoint)
+
+        rank_zero_print(f"Loading {test_only_weight_source.upper()} weights for test-only evaluation...")
+        missing_keys, unexpected_keys = _load_selected_weights(model, test_only_checkpoint, test_only_weight_source)
+        if missing_keys:
+            rank_zero_print(f"⚠️  Missing keys during test-only load: {missing_keys[:10]} ...")
+        if unexpected_keys:
+            rank_zero_print(f"⚠️  Unexpected keys during test-only load: {unexpected_keys[:10]} ...")
+
+        data_module.setup(stage="test")
+        if getattr(data_module, "test_dataset", None) is None:
+            raise RuntimeError("Test dataset was not initialized before test-only evaluation.")
+        rank_zero_print(f"Test set size: {len(data_module.test_dataset)}")
+        test_loader = data_module.test_dataloader()
+        rank_zero_print(f"Test dataloader batches: {len(test_loader)}")
+        # Manual weight loading above; do not ask Lightning to restore checkpoint again.
+        trainer.test(model, dataloaders=test_loader)
     else:
         rank_zero_print("\n" + "="*80)
         rank_zero_print("Starting Training")
@@ -761,7 +956,8 @@ def main(config: DictConfig):
             # Clear ckpt_path so trainer.fit doesn't try a full resume of optimizer/epoch
             ckpt_path = None
 
-        trainer.fit(model, datamodule=data_module, ckpt_path=ckpt_path)
+        # Keep full checkpoint restore compatible with torch>=2.6.
+        trainer.fit(model, datamodule=data_module, ckpt_path=ckpt_path, weights_only=False)
         
         rank_zero_print("waiting for syncing")
         #torch.cuda.synchronize()
@@ -804,7 +1000,7 @@ def main(config: DictConfig):
             
             # Actually, the safest way is to load state_dict into the CURRENT model structure
             try:
-                checkpoint = torch.load(best_path, map_location=model.device)
+                checkpoint = torch.load(best_path, map_location=model.device, weights_only=False)
                 # If checkpoint has 'state_dict' key (PL format), use it
                 state_dict = checkpoint['state_dict'] if 'state_dict' in checkpoint else checkpoint
                 
@@ -817,10 +1013,18 @@ def main(config: DictConfig):
                     rank_zero_print(f"⚠️  Unexpected keys during load: {unexpected_keys[:5]} ...")
                 
                 rank_zero_print("\nRunning test evaluation on BEST checkpoint...")
-                trainer.test(model, datamodule=data_module)
+                data_module.setup(stage="test")
+                if getattr(data_module, "test_dataset", None) is None:
+                    raise RuntimeError("Test dataset was not initialized before best-checkpoint evaluation.")
+                rank_zero_print(f"Test set size: {len(data_module.test_dataset)}")
+                test_loader = data_module.test_dataloader()
+                rank_zero_print(f"Test dataloader batches: {len(test_loader)}")
+                trainer.test(model, dataloaders=test_loader)
                 
             except Exception as e:
                 rank_zero_print(f"❌ Failed to load best checkpoint: {e}")
+                import traceback
+                rank_zero_print(traceback.format_exc())
         else:
             rank_zero_print("\nNo best model found. Testing disabled.")
     
