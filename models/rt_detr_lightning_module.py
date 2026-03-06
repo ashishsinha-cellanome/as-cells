@@ -10,6 +10,7 @@ from pycocotools.cocoeval import COCOeval
 from PIL import Image, ImageDraw, ImageFont
 from models.custom_rt_detr_with_dinov2_backbone import RTDetrV2ForObjectDetectionWithCustomBackbone
 from utils.distributed_utils import rank_print
+from utils.sahi_eval import run_sahi_sliced_eval
 
 def to_cpu_device(tensor):
     """Move a CUDA torch tensor to CPU memory."""
@@ -56,6 +57,8 @@ class RTDETRLightningModule(pl.LightningModule):
         val_coco_gt=None,
         test_coco_gt = None,
         train_coco_gt = None,
+        val_image_root = None,
+        test_image_root = None,
         config = None,
     ):
         super().__init__()
@@ -66,6 +69,8 @@ class RTDETRLightningModule(pl.LightningModule):
         self.val_coco_gt = val_coco_gt
         self.test_coco_gt = test_coco_gt
         self.train_coco_gt = train_coco_gt
+        self.val_image_root = val_image_root
+        self.test_image_root = test_image_root
         
         # Allow loading checkpoints with extra keys (e.g. unused denoising weights)
         self.strict_loading = False
@@ -103,8 +108,13 @@ class RTDETRLightningModule(pl.LightningModule):
         if hasattr(self.config.model, 'ema') and self.config.model.ema.enabled:
             self.validation_step_outputs_ema = []
             self.test_step_outputs_ema = []
+            
+        self.validation_step_outputs_sliced = []
+        self.test_step_outputs_sliced = []
+        self.validation_step_outputs_sliced_ema = []
+        self.test_step_outputs_sliced_ema = []
 
-        self.save_hyperparameters(ignore=['model', 'image_processor', 'val_coco_gt', 'test_coco_gt', 'train_coco_gt'])
+        self.save_hyperparameters(ignore=['model', 'image_processor', 'val_coco_gt', 'test_coco_gt', 'train_coco_gt', 'val_image_root', 'test_image_root'])
 
 
     def forward(self, pixel_values, labels=None):
@@ -170,6 +180,21 @@ class RTDETRLightningModule(pl.LightningModule):
         
         return loss
     
+    def _get_image_path(self, image_id: int, split: str) -> str | None:
+        """Resolve full image path using COCO annotations and configured roots."""
+        coco_gt = self.val_coco_gt if split == "val" else self.test_coco_gt
+        root = self.val_image_root if split == "val" else self.test_image_root
+        
+        if not coco_gt or not root:
+            return None
+            
+        try:
+            img_info = coco_gt.loadImgs(image_id)[0]
+            file_name = img_info['file_name']
+            return os.path.join(root, file_name)
+        except (IndexError, AttributeError, KeyError):
+            return None
+
     def on_validation_epoch_start(self):
         """Reset validation visualization counter."""
         self.val_viz_counter = 0
@@ -178,9 +203,6 @@ class RTDETRLightningModule(pl.LightningModule):
         """Validation step."""
         pixel_values = batch["pixel_values"]
         labels = batch["labels"]
-        
-        # Forward pass
-        outputs = self.model(pixel_values=pixel_values, labels=None)
         
         # Collect true original image sizes from COCO metadata for accurate scaling
         batch_image_sizes = []
@@ -192,54 +214,85 @@ class RTDETRLightningModule(pl.LightningModule):
             else:
                 batch_image_sizes.append(to_cpu_device(x["orig_size"]).numpy().tolist())
 
-        # Post-process predictions
-        post_processed_outputs = self.image_processor.post_process_object_detection(
-            outputs,
-            # threshold=self.detection_threshold,
-            threshold = self.config.model.detection_threshold,
-            target_sizes=batch_image_sizes
-        )
+        eval_mode = self.config.get("eval_inference", {}).get("mode", "whole")
         
-        # Move predictions to CPU
-        post_processed_outputs = [
-            {k: to_cpu_device(v) for k, v in outputs.items()}
-            for outputs in post_processed_outputs
-        ]
-        
-        if (self.current_epoch) % self.config.checkpointing.visualize_every_n_epochs == 0 and \
-           (self.val_viz_counter < self.config.checkpointing.visualize_samples or self.config.checkpointing.visualize_samples == -1):
+        # Whole Image Baseline Process (For Loss + Fallback)
+        post_processed_outputs = []
+        if eval_mode in ["whole", "both"]:
+            outputs = self.model(pixel_values=pixel_values, labels=None)
+            post_processed_outputs = self.image_processor.post_process_object_detection(
+                outputs, threshold=self.config.model.detection_threshold, target_sizes=batch_image_sizes
+            )
+            post_processed_outputs = [{k: to_cpu_device(v) for k, v in p.items()} for p in post_processed_outputs]
             
-            save_dir = os.path.join(
-                self.config.checkpointing.save_dir,
-                # self.config.run_name, 
-                self.config.checkpointing.visualization_dir, 
-                f"epoch_{(self.current_epoch+1):03d}", 
-                "val"
-            )
-            self.val_viz_counter = self._visualize_batch(
-                save_dir, 
-                post_processed_outputs, 
-                pixel_values,
-                labels, 
-                batch_image_sizes,
-                self.val_viz_counter
-            )
+            results = {int(t["image_id"].item()): out for t, out in zip(labels, post_processed_outputs)}
+            image_ids = [int(t["image_id"].item()) for t in labels]
+            self.validation_step_outputs.append({"predictions": results, "image_ids": image_ids})
 
-        # Convert to COCO format and store
-        results = {
-            int(target["image_id"].item()): output
-            for target, output in zip(labels, post_processed_outputs)
-        }
-        # this fixes the slow state management during ddp
-        image_ids = [int(target["image_id"].item()) for target in labels]
-        # results = convert_preds_to_coco(results)
-        
-        # self.validation_predictions.extend(results)
-        # self.validation_image_ids.extend([int(target["image_id"].item()) for target in labels])
-        
-        # return {"predictions": results}
-        self.validation_step_outputs.append({"predictions": results, "image_ids": image_ids})
-        
+            if (self.current_epoch) % max(1, self.config.checkpointing.visualize_every_n_epochs) == 0 and \
+               (self.val_viz_counter < self.config.checkpointing.visualize_samples or self.config.checkpointing.visualize_samples == -1):
+                save_dir = os.path.join(self.config.checkpointing.save_dir, self.config.checkpointing.visualization_dir, f"epoch_{(self.current_epoch+1):03d}", "val_whole")
+                self.val_viz_counter = self._visualize_batch(save_dir, post_processed_outputs, pixel_values, labels, batch_image_sizes, self.val_viz_counter)
+
+        if eval_mode in ["sliced", "both"]:
+            post_processed_outputs_sliced = []
+            for i, target in enumerate(labels):
+                image_id = int(target["image_id"].item())
+                img_path = self._get_image_path(image_id, "val")
+                
+                if not img_path or not os.path.exists(img_path):
+                    self.print(f"[Val] WARNING: Cannot find image {img_path} for SAHI. Falling back to whole image.")
+                    # Fallback to whole image processing for this single image
+                    single_pixel_values = pixel_values[i:i+1]
+                    single_output = self.model(pixel_values=single_pixel_values, labels=None)
+                    single_post = self.image_processor.post_process_object_detection(
+                        single_output, threshold=self.config.model.detection_threshold, target_sizes=[batch_image_sizes[i]]
+                    )
+                    post_processed_outputs.append({k: to_cpu_device(v) for k, v in single_post[0].items()})
+                    continue
+                
+                # Define model-specific predict_fn
+                def predict_fn(image_np):
+                    # SAHI passes (H, W, 3) numpy array in RGB
+                    pil_img = Image.fromarray(image_np)
+                    # Processor expects PIL Image or list of PIL Images
+                    inputs = self.image_processor(images=pil_img, return_tensors="pt")
+                    pixel_val = inputs["pixel_values"].to(self.device)
+                    # For half precision support if enabled
+                    if next(self.model.parameters()).dtype == torch.float16:
+                        pixel_val = pixel_val.half()
+                    elif next(self.model.parameters()).dtype == torch.bfloat16:
+                        pixel_val = pixel_val.bfloat16()
+                        
+                    with torch.no_grad():
+                        out = self.model(pixel_values=pixel_val, labels=None)
+                        
+                    # Target size is the patch size, not the full image size
+                    patch_size = [[image_np.shape[0], image_np.shape[1]]]
+                    post_out = self.image_processor.post_process_object_detection(
+                        out, threshold=self.config.model.detection_threshold, target_sizes=patch_size
+                    )[0]
+                    return {k: to_cpu_device(v) for k, v in post_out.items()}
+                
+                # Run SAHI
+                img_pil = Image.open(img_path).convert("RGB")
+                sahi_cfg = self.config.get("eval_inference", {}).get("sahi", {})
+                
+                # Determine fallback slice size from model input
+                input_size = self.config.data.model_input_size if hasattr(self.config.data, 'model_input_size') else 640
+                
+                preds = run_sahi_sliced_eval(
+                    image=img_pil,
+                    predict_fn=predict_fn,
+                    sahi_config=sahi_cfg,
+                    input_size=input_size
+                )
+                post_processed_outputs_sliced.append(preds)
+            
+            results_sliced = {int(t["image_id"].item()): out for t, out in zip(labels, post_processed_outputs_sliced)}
+            image_ids = [int(t["image_id"].item()) for t in labels]
+            self.validation_step_outputs_sliced.append({"predictions": results_sliced, "image_ids": image_ids})
+
         # EMA validation
         from utils.ema import EMACallback
         ema_callback = next((cb for cb in self.trainer.callbacks if isinstance(cb, EMACallback)), None)
@@ -261,30 +314,59 @@ class RTDETRLightningModule(pl.LightningModule):
                         num_diff = sum(1 for eq in params_equal if not eq)
                         self.print(f"✓ [Val] EMA weights differ from model ({num_diff}/5 params checked). EMA is working!")
 
-            # EMA model forward pass
-            ema_outputs = ema_callback.ema_model.module(pixel_values=pixel_values, labels=None)
+            if eval_mode in ["whole", "both"]:
+                ema_outputs = ema_callback.ema_model.module(pixel_values=pixel_values, labels=None)
+                post_processed_ema_outputs = self.image_processor.post_process_object_detection(
+                    ema_outputs, threshold=self.config.model.detection_threshold, target_sizes=batch_image_sizes
+                )
+                post_processed_ema_outputs = [{k: to_cpu_device(v) for k, v in p.items()} for p in post_processed_ema_outputs]
+                ema_results = {int(t["image_id"].item()): out for t, out in zip(labels, post_processed_ema_outputs)}
+                self.validation_step_outputs_ema.append({"predictions": ema_results, "image_ids": image_ids})
 
-            # Post-process EMA predictions
-            post_processed_ema_outputs = self.image_processor.post_process_object_detection(
-                ema_outputs,
-                threshold=self.config.model.detection_threshold,
-                target_sizes=batch_image_sizes
-            )
+            if eval_mode in ["sliced", "both"]:
+                post_processed_ema_outputs_sliced = []
+                for i, target in enumerate(labels):
+                    image_id = int(target["image_id"].item())
+                    img_path = self._get_image_path(image_id, "val")
+                    
+                    if not img_path or not os.path.exists(img_path):
+                        single_pixel_values = pixel_values[i:i+1]
+                        single_output = ema_callback.ema_model.module(pixel_values=single_pixel_values, labels=None)
+                        single_post = self.image_processor.post_process_object_detection(
+                            single_output, threshold=self.config.model.detection_threshold, target_sizes=[batch_image_sizes[i]]
+                        )
+                        post_processed_ema_outputs.append({k: to_cpu_device(v) for k, v in single_post[0].items()})
+                        continue
+                    
+                    def predict_fn_ema(image_np):
+                        pil_img = Image.fromarray(image_np)
+                        inputs = self.image_processor(images=pil_img, return_tensors="pt")
+                        pixel_val = inputs["pixel_values"].to(self.device)
+                        if next(ema_callback.ema_model.module.parameters()).dtype == torch.float16:
+                            pixel_val = pixel_val.half()
+                        elif next(ema_callback.ema_model.module.parameters()).dtype == torch.bfloat16:
+                            pixel_val = pixel_val.bfloat16()
+                            
+                        with torch.no_grad():
+                            out = ema_callback.ema_model.module(pixel_values=pixel_val, labels=None)
+                            
+                        patch_size = [[image_np.shape[0], image_np.shape[1]]]
+                        post_out = self.image_processor.post_process_object_detection(
+                            out, threshold=self.config.model.detection_threshold, target_sizes=patch_size
+                        )[0]
+                        return {k: to_cpu_device(v) for k, v in post_out.items()}
+                    
+                    img_pil = Image.open(img_path).convert("RGB")
+                    sahi_cfg = self.config.get("eval_inference", {}).get("sahi", {})
+                    input_size = self.config.data.model_input_size if hasattr(self.config.data, 'model_input_size') else 640
+                    
+                    preds = run_sahi_sliced_eval(img_pil, predict_fn_ema, sahi_cfg, input_size)
+                    post_processed_ema_outputs_sliced.append(preds)
+                
+                ema_results_sliced = {int(t["image_id"].item()): out for t, out in zip(labels, post_processed_ema_outputs_sliced)}
+                self.validation_step_outputs_sliced_ema.append({"predictions": ema_results_sliced, "image_ids": image_ids})
 
-            # Move EMA predictions to CPU
-            post_processed_ema_outputs = [
-                {k: to_cpu_device(v) for k, v in outputs.items()}
-                for outputs in post_processed_ema_outputs
-            ]
-
-            # Convert to COCO format and store for EMA
-            ema_results = {
-                int(target["image_id"].item()): output
-                for target, output in zip(labels, post_processed_ema_outputs)
-            }
-            self.validation_step_outputs_ema.append({"predictions": ema_results, "image_ids": image_ids})
-
-        return {"predictions": results, "image_ids": image_ids}
+        return {"predictions": {}, "image_ids": image_ids} # Real return not heavily used
     
     def _gather_all_outputs(self, local_outputs):
         """Gather outputs from all devices in a distributed setting."""
@@ -304,92 +386,63 @@ class RTDETRLightningModule(pl.LightningModule):
 
     def on_validation_epoch_end(self):
         """Compute validation metrics at epoch end."""
-        
-        # 1. Gather Standard Model Predictions from all ranks
-        all_outputs = self._gather_all_outputs(self.validation_step_outputs)
-        
-        metrics = {}
-        # Only compute metrics on Rank 0
-        if self.trainer.is_global_zero:
-            validation_predictions = []
-            validation_image_ids = []
-            for output_batch in all_outputs:
-                validation_predictions.extend(convert_preds_to_coco(output_batch["predictions"]))
-                validation_image_ids.extend(output_batch["image_ids"])
-            
-            if len(validation_predictions) > 0:
-                if self.config.debug:
-                    self.print ("\n--- DEBUGGING IDS (Global) ---")
-                    self.print (f"VAL IDs seen this epoch:   {len(set(validation_image_ids))}")
-                    self.print ("---------------------\n")
-                
-                # Compute COCO metrics
-                if self.val_coco_gt is not None:
-                    self.print (f"[Val] Computing COCO metrics on {len(validation_predictions)} predictions across {len(set(validation_image_ids))} images...")
-                    metrics = self._compute_coco_metrics(
-                        predictions=validation_predictions,
-                        image_ids=list(set(validation_image_ids)),
-                        coco_gt=self.val_coco_gt
-                    )
-            else:
-                self.print(f"[Val] WARNING: No predictions made! Logging 0.0 metrics.")
-                metrics = {'map': 0.0, 'map_50': 0.0, 'map_75': 0.0}
-
-        # Broadcast metrics from Rank 0 to all other ranks
-        if dist.is_available() and dist.is_initialized():
-            object_list = [metrics]
-            dist.broadcast_object_list(object_list, src=0)
-            metrics = object_list[0]
-
-        # Log metrics on ALL ranks
-        for key, value in metrics.items():
-            self.log(f"val/{key}", value, prog_bar=True, sync_dist=True)
-            if key == 'map':
-                self.log(f"val_{key}", value, prog_bar=False, sync_dist=True)
-
-        # 2. Gather EMA Model Predictions from all ranks
-        # We call this on all ranks to avoid hangs, even if local list is empty
-        all_ema_outputs = self._gather_all_outputs(getattr(self, 'validation_step_outputs_ema', []))
-        
-        if hasattr(self, 'validation_step_outputs_ema'):
-            ema_metrics = {}
+        def _compute_and_log(outputs_list, prefix_name, log_prefix):
+            all_outputs = self._gather_all_outputs(outputs_list)
+            metrics = {}
             if self.trainer.is_global_zero:
-                ema_predictions = []
-                ema_image_ids = []
-                for output_batch in all_ema_outputs:
-                    ema_predictions.extend(convert_preds_to_coco(output_batch["predictions"]))
-                    ema_image_ids.extend(output_batch["image_ids"])
-
-                if len(ema_predictions) > 0:
-                    self.print(f"[Val] EMA validation ran: {len(ema_predictions)} predictions on {len(set(ema_image_ids))} images")
-                    self.print (f"[Val] Computing EMA COCO metrics...")
-                    ema_metrics = self._compute_coco_metrics(
-                        predictions=ema_predictions,
-                        image_ids=list(set(ema_image_ids)),
-                        coco_gt=self.val_coco_gt
-                    )
+                predictions = []
+                image_ids = []
+                for output_batch in all_outputs:
+                    predictions.extend(convert_preds_to_coco(output_batch["predictions"]))
+                    image_ids.extend(output_batch["image_ids"])
+                
+                if len(predictions) > 0:
+                    if self.config.debug:
+                        self.print(f"--- DEBUGGING IDS ({prefix_name}) ---")
+                    
+                    if self.val_coco_gt is not None:
+                        self.print(f"[{prefix_name}] Computing COCO metrics on {len(predictions)} predictions across {len(set(image_ids))} images...")
+                        metrics = self._compute_coco_metrics(
+                            predictions=predictions,
+                            image_ids=list(set(image_ids)),
+                            coco_gt=self.val_coco_gt,
+                            prefix=f"{prefix_name} performance"
+                        )
                 else:
-                    self.print(f"[Val] EMA validation FAILED: No predictions collected!")
-                    ema_metrics = {'map': 0.0, 'map_50': 0.0, 'map_75': 0.0}
-            
-            # Broadcast EMA metrics to all ranks
+                    self.print(f"[{prefix_name}] WARNING: No predictions made! Logging 0.0 metrics.")
+                    metrics = {'map': 0.0, 'map_50': 0.0, 'map_75': 0.0}
+
             if dist.is_available() and dist.is_initialized():
-                object_list = [ema_metrics]
+                object_list = [metrics]
                 dist.broadcast_object_list(object_list, src=0)
-                ema_metrics = object_list[0]
+                metrics = object_list[0]
 
-            # Log EMA metrics on ALL ranks
-            for key, value in ema_metrics.items():
-                self.log(f"val/{key}_ema", value, prog_bar=True, sync_dist=True)
+            for key, value in metrics.items():
+                self.log(f"{log_prefix}/{key}", value, prog_bar=True, sync_dist=True)
                 if key == 'map':
-                     self.log(f"val_{key}_ema", value, prog_bar=False, sync_dist=True)
+                    self.log(f"{log_prefix}_{key}", value, prog_bar=False, sync_dist=True)
 
-            self.validation_step_outputs_ema.clear()
+            outputs_list.clear()
 
-        # Clear accumulated predictions
+        # 1. Standard Whole
+        if self.validation_step_outputs:
+            _compute_and_log(self.validation_step_outputs, "Val", "val")
+            
+        # 2. Standard Sliced
+        if self.validation_step_outputs_sliced:
+            _compute_and_log(self.validation_step_outputs_sliced, "Val Sliced", "val_sliced")
+
+        # 3. EMA Whole
+        if hasattr(self, 'validation_step_outputs_ema') and self.validation_step_outputs_ema:
+            _compute_and_log(self.validation_step_outputs_ema, "Val EMA", "val_ema")
+            
+        # 4. EMA Sliced
+        if hasattr(self, 'validation_step_outputs_sliced_ema') and self.validation_step_outputs_sliced_ema:
+            _compute_and_log(self.validation_step_outputs_sliced_ema, "Val Sliced EMA", "val_sliced_ema")
+
         self.debug_train_image_ids.clear() 
-        self.validation_step_outputs.clear()
 
+    def on_test_epoch_start(self):
     def on_test_epoch_start(self):
         """Reset test visualization counter."""
         self.test_viz_counter = 0
@@ -398,9 +451,6 @@ class RTDETRLightningModule(pl.LightningModule):
         """Test step (same as validation)."""
         pixel_values = batch["pixel_values"]
         labels = batch["labels"]
-        
-        # Forward pass
-        outputs = self.model(pixel_values=pixel_values, labels=None)
         
         # Collect true original image sizes from COCO metadata
         batch_image_sizes = []
@@ -412,153 +462,169 @@ class RTDETRLightningModule(pl.LightningModule):
             else:
                 batch_image_sizes.append(to_cpu_device(x["orig_size"]).numpy().tolist())
         
-        # Post-process predictions
-        post_processed_outputs = self.image_processor.post_process_object_detection(
-            outputs,
-            threshold=self.config.model.detection_threshold,
-            target_sizes=batch_image_sizes
-        )
+        eval_mode = self.config.get("eval_inference", {}).get("mode", "whole")
         
-        # Move predictions to CPU
-        post_processed_outputs = [
-            {k: to_cpu_device(v) for k, v in outputs.items()}
-            for outputs in post_processed_outputs
-        ]
-        if self.config.checkpointing.visualize_samples ==-1:
-            self.config.checkpointing.visualize_samples = float('inf')
-        if (self.test_viz_counter < self.config.checkpointing.visualize_samples): # or self.config.checkpointing.visualize_samples ==-1):
-            save_dir = os.path.join(
-                self.config.checkpointing.save_dir,
-                # self.config.run_name, 
-                self.config.checkpointing.visualization_dir, 
-                "test"
+        post_processed_outputs = []
+        if eval_mode in ["whole", "both"]:
+            outputs = self.model(pixel_values=pixel_values, labels=None)
+            post_processed_outputs = self.image_processor.post_process_object_detection(
+                outputs, threshold=self.config.model.detection_threshold, target_sizes=batch_image_sizes
             )
-            self.test_viz_counter = self._visualize_batch(
-                save_dir, 
-                post_processed_outputs, 
-                pixel_values,
-                labels, 
-                batch_image_sizes,
-                self.test_viz_counter
-            )
+            post_processed_outputs = [{k: to_cpu_device(v) for k, v in p.items()} for p in post_processed_outputs]
+            
+            results = {int(t["image_id"].item()): out for t, out in zip(labels, post_processed_outputs)}
+            image_ids = [int(t["image_id"].item()) for t in labels]
+            self.test_step_outputs.append({"predictions": results, "image_ids": image_ids})
 
-        # Convert to COCO format and store
-        results = {
-            int(target["image_id"].item()): output
-            for target, output in zip(labels, post_processed_outputs)
-        }
-        image_ids = [int(target["image_id"].item()) for target in labels]
-        # results = convert_preds_to_coco(results)
-        
-        # self.test_predictions.extend(results)
-        # self.test_image_ids.extend([int(target["image_id"].item()) for target in labels])
-        self.test_step_outputs.append({"predictions": results, "image_ids": image_ids})
+        if eval_mode in ["sliced", "both"]:
+            post_processed_outputs_sliced = []
+            for i, target in enumerate(labels):
+                image_id = int(target["image_id"].item())
+                img_path = self._get_image_path(image_id, "test")
+                
+                if not img_path or not os.path.exists(img_path):
+                    self.print(f"[Test] WARNING: Cannot find image {img_path} for SAHI. Falling back to whole image.")
+                    single_pixel_values = pixel_values[i:i+1]
+                    single_output = self.model(pixel_values=single_pixel_values, labels=None)
+                    single_post = self.image_processor.post_process_object_detection(
+                        single_output, threshold=self.config.model.detection_threshold, target_sizes=[batch_image_sizes[i]]
+                    )
+                    post_processed_outputs.append({k: to_cpu_device(v) for k, v in single_post[0].items()})
+                    continue
+                
+                def predict_fn(image_np):
+                    pil_img = Image.fromarray(image_np)
+                    inputs = self.image_processor(images=pil_img, return_tensors="pt")
+                    pixel_val = inputs["pixel_values"].to(self.device)
+                    if next(self.model.parameters()).dtype == torch.float16:
+                        pixel_val = pixel_val.half()
+                    elif next(self.model.parameters()).dtype == torch.bfloat16:
+                        pixel_val = pixel_val.bfloat16()
+                        
+                    with torch.no_grad():
+                        out = self.model(pixel_values=pixel_val, labels=None)
+                        
+                    patch_size = [[image_np.shape[0], image_np.shape[1]]]
+                    post_out = self.image_processor.post_process_object_detection(
+                        out, threshold=self.config.model.detection_threshold, target_sizes=patch_size
+                    )[0]
+                    return {k: to_cpu_device(v) for k, v in post_out.items()}
+                
+                img_pil = Image.open(img_path).convert("RGB")
+                sahi_cfg = self.config.get("eval_inference", {}).get("sahi", {})
+                input_size = self.config.data.model_input_size if hasattr(self.config.data, 'model_input_size') else 640
+                
+                preds = run_sahi_sliced_eval(img_pil, predict_fn, sahi_cfg, input_size)
+                post_processed_outputs_sliced.append(preds)
+            
+            results_sliced = {int(t["image_id"].item()): out for t, out in zip(labels, post_processed_outputs_sliced)}
+            image_ids = [int(t["image_id"].item()) for t in labels]
+            self.test_step_outputs_sliced.append({"predictions": results_sliced, "image_ids": image_ids})
 
         # EMA validation during test
         from utils.ema import EMACallback
         ema_callback = next((cb for cb in self.trainer.callbacks if isinstance(cb, EMACallback)), None)
         if ema_callback and ema_callback.ema_model:
-            # EMA model forward pass
-            ema_outputs = ema_callback.ema_model.module(pixel_values=pixel_values, labels=None)
+            if eval_mode in ["whole", "both"]:
+                ema_outputs = ema_callback.ema_model.module(pixel_values=pixel_values, labels=None)
+                post_processed_ema_outputs = self.image_processor.post_process_object_detection(
+                    ema_outputs, threshold=self.config.model.detection_threshold, target_sizes=batch_image_sizes
+                )
+                post_processed_ema_outputs = [{k: to_cpu_device(v) for k, v in p.items()} for p in post_processed_ema_outputs]
+                ema_results = {int(t["image_id"].item()): out for t, out in zip(labels, post_processed_ema_outputs)}
+                self.test_step_outputs_ema.append({"predictions": ema_results, "image_ids": image_ids})
 
-            # Post-process EMA predictions
-            post_processed_ema_outputs = self.image_processor.post_process_object_detection(
-                ema_outputs,
-                threshold=self.config.model.detection_threshold,
-                target_sizes=batch_image_sizes
-            )
+            if eval_mode in ["sliced", "both"]:
+                post_processed_ema_outputs_sliced = []
+                for i, target in enumerate(labels):
+                    image_id = int(target["image_id"].item())
+                    img_path = self._get_image_path(image_id, "test")
+                    
+                    if not img_path or not os.path.exists(img_path):
+                        single_pixel_values = pixel_values[i:i+1]
+                        single_output = ema_callback.ema_model.module(pixel_values=single_pixel_values, labels=None)
+                        single_post = self.image_processor.post_process_object_detection(
+                            single_output, threshold=self.config.model.detection_threshold, target_sizes=[batch_image_sizes[i]]
+                        )
+                        post_processed_ema_outputs.append({k: to_cpu_device(v) for k, v in single_post[0].items()})
+                        continue
+                    
+                    def predict_fn_ema(image_np):
+                        pil_img = Image.fromarray(image_np)
+                        inputs = self.image_processor(images=pil_img, return_tensors="pt")
+                        pixel_val = inputs["pixel_values"].to(self.device)
+                        if next(ema_callback.ema_model.module.parameters()).dtype == torch.float16:
+                            pixel_val = pixel_val.half()
+                        elif next(ema_callback.ema_model.module.parameters()).dtype == torch.bfloat16:
+                            pixel_val = pixel_val.bfloat16()
+                            
+                        with torch.no_grad():
+                            out = ema_callback.ema_model.module(pixel_values=pixel_val, labels=None)
+                            
+                        patch_size = [[image_np.shape[0], image_np.shape[1]]]
+                        post_out = self.image_processor.post_process_object_detection(
+                            out, threshold=self.config.model.detection_threshold, target_sizes=patch_size
+                        )[0]
+                        return {k: to_cpu_device(v) for k, v in post_out.items()}
+                    
+                    img_pil = Image.open(img_path).convert("RGB")
+                    sahi_cfg = self.config.get("eval_inference", {}).get("sahi", {})
+                    input_size = self.config.data.model_input_size if hasattr(self.config.data, 'model_input_size') else 640
+                    
+                    preds = run_sahi_sliced_eval(img_pil, predict_fn_ema, sahi_cfg, input_size)
+                    post_processed_ema_outputs_sliced.append(preds)
+                
+                ema_results_sliced = {int(t["image_id"].item()): out for t, out in zip(labels, post_processed_ema_outputs_sliced)}
+                self.test_step_outputs_sliced_ema.append({"predictions": ema_results_sliced, "image_ids": image_ids})
 
-            # Move EMA predictions to CPU
-            post_processed_ema_outputs = [
-                {k: to_cpu_device(v) for k, v in outputs.items()}
-                for outputs in post_processed_ema_outputs
-            ]
-
-            # Convert to COCO format and store for EMA
-            ema_results = {
-                int(target["image_id"].item()): output
-                for target, output in zip(labels, post_processed_ema_outputs)
-            }
-            self.test_step_outputs_ema.append({"predictions": ema_results, "image_ids": image_ids})
-
-        return {"predictions": results, "image_ids": image_ids}
+        return {"predictions": {}, "image_ids": image_ids}
     
     def on_test_epoch_end(self):
         """Compute test metrics at epoch end."""
-        
-        # 1. Gather Standard Model Predictions from all ranks
-        all_outputs = self._gather_all_outputs(self.test_step_outputs)
-        
-        metrics = {}
-        # Only compute metrics on Rank 0
-        if self.trainer.is_global_zero:
-            test_predictions = []
-            test_image_ids = []
-            for output_batch in all_outputs:
-                test_predictions.extend(convert_preds_to_coco(output_batch["predictions"]))
-                test_image_ids.extend(output_batch["image_ids"])
-            
-            if len(test_predictions) > 0:
-                # Compute COCO metrics
-                if self.test_coco_gt is not None:
-                    self.print(f"[Test] Computing COCO metrics on {len(test_predictions)} predictions across {len(set(test_image_ids))} images...")
-                    metrics = self._compute_coco_metrics(
-                        predictions=test_predictions,
-                        image_ids=list(set(test_image_ids)),
-                        coco_gt=self.test_coco_gt
-                    )
-            else:
-                self.print(f"[Test] WARNING: No predictions made! Logging 0.0 metrics.")
-                metrics = {'map': 0.0, 'map_50': 0.0, 'map_75': 0.0}
-
-        # Broadcast metrics from Rank 0 to all other ranks
-        if dist.is_available() and dist.is_initialized():
-            object_list = [metrics]
-            dist.broadcast_object_list(object_list, src=0)
-            metrics = object_list[0]
-
-        # Log metrics on ALL ranks
-        for key, value in metrics.items():
-            self.log(f"test/{key}", value, prog_bar=True, sync_dist=True)
-
-        # 2. Gather EMA Model Predictions from all ranks
-        all_ema_outputs = self._gather_all_outputs(getattr(self, 'test_step_outputs_ema', []))
-        
-        if hasattr(self, 'test_step_outputs_ema') and self.test_step_outputs_ema:
-            ema_metrics = {}
+        def _compute_and_log(outputs_list, prefix_name, log_prefix):
+            all_outputs = self._gather_all_outputs(outputs_list)
+            metrics = {}
             if self.trainer.is_global_zero:
-                ema_predictions = []
-                ema_image_ids = []
-                for output_batch in all_ema_outputs:
-                    ema_predictions.extend(convert_preds_to_coco(output_batch["predictions"]))
-                    ema_image_ids.extend(output_batch["image_ids"])
-
-                if len(ema_predictions) > 0:
-                    self.print(f"[Test] EMA validation ran: {len(ema_predictions)} predictions on {len(set(ema_image_ids))} images")
-                    self.print (f"[Test] Computing EMA COCO metrics...")
-                    ema_metrics = self._compute_coco_metrics(
-                        predictions=ema_predictions,
-                        image_ids=list(set(ema_image_ids)),
-                        coco_gt=self.test_coco_gt
-                    )
+                predictions = []
+                image_ids = []
+                for output_batch in all_outputs:
+                    predictions.extend(convert_preds_to_coco(output_batch["predictions"]))
+                    image_ids.extend(output_batch["image_ids"])
+                
+                if len(predictions) > 0:
+                    if self.test_coco_gt is not None:
+                        self.print(f"[{prefix_name}] Computing COCO metrics on {len(predictions)} predictions across {len(set(image_ids))} images...")
+                        metrics = self._compute_coco_metrics(
+                            predictions=predictions,
+                            image_ids=list(set(image_ids)),
+                            coco_gt=self.test_coco_gt,
+                            prefix=f"{prefix_name} performance"
+                        )
                 else:
-                    self.print(f"[Test] EMA validation FAILED: No predictions collected!")
-                    ema_metrics = {'map': 0.0, 'map_50': 0.0, 'map_75': 0.0}
-            
-            # Broadcast EMA metrics to all ranks
+                    self.print(f"[{prefix_name}] WARNING: No predictions made! Logging 0.0 metrics.")
+                    metrics = {'map': 0.0, 'map_50': 0.0, 'map_75': 0.0}
+
             if dist.is_available() and dist.is_initialized():
-                object_list = [ema_metrics]
+                object_list = [metrics]
                 dist.broadcast_object_list(object_list, src=0)
-                ema_metrics = object_list[0]
+                metrics = object_list[0]
 
-            # Log EMA metrics on ALL ranks
-            for key, value in ema_metrics.items():
-                self.log(f"test/{key}_ema", value, prog_bar=True, sync_dist=True)
+            for key, value in metrics.items():
+                self.log(f"{log_prefix}/{key}", value, prog_bar=True, sync_dist=True)
 
-            self.test_step_outputs_ema.clear()
+            outputs_list.clear()
 
-        # Clear accumulated predictions
-        self.test_step_outputs.clear()
+        if self.test_step_outputs:
+            _compute_and_log(self.test_step_outputs, "Test", "test")
+            
+        if self.test_step_outputs_sliced:
+            _compute_and_log(self.test_step_outputs_sliced, "Test Sliced", "test_sliced")
+
+        if hasattr(self, 'test_step_outputs_ema') and self.test_step_outputs_ema:
+            _compute_and_log(self.test_step_outputs_ema, "Test EMA", "test_ema")
+            
+        if hasattr(self, 'test_step_outputs_sliced_ema') and self.test_step_outputs_sliced_ema:
+            _compute_and_log(self.test_step_outputs_sliced_ema, "Test Sliced EMA", "test_sliced_ema")
         
     def on_test_start(self):
         """
@@ -669,7 +735,7 @@ class RTDETRLightningModule(pl.LightningModule):
         self.print(f"[INFO] Remapped Validation GT classes using: {remap_dict}")
         return coco_gt, remap_dict
 
-    def _compute_coco_metrics(self, predictions, image_ids, coco_gt):
+    def _compute_coco_metrics(self, predictions, image_ids, coco_gt, prefix="Performance"):
         """Compute COCO mAP and mAR metrics."""
         if coco_gt is None or len(predictions) == 0:
             return {}

@@ -1,0 +1,26 @@
+# @package _global_
+# Derived from configs/data/vulcan.yaml
+
+defaults:
+  - default@data
+
+data:
+  path: "/project/aip-robsc/asinha/cellanome/DATA/TRAINING_DATA"
+  train_name: "train_plus_valgt300"
+  val_name: "valid_no300"
+  test_name: "test_no300"
+
+  limit_train_batches: 1.0
+  limit_val_batches: 1.0
+  limit_test_batches: 1.0
+
+checkpointing:
+  save_dir: "/project/aip-robsc/asinha/cellanome/DATA/checkpoints/"
+  rtdetr_initial_checkpoint: "/project/aip-robsc/asinha/cellanome/DATA/checkpoints/${checkpointing._folder_name}"
+  dinov2_backbone_checkpoint: "/project/aip-robsc/asinha/cellanome/DATA/checkpoints/backbones/dinov2"
+
+hydra:
+  run:
+    dir: "/project/aip-robsc/asinha/cellanome/logs/${now:%Y-%m-%d}/${now:%H-%M-%S}"
+  sweep:
+    dir: "/project/aip-robsc/asinha/cellanome/logs/multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}"

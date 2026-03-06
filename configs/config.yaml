@@ -43,6 +43,23 @@ training:
   profiler:
     type: 'simple'
 
+eval_inference:
+  mode: whole   # whole | sliced | both
+  sahi:
+    slice_height: null
+    slice_width: null
+    overlap_height_ratio: null
+    overlap_width_ratio: null
+    overlap_height_px: 80
+    overlap_width_px: 80
+    perform_standard_pred: true
+    postprocess_type: NMS
+    postprocess_match_metric: IOU
+    postprocess_match_threshold: 0.5
+    postprocess_class_agnostic: false
+    auto_slice_resolution: false
+    verbose: 0
+
 inference:
   mode: dataset        # dataset | folder | single
   image_path: null     # for mode=single

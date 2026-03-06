@@ -78,7 +78,7 @@ def broadcast_object(obj, src=0):
     return object_list[0]
 
 
-def compute_coco_metrics(coco_gt, predictions, image_ids, max_detections=100, label_map=None):
+def compute_coco_metrics(coco_gt, predictions, image_ids, max_detections=100, label_map=None, prefix="Performance"):
     """
     Compute aggregate + per-class COCO bbox metrics.
     Returns a dict containing map/map_50/... and per-class map_* keys.
@@ -120,6 +120,21 @@ def compute_coco_metrics(coco_gt, predictions, image_ids, max_detections=100, la
             recalls = coco_eval.eval.get("recall")
             import numpy as np
 
+            # For formatting YOLO style
+            num_images = len(coco_eval.params.imgIds)
+            
+            # Find number of labels per class from coco_gt annotations
+            labels_per_class = {}
+            total_labels = 0
+            for ann in coco_gt.dataset.get('annotations', []):
+                # Only count annotations in the evaluated images
+                if ann['image_id'] in coco_eval.params.imgIds:
+                    c_id = ann['category_id']
+                    labels_per_class[c_id] = labels_per_class.get(c_id, 0) + 1
+                    total_labels += 1
+
+            table_rows = []
+            
             for class_idx, cat_id in enumerate(coco_eval.params.catIds):
                 class_name = None
                 if int(cat_id) in coco_gt.cats:
@@ -147,7 +162,69 @@ def compute_coco_metrics(coco_gt, predictions, image_ids, max_detections=100, la
                         valid_r_all = r_all[r_all > -1]
                         if len(valid_r_all) > 0:
                             metrics[f"mar_{recall_val}_{class_name}"] = round(float(np.mean(valid_r_all)), 4)
-                        
+                
+                # Compute best P and R at IoU 0.5 (index 0)
+                best_p, best_r = 0.0, 0.0
+                if len(valid_50) > 0:
+                    # precisions for IoU=0.5, area=All, maxDets=max_detections
+                    # shape is (101,) corresponding to 101 recall points
+                    p_curve = precisions[0, :, class_idx, 0, -1]
+                    # The corresponding recalls used by COCOeval
+                    r_curve = np.linspace(0.0, 1.0, len(p_curve))
+                    
+                    # Compute F1 for all points, ignoring invalid points (-1)
+                    valid_mask = p_curve > -1
+                    if np.any(valid_mask):
+                        valid_p = p_curve[valid_mask]
+                        valid_r = r_curve[valid_mask]
+                        # Avoid division by zero
+                        denominator = valid_p + valid_r + 1e-16
+                        f1_curve = 2 * valid_p * valid_r / denominator
+                        best_idx = np.argmax(f1_curve)
+                        best_p = valid_p[best_idx]
+                        best_r = valid_r[best_idx]
+
+                table_rows.append({
+                    "Class": class_name,
+                    "Images": num_images,
+                    "Labels": labels_per_class.get(cat_id, 0),
+                    "P": best_p,
+                    "R": best_r,
+                    "mAP@.5": metrics.get(f"map_50_{class_name}", 0.0),
+                    "mAP@.5:.95": metrics.get(f"map_{class_name}", 0.0)
+                })
+
+            # Calculate and add 'all' row
+            # For "all", we can use the overall stats from coco_eval
+            # stats[0] = AP @.5:.95, stats[1] = AP @.5, stats[8] = AR @maxDets
+            # To get P and R for "all" at best F1, we could average the class curves, but 
+            # Pycocotools doesn't provide a single curve for "all". So we take average of best P and R.
+            avg_p = np.mean([row["P"] for row in table_rows]) if table_rows else 0.0
+            avg_r = np.mean([row["R"] for row in table_rows]) if table_rows else 0.0
+            
+            all_row = {
+                "Class": "all",
+                "Images": num_images,
+                "Labels": total_labels,
+                "P": avg_p,
+                "R": avg_r,
+                "mAP@.5": metrics.get("map_50", 0.0),
+                "mAP@.5:.95": metrics.get("map", 0.0)
+            }
+            
+            # Print the formatted table
+            print(f"\n{prefix}")
+            header = f"{'Class':<14}{'Images':<8}{'Labels':<11}{'P':<8}{'R':<9}{'mAP@.5':<11}{'mAP@.5:.95':<11}"
+            print(header)
+            
+            def print_row(r):
+                print(f"{r['Class']:<14}{r['Images']:<8}{r['Labels']:<11}{r['P']:<8.3f}{r['R']:<9.3f}{r['mAP@.5']:<11.3f}{r['mAP@.5:.95']:<11.3f}")
+            
+            print_row(all_row)
+            for r in table_rows:
+                print_row(r)
+            print()
+
     except Exception as e:
         import traceback
         print(f"[COCOEval Error] {e}")

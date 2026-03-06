@@ -381,6 +381,12 @@ def main(config: DictConfig):
 
     OmegaConf.set_struct(config, True)
 
+    eval_mode = config.get("eval_inference", {}).get("mode", "whole")
+    rank_zero_print(f"--- Eval Inference Mode: {eval_mode.upper()} ---")
+    if eval_mode in ["sliced", "both"]:
+        rank_zero_print(OmegaConf.to_yaml(config.eval_inference.sahi))
+        rank_zero_print("---------------------------")
+
     pl.seed_everything(config.seed, workers=True)
 
     dataset_path = to_absolute_path(config.data.path)

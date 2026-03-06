@@ -15,8 +15,11 @@ from utils.coco_eval_utils import (
     gather_outputs_across_processes,
     broadcast_object,
     compute_coco_metrics,
+    to_cpu_device,
 )
 from utils.ema import EMACallback
+from utils.sahi_eval import run_sahi_sliced_eval
+import numpy as np
 
 # import yolo models from ultralytics
 # from ultralytics import yolov5n, yolov5s, yolov5m, yolov5l, yolov5x
@@ -132,9 +135,14 @@ class YOLOv5LightningModule(pl.LightningModule):
         self.ema_validation_step_outputs = []
         self.test_step_outputs = []
         
+        self.validation_step_outputs_sliced = []
+        self.test_step_outputs_sliced = []
+        
         if hasattr(self.config.model, 'ema') and self.config.model.ema.enabled:
             self.validation_step_outputs_ema = []
             self.test_step_outputs_ema = []
+            self.validation_step_outputs_sliced_ema = []
+            self.test_step_outputs_sliced_ema = []
             
         self.PALETTE = [
             (255, 64, 64), (64, 255, 64), (64, 64, 255), (255, 255, 64), (255, 64, 255),
@@ -452,139 +460,187 @@ class YOLOv5LightningModule(pl.LightningModule):
         # Ensure model is in eval mode for inference
         self.model.eval()
         
-        with torch.no_grad():
-            outputs = self.model(images)
-            infer_out, train_out = self._extract_model_outputs(outputs)
+        eval_mode = self.config.get("eval_inference", {}).get("mode", "whole")
+        ret_dict = {}
 
-        if infer_out is None and train_out is not None:
-            # Fallback for models that might not have custom multi-head forward
-            infer_out = train_out
+        if eval_mode in ["whole", "both"]:
+            with torch.no_grad():
+                outputs = self.model(images)
+                infer_out, train_out = self._extract_model_outputs(outputs)
 
-        if train_out is not None:
-            # Note: ComputeLoss expects the raw training output (usually a list of tensors)
-            val_loss, loss_items = self.compute_loss(train_out, targets)
-            self.log(
-                f"{split_name}/loss",
-                val_loss,
-                batch_size=batch_size,
-                on_step=False,
-                on_epoch=True,
-                sync_dist=True,
+            if infer_out is None and train_out is not None:
+                infer_out = train_out
+
+            if train_out is not None:
+                val_loss, loss_items = self.compute_loss(train_out, targets)
+                self.log(
+                    f"{split_name}/loss",
+                    val_loss,
+                    batch_size=batch_size,
+                    on_step=False,
+                    on_epoch=True,
+                    sync_dist=True,
+                )
+                self._log_loss_items(split_name, loss_items, batch_size=batch_size)
+
+            pred_list = self._non_max_suppression(
+                infer_out,
+                conf_thres=float(self.config.model.detection_threshold),
+                iou_thres=float(self.config.model.yolov5.iou_threshold),
+                max_det=int(self.config.model.max_detections),
             )
-            self._log_loss_items(split_name, loss_items, batch_size=batch_size)
 
-        pred_list = self._non_max_suppression(
-            infer_out,
-            conf_thres=float(self.config.model.detection_threshold),
-            iou_thres=float(self.config.model.yolov5.iou_threshold),
-            max_det=int(self.config.model.max_detections),
-        )
-
-        result_map = {}
-        image_ids = []
-        for sample_idx, pred in enumerate(pred_list):
-            image_id = int(batch_image_ids[sample_idx])
-            image_ids.append(int(image_id))
-            
-            if pred is None or len(pred) == 0:
-                result_map[int(image_id)] = {
-                    "boxes": torch.empty((0, 4), dtype=torch.float32),
-                    "scores": torch.empty((0,), dtype=torch.float32),
-                    "labels": torch.empty((0,), dtype=torch.int64),
-                }
-                continue
-
-            predn = pred.clone()
-            predn[:, :4] = self._undo_letterbox(predn[:, :4], shapes[sample_idx])
-            mapped_labels = self._map_label_ids(predn[:, 5].to(torch.int64))
-
-            # DIAGNOSTIC (continued): Add prediction info if it exists
-            # if self.config.debug and self.trainer.is_global_zero and sample_idx == 0:
-            #     # Convert first pred to xywh for direct comparison
-            #     p_box = predn[0, :4].tolist()
-            #     p_xywh = [p_box[0], p_box[1], p_box[2]-p_box[0], p_box[3]-p_box[1]]
-            #     self.print(f"  PRED (first 1 box xywh): {[round(x, 2) for x in p_xywh]}")
-            #     self.print(f"  PRED Category: {int(mapped_labels[0])}")
-
-            result_map[int(image_id)] = {
-                "boxes": predn[:, :4].detach().cpu(),
-                "scores": predn[:, 4].detach().cpu(),
-                "labels": mapped_labels.detach().cpu(),
-            }
-
-        # Diagnostic: Print info about predictions in this batch
-        # if self.config.debug and self.trainer.is_global_zero:
-        #     total_preds = sum(len(p["boxes"]) for p in result_map.values())
-        #     if total_preds > 0:
-        #         all_scores = torch.cat([p["scores"] for p in result_map.values() if len(p["boxes"]) > 0])
-        #         self.print(f"[DEBUG] Batch {split_name} predictions: {total_preds} boxes, "
-        #                   f"score range: [{all_scores.min():.4f}, {all_scores.max():.4f}], "
-        #                   f"mean: {all_scores.mean():.4f}")
-        #     else:
-        #         self.print(f"[DEBUG] Batch {split_name}: NO predictions above detection_threshold ({self.config.model.detection_threshold})")
+            result_map = {}
+            image_ids = []
+            for sample_idx, pred in enumerate(pred_list):
+                image_id = int(batch_image_ids[sample_idx])
+                image_ids.append(int(image_id))
                 
-        #         # Extreme diagnostic: try NMS with 0.001 threshold to see if ANY boxes exist
-        #         peek_preds = self._non_max_suppression(
-        #             infer_out,
-        #             conf_thres=0.001,
-        #             iou_thres=0.45,
-        #             max_det=10,
-        #         )
-        #         peek_count = sum(len(x) for x in peek_preds if x is not None)
-        #         if peek_count > 0:
-        #             peek_max = max(x[:, 4].max().item() for x in peek_preds if x is not None and len(x) > 0)
-        #             self.print(f"[DEBUG] PEEK at 0.001 threshold: found {peek_count} boxes (max score: {peek_max:.6f})")
-        #             # Log first peeked box in XYWH for direct comparison with GT
-        #             for idx, x in enumerate(peek_preds):
-        #                 if x is not None and len(x) > 0:
-        #                     p_box = x[0, :4].clone()
-        #                     # Undo letterbox for the peeked box
-        #                     p_box = self._undo_letterbox(p_box.unsqueeze(0), shapes[idx])[0]
-        #                     p_xywh = [p_box[0], p_box[1], p_box[2]-p_box[0], p_box[3]-p_box[1]]
-        #                     self.print(f"  PEEK PRED (Image {batch_image_ids[idx]} best box xywh): {[round(float(v), 1) for v in p_xywh]}")
-        #                     self.print(f"  PEEK PRED Category: {int(x[0, 5])} (score: {x[0, 4]:.4f})")
-        #                     break
-        #         else:
-        #             self.print(f"[DEBUG] PEEK at 0.001 threshold: still NOTHING found.")
+                if pred is None or len(pred) == 0:
+                    result_map[int(image_id)] = {
+                        "boxes": torch.empty((0, 4), dtype=torch.float32),
+                        "scores": torch.empty((0,), dtype=torch.float32),
+                        "labels": torch.empty((0,), dtype=torch.int64),
+                    }
+                    continue
 
-        return {"predictions": result_map, "image_ids": image_ids, "paths": paths}
+                predn = pred.clone()
+                predn[:, :4] = self._undo_letterbox(predn[:, :4], shapes[sample_idx])
+                mapped_labels = self._map_label_ids(predn[:, 5].to(torch.int64))
+
+                result_map[int(image_id)] = {
+                    "boxes": predn[:, :4].detach().cpu(),
+                    "scores": predn[:, 4].detach().cpu(),
+                    "labels": mapped_labels.detach().cpu(),
+                }
+            ret_dict["whole"] = {"predictions": result_map, "image_ids": image_ids, "paths": paths}
+
+        if eval_mode in ["sliced", "both"]:
+            sliced_batch_predictions = {}
+            sliced_batch_image_ids = []
+            
+            for sample_idx, img_path in enumerate(paths):
+                image_id = int(batch_image_ids[sample_idx])
+                sliced_batch_image_ids.append(image_id)
+                
+                # Resolve full path from ultralytics format paths if needed
+                split_name_for_path = self.config.test_name if "test" in split_name else self.config.val_name
+                full_path = os.path.join(self.config.data.path, "images", split_name_for_path, os.path.basename(img_path))
+                
+                if not full_path or not os.path.exists(full_path):
+                    self.print(f"[{split_name.upper()}] WARNING: Cannot find image {full_path} for SAHI. Falling back to whole image.")
+                    if "whole" in ret_dict:
+                         sliced_batch_predictions[image_id] = ret_dict["whole"]["predictions"][image_id]
+                    continue
+                
+                def predict_fn(image_np):
+                    from utils.cv_utils import letterbox # Custom YOLOv5 augmentations
+                    # Ensure dimensions match what the model expects
+                    im = letterbox(image_np, int(self.config.model.input_size), stride=self.stride, auto=True)[0]
+                    im = im.transpose((2, 0, 1))[::-1]  # HWC to CHW, BGR to RGB
+                    im = np.ascontiguousarray(im)
+                    
+                    im_tensor = torch.from_numpy(im).to(self.device).float() / 255.0
+                    if len(im_tensor.shape) == 3:
+                        im_tensor = im_tensor[None]
+                    
+                    if next(self.model.parameters()).dtype == torch.float16:
+                        im_tensor = im_tensor.half()
+                    elif next(self.model.parameters()).dtype == torch.bfloat16:
+                        im_tensor = im_tensor.bfloat16()
+                    
+                    with torch.no_grad():
+                        out = self.model(im_tensor)
+                        infer_out, _ = self._extract_model_outputs(out)
+                        
+                    conf_thres = float(self.config.model.detection_threshold)
+                    iou_thres = float(self.config.model.yolov5.iou_threshold)
+                    max_det = int(self.config.model.max_detections)
+                    
+                    preds = self._non_max_suppression(
+                        infer_out, conf_thres=conf_thres, iou_thres=iou_thres, 
+                        max_det=max_det
+                    )[0]
+                    
+                    boxes = torch.empty((0, 4), device=self.device)
+                    scores = torch.empty((0,), device=self.device)
+                    labels = torch.empty((0,), dtype=torch.long, device=self.device)
+                    
+                    if preds is not None and len(preds):
+                        # Construct a fake shape meta for undo_letterbox
+                        # shape_meta: ((h0, w0), ((h/h0, w/w0), (dw, dh)))
+                        h0, w0 = image_np.shape[:2]
+                        h, w = im_tensor.shape[2:]
+                        r = min(h / h0, w / w0)
+                        dh, dw = (h - h0 * r) / 2, (w - w0 * r) / 2
+                        shape_meta = ((h0, w0), ((r, r), (dw, dh)))
+                        
+                        preds[:, :4] = self._undo_letterbox(preds[:, :4], shape_meta)
+                        boxes = preds[:, :4]
+                        scores = preds[:, 4]
+                        mapped_labels = self._map_label_ids(preds[:, 5].to(torch.int64))
+                        labels = mapped_labels
+                    
+                    return {
+                        "boxes": to_cpu_device(boxes),
+                        "scores": to_cpu_device(scores),
+                        "labels": to_cpu_device(labels)
+                    }
+
+                from PIL import Image
+                img_pil = Image.open(full_path).convert("RGB")
+                sahi_cfg = self.config.get("eval_inference", {}).get("sahi", {})
+                input_size = int(self.config.model.input_size)
+                
+                preds = run_sahi_sliced_eval(img_pil, predict_fn, sahi_cfg, input_size)
+                sliced_batch_predictions[image_id] = preds
+                
+            ret_dict["sliced"] = {"predictions": sliced_batch_predictions, "image_ids": sliced_batch_image_ids, "paths": paths}
+
+        return ret_dict
 
     @torch.no_grad()
     def validation_step(self, batch, batch_idx):
         output = self._run_eval_step(batch, split_name="val")
-        self.validation_step_outputs.append(output)
+        if "whole" in output:
+            self.validation_step_outputs.append(output["whole"])
+        if "sliced" in output:
+            self.validation_step_outputs_sliced.append(output["sliced"])
         
         # EMA validation
         ema_callback = next((cb for cb in self.trainer.callbacks if isinstance(cb, EMACallback)), None)
         if ema_callback and ema_callback.ema_model:
-            # Temporarily swap model explicitly for EMA eval using helper
             original_model = self.model
             self.model = ema_callback.ema_model.module
             ema_output = self._run_eval_step(batch, split_name="val")
             self.model = original_model
             
-            self.validation_step_outputs_ema.append(ema_output)
+            if "whole" in ema_output:
+                self.validation_step_outputs_ema.append(ema_output["whole"])
+            if "sliced" in ema_output:
+                self.validation_step_outputs_sliced_ema.append(ema_output["sliced"])
             
         # Draw Visualizations occasionally
-        if (self.current_epoch + 1) % self.config.checkpointing.visualize_every_n_epochs == 0 and \
+        if (self.current_epoch + 1) % max(1, self.config.checkpointing.visualize_every_n_epochs) == 0 and \
            self.trainer.is_global_zero and \
            (self.val_viz_counter < self.config.checkpointing.visualize_samples or self.config.checkpointing.visualize_samples == -1):
             
-            visualizer_out = ema_output if (ema_callback and ema_callback.ema_model) else output
-            save_dir = os.path.join(
-                self.config.checkpointing.save_dir,
-                self.config.checkpointing.visualization_dir, 
-                f"epoch_{(self.current_epoch+1):03d}", 
-                "val"
-            )
-            self.val_viz_counter = self._visualize_batch(
-                save_dir, 
-                visualizer_out["predictions"], 
-                visualizer_out["paths"],
-                visualizer_out["image_ids"],
-                self.val_viz_counter,
-                split="val"
-            )
+            visualizer_out = ema_output["whole"] if (ema_callback and ema_callback.ema_model and "whole" in ema_output) else output.get("whole", output.get("sliced", {}))
+            if "predictions" in visualizer_out:
+                save_dir = os.path.join(
+                    self.config.checkpointing.save_dir,
+                    self.config.checkpointing.visualization_dir, 
+                    f"epoch_{(self.current_epoch+1):03d}", 
+                    "val"
+                )
+                self.val_viz_counter = self._visualize_batch(
+                    save_dir, 
+                    visualizer_out["predictions"], 
+                    visualizer_out.get("paths", batch[2]),
+                    visualizer_out["image_ids"],
+                    self.val_viz_counter,
+                    split="val"
+                )
 
         return output
 
@@ -595,98 +651,55 @@ class YOLOv5LightningModule(pl.LightningModule):
             self.config.checkpointing.visualize_samples = float('inf')
 
     def on_validation_epoch_end(self):
-        # Debug: print image IDs used during training and validation
-        if self.config.debug and self.trainer.is_global_zero:
-            train_ids = sorted(set(self._train_image_ids_epoch))
-            self.print(f"\n{'='*60}")
-            self.print(f"[DEBUG] Epoch {self.current_epoch} - TRAIN image IDs ({len(train_ids)}): {train_ids}")
-            val_ids = sorted(set(
-                img_id for batch_out in self.validation_step_outputs for img_id in batch_out["image_ids"]
-            ))
-            self.print(f"[DEBUG] Epoch {self.current_epoch} - VAL image IDs ({len(val_ids)}): {val_ids}")
-            overlap = set(train_ids) & set(val_ids)
-            self.print(f"[DEBUG] Overlap (train ∩ val): {len(overlap)} IDs: {sorted(overlap)}")
-            self.print(f"{'='*60}\n")
-            self._train_image_ids_epoch = []  # Reset for next epoch
-
-        all_outputs = gather_outputs_across_processes(self.validation_step_outputs)
-        metrics = {}
-        if self.trainer.is_global_zero:
-            predictions = []
-            image_ids = []
-            for batch_out in all_outputs:
-                predictions.extend(convert_preds_to_coco(batch_out["predictions"]))
-                image_ids.extend(batch_out["image_ids"])
-
-            # if self.config.debug and len(predictions) > 0:
-            #     self.print(f"[DEBUG] Final COCO preds for eval (first 3): {predictions[:3]}")
-
-            if len(predictions) > 0:
-                model_type = "Regular Model"
-                print(f"\n{'='*50}")
-                print(f" COCO EVALUATION: VAL | {model_type}")
-                print(f"{'='*50}")
-                metrics = compute_coco_metrics(
-                    coco_gt=self.val_coco_gt,
-                    predictions=predictions,
-                    image_ids=list(set(image_ids)),
-                    max_detections=int(self.config.model.max_detections),
-                    label_map=self.config.model.label_map,
-                )
-            else:
-                metrics = {"map": 0.0, "map_50": 0.0, "map_75": 0.0}
-
-        metrics = broadcast_object(metrics, src=0)
-        for key, value in metrics.items():
-            self.log(f"val/{key}", value, prog_bar=(key in {"map", "map_50"}), sync_dist=True)
-            if key == "map":
-                self.log("val_map", value, prog_bar=False, sync_dist=True)
-
-        self.validation_step_outputs.clear()
-        
-        # Compute EMA metrics
-        all_ema_outputs = gather_outputs_across_processes(getattr(self, 'validation_step_outputs_ema', []))
-        if hasattr(self, 'validation_step_outputs_ema'):
-            ema_metrics = {}
+        def _compute_and_log(outputs_list, prefix_name, log_prefix):
+            all_outputs = gather_outputs_across_processes(outputs_list)
+            metrics = {}
             if self.trainer.is_global_zero:
-                ema_predictions = []
-                ema_image_ids = []
-                for batch_out in all_ema_outputs:
-                    ema_predictions.extend(convert_preds_to_coco(batch_out["predictions"]))
-                    ema_image_ids.extend(batch_out["image_ids"])
-                    
-                if len(ema_predictions) > 0:
+                predictions = []
+                image_ids = []
+                for batch_out in all_outputs:
+                    predictions.extend(convert_preds_to_coco(batch_out["predictions"]))
+                    image_ids.extend(batch_out["image_ids"])
 
-                    model_type = "EMA Model"
-                    print(f"\n{'='*50}")
-                    print(f" COCO EVALUATION: VAL | {model_type}")
-                    print(f"{'='*50}")
-
-                    ema_metrics = compute_coco_metrics(
+                if len(predictions) > 0:
+                    metrics = compute_coco_metrics(
                         coco_gt=self.val_coco_gt,
-                        predictions=ema_predictions,
-                        image_ids=list(set(ema_image_ids)),
+                        predictions=predictions,
+                        image_ids=list(set(image_ids)),
                         max_detections=int(self.config.model.max_detections),
                         label_map=self.config.model.label_map,
+                        prefix=f"{prefix_name} performance"
                     )
                 else:
-                    ema_metrics = {"map": 0.0, "map_50": 0.0, "map_75": 0.0}
-                    
-            ema_metrics = broadcast_object(ema_metrics, src=0)
-            for key, value in ema_metrics.items():
-                self.log(f"val/{key}_ema", value, prog_bar=True, sync_dist=True)
+                    metrics = {"map": 0.0, "map_50": 0.0, "map_75": 0.0}
+
+            metrics = broadcast_object(metrics, src=0)
+            for key, value in metrics.items():
+                self.log(f"{log_prefix}/{key}", value, prog_bar=(key in {"map", "map_50"}), sync_dist=True)
                 if key == "map":
-                    self.log("val_map_ema", value, prog_bar=False, sync_dist=True)
-                    
-            self.validation_step_outputs_ema.clear()
+                    self.log(f"{log_prefix}_map", value, prog_bar=False, sync_dist=True)
+
+            outputs_list.clear()
+
+        if self.validation_step_outputs:
+            _compute_and_log(self.validation_step_outputs, "Val", "val")
             
-        self.validation_step_outputs.clear()
-        self.ema_validation_step_outputs.clear()
+        if self.validation_step_outputs_sliced:
+            _compute_and_log(self.validation_step_outputs_sliced, "Val Sliced", "val_sliced")
+
+        if hasattr(self, "validation_step_outputs_ema") and self.validation_step_outputs_ema:
+            _compute_and_log(self.validation_step_outputs_ema, "Val EMA", "val_ema")
+            
+        if hasattr(self, "validation_step_outputs_sliced_ema") and self.validation_step_outputs_sliced_ema:
+            _compute_and_log(self.validation_step_outputs_sliced_ema, "Val Sliced EMA", "val_sliced_ema")
 
     @torch.no_grad()
     def test_step(self, batch, batch_idx):
         output = self._run_eval_step(batch, split_name="test")
-        self.test_step_outputs.append(output)
+        if "whole" in output:
+            self.test_step_outputs.append(output["whole"])
+        if "sliced" in output:
+            self.test_step_outputs_sliced.append(output["sliced"])
 
         # EMA test
         ema_callback = next((cb for cb in self.trainer.callbacks if isinstance(cb, EMACallback)), None)
@@ -695,25 +708,30 @@ class YOLOv5LightningModule(pl.LightningModule):
             self.model = ema_callback.ema_model.module
             ema_output = self._run_eval_step(batch, split_name="test")
             self.model = original_model
-            self.test_step_outputs_ema.append(ema_output)
+            
+            if "whole" in ema_output:
+                self.test_step_outputs_ema.append(ema_output["whole"])
+            if "sliced" in ema_output:
+                self.test_step_outputs_sliced_ema.append(ema_output["sliced"])
             
         if self.trainer.is_global_zero and \
            (self.test_viz_counter < self.config.checkpointing.visualize_samples or self.config.checkpointing.visualize_samples == -1):
             
-            visualizer_out = ema_output if (ema_callback and ema_callback.ema_model) else output
-            save_dir = os.path.join(
-                self.config.checkpointing.save_dir,
-                self.config.checkpointing.visualization_dir, 
-                "test"
-            )
-            self.test_viz_counter = self._visualize_batch(
-                save_dir, 
-                visualizer_out["predictions"], 
-                visualizer_out["paths"],
-                visualizer_out["image_ids"],
-                self.test_viz_counter,
-                split="test"
-            )
+            visualizer_out = ema_output["whole"] if (ema_callback and ema_callback.ema_model and "whole" in ema_output) else output.get("whole", output.get("sliced", {}))
+            if "predictions" in visualizer_out:
+                save_dir = os.path.join(
+                    self.config.checkpointing.save_dir,
+                    self.config.checkpointing.visualization_dir, 
+                    "test"
+                )
+                self.test_viz_counter = self._visualize_batch(
+                    save_dir, 
+                    visualizer_out["predictions"], 
+                    visualizer_out.get("paths", batch[2]),
+                    visualizer_out["image_ids"],
+                    self.test_viz_counter,
+                    split="test"
+                )
 
         return output
 
@@ -724,67 +742,45 @@ class YOLOv5LightningModule(pl.LightningModule):
             self.config.checkpointing.visualize_samples = float('inf')
 
     def on_test_epoch_end(self):
-        all_outputs = gather_outputs_across_processes(self.test_step_outputs)
-        metrics = {}
-        if self.trainer.is_global_zero:
-            predictions = []
-            image_ids = []
-            for batch_out in all_outputs:
-                predictions.extend(convert_preds_to_coco(batch_out["predictions"]))
-                image_ids.extend(batch_out["image_ids"])
-
-            if len(predictions) > 0:
-                model_type = "Regular Model"
-                print(f"\n{'='*50}")
-                print(f" COCO EVALUATION: TEST | {model_type}")
-                print(f"{'='*50}")
-                metrics = compute_coco_metrics(
-                    coco_gt=self.test_coco_gt,
-                    predictions=predictions,
-                    image_ids=list(set(image_ids)),
-                    max_detections=int(self.config.model.max_detections),
-                    label_map=self.config.model.label_map,
-                )
-            else:
-                metrics = {"map": 0.0, "map_50": 0.0, "map_75": 0.0}
-
-        metrics = broadcast_object(metrics, src=0)
-        for key, value in metrics.items():
-            self.log(f"test/{key}", value, prog_bar=(key in {"map", "map_50"}), sync_dist=True)
-
-        # Compute EMA metrics for Test
-        all_ema_outputs = gather_outputs_across_processes(getattr(self, 'test_step_outputs_ema', []))
-        if hasattr(self, 'test_step_outputs_ema'):
-            ema_metrics = {}
+        def _compute_and_log(outputs_list, prefix_name, log_prefix):
+            all_outputs = gather_outputs_across_processes(outputs_list)
+            metrics = {}
             if self.trainer.is_global_zero:
-                ema_predictions = []
-                ema_image_ids = []
-                for batch_out in all_ema_outputs:
-                    ema_predictions.extend(convert_preds_to_coco(batch_out["predictions"]))
-                    ema_image_ids.extend(batch_out["image_ids"])
-                    
-                if len(ema_predictions) > 0:
-                    model_type = "EMA Model"
-                    print(f"\n{'='*50}")
-                    print(f" COCO EVALUATION: TEST | {model_type}")
-                    print(f"{'='*50}")
-                    ema_metrics = compute_coco_metrics(
+                predictions = []
+                image_ids = []
+                for batch_out in all_outputs:
+                    predictions.extend(convert_preds_to_coco(batch_out["predictions"]))
+                    image_ids.extend(batch_out["image_ids"])
+
+                if len(predictions) > 0:
+                    metrics = compute_coco_metrics(
                         coco_gt=self.test_coco_gt,
-                        predictions=ema_predictions,
-                        image_ids=list(set(ema_image_ids)),
+                        predictions=predictions,
+                        image_ids=list(set(image_ids)),
                         max_detections=int(self.config.model.max_detections),
                         label_map=self.config.model.label_map,
+                        prefix=f"{prefix_name} performance"
                     )
                 else:
-                    ema_metrics = {"map": 0.0, "map_50": 0.0, "map_75": 0.0}
-                    
-            ema_metrics = broadcast_object(ema_metrics, src=0)
-            for key, value in ema_metrics.items():
-                self.log(f"test/{key}_ema", value, prog_bar=True, sync_dist=True)
-                    
-            self.test_step_outputs_ema.clear()
+                    metrics = {"map": 0.0, "map_50": 0.0, "map_75": 0.0}
+
+            metrics = broadcast_object(metrics, src=0)
+            for key, value in metrics.items():
+                self.log(f"{log_prefix}/{key}", value, prog_bar=(key in {"map", "map_50"}), sync_dist=True)
+
+            outputs_list.clear()
+
+        if self.test_step_outputs:
+            _compute_and_log(self.test_step_outputs, "Test", "test")
             
-        self.test_step_outputs.clear()
+        if self.test_step_outputs_sliced:
+            _compute_and_log(self.test_step_outputs_sliced, "Test Sliced", "test_sliced")
+
+        if hasattr(self, "test_step_outputs_ema") and self.test_step_outputs_ema:
+            _compute_and_log(self.test_step_outputs_ema, "Test EMA", "test_ema")
+            
+        if hasattr(self, "test_step_outputs_sliced_ema") and self.test_step_outputs_sliced_ema:
+            _compute_and_log(self.test_step_outputs_sliced_ema, "Test Sliced EMA", "test_sliced_ema")
 
     def draw_boxes(self, image, boxes, labels, scores=None, id2label=None, color_override=None, label_prefix="", threshold_override=None):
         """Draws bounding boxes on a PIL image."""

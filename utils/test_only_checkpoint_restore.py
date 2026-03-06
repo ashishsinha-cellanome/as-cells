@@ -112,6 +112,9 @@ def _merge_test_only_config_from_ckpt(current_cfg: DictConfig, ckpt: Dict[str, A
     if hasattr(current_cfg, "logging") and current_cfg.logging is not None:
         merged_cfg.logging = OmegaConf.create(OmegaConf.to_container(current_cfg.logging, resolve=False))
 
+    if hasattr(current_cfg, "eval_inference") and current_cfg.eval_inference is not None:
+        merged_cfg.eval_inference = OmegaConf.create(OmegaConf.to_container(current_cfg.eval_inference, resolve=False))
+
     if hasattr(current_cfg, "inference") and current_cfg.inference is not None:
         merged_cfg.inference = OmegaConf.create(OmegaConf.to_container(current_cfg.inference, resolve=False))
 

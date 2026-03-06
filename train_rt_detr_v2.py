@@ -199,6 +199,9 @@ def _merge_test_only_config_from_ckpt(current_cfg: DictConfig, ckpt: Dict[str, A
     if hasattr(current_cfg, "logging") and current_cfg.logging is not None:
         merged_cfg.logging = OmegaConf.create(OmegaConf.to_container(current_cfg.logging, resolve=False))
 
+    if hasattr(current_cfg, "eval_inference") and current_cfg.eval_inference is not None:
+        merged_cfg.eval_inference = OmegaConf.create(OmegaConf.to_container(current_cfg.eval_inference, resolve=False))
+
     if hasattr(current_cfg, "inference") and current_cfg.inference is not None:
         merged_cfg.inference = OmegaConf.create(OmegaConf.to_container(current_cfg.inference, resolve=False))
 
@@ -564,6 +567,8 @@ def setup_model(config: DictConfig) -> RTDETRLightningModule:
         config=config, # Pass the whole config
         val_coco_gt=val_coco_gt,
         test_coco_gt=val_coco_gt if config.debug else test_coco_gt,
+        val_image_root=val_annot_path,
+        test_image_root=val_annot_path if config.debug else test_annot_path,
     )
     
     rank_zero_print("✓ Model loaded successfully")
@@ -840,6 +845,12 @@ def main(config: DictConfig):
     rank_zero_print("--- Final Configuration ---")
     rank_zero_print(OmegaConf.to_yaml(config))
     rank_zero_print("---------------------------")
+    
+    eval_mode = config.get("eval_inference", {}).get("mode", "whole")
+    rank_zero_print(f"--- Eval Inference Mode: {eval_mode.upper()} ---")
+    if eval_mode == "sliced":
+        rank_zero_print(OmegaConf.to_yaml(config.eval_inference.sahi))
+        rank_zero_print("---------------------------")
     
     # Set seed
     pl.seed_everything(config.seed, workers=True)

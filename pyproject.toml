@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "albumentations<1.2",
+    "black>=26.1.0",
     "cline>=1.2.2",
     "hydra-core>=1.3.2",
     "hydra-submitit-launcher>=1.2.0",
@@ -25,6 +26,7 @@ dependencies = [
     "rfdetr>=1.3.0",
     "rich>=14.2.0",
     "ruff>=0.15.0",
+    "sahi>=0.11.14",
     "seaborn>=0.13.2",
     "tensorboard>=2.20.0",
     "tensorboard-plugin-profile>=2.21.1",

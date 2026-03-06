@@ -15,6 +15,8 @@ from utils.coco_eval_utils import (
     broadcast_object,
     compute_coco_metrics,
 )
+from utils.sahi_eval import run_sahi_sliced_eval
+import torchvision.transforms.functional as F
 
 
 class RFDETRLightningModule(pl.LightningModule):
@@ -47,9 +49,14 @@ class RFDETRLightningModule(pl.LightningModule):
         self.validation_step_outputs = []
         self.test_step_outputs = []
         
+        self.validation_step_outputs_sliced = []
+        self.test_step_outputs_sliced = []
+        
         if hasattr(self.config.model, 'ema') and self.config.model.ema.enabled:
             self.validation_step_outputs_ema = []
             self.test_step_outputs_ema = []
+            self.validation_step_outputs_sliced_ema = []
+            self.test_step_outputs_sliced_ema = []
 
         # Visualization setup
         self.val_viz_counter = 0
@@ -142,6 +149,21 @@ class RFDETRLightningModule(pl.LightningModule):
 
         return loss
 
+    def _get_image_path(self, image_id: int, split: str) -> str | None:
+        """Resolve full image path using COCO annotations and configured roots."""
+        coco_gt = self.val_coco_gt if split == "val" else self.test_coco_gt
+        root = self.val_image_root if split == "val" else self.test_image_root
+        
+        if not coco_gt or not root:
+            return None
+            
+        try:
+            img_info = coco_gt.loadImgs(image_id)[0]
+            file_name = img_info['file_name']
+            return os.path.join(root, file_name)
+        except (IndexError, AttributeError, KeyError):
+            return None
+
     def _collect_batch_predictions(self, outputs, targets):
         orig_sizes = torch.stack([t["orig_size"] for t in targets], dim=0)
         post = self.postprocess(outputs, orig_sizes)
@@ -178,86 +200,148 @@ class RFDETRLightningModule(pl.LightningModule):
         )
         self._log_loss_dict("val", loss_dict, weight_dict, batch_size=batch_size)
 
-        predictions, image_ids = self._collect_batch_predictions(outputs, targets)
-        self.validation_step_outputs.append({"predictions": predictions, "image_ids": image_ids})
+        eval_mode = self.config.get("eval_inference", {}).get("mode", "whole")
         
+        # Whole Image Baseline Process (For Loss + Fallback)
+        predictions, image_ids = self._collect_batch_predictions(outputs, targets)
+        
+        if eval_mode in ["whole", "both"]:
+            self.validation_step_outputs.append({"predictions": predictions, "image_ids": image_ids})
+        
+        if eval_mode in ["sliced", "both"]:
+            sliced_predictions = {}
+            for i, target in enumerate(targets):
+                img_id = int(target["image_id"].item())
+                img_path = self._get_image_path(img_id, "val")
+                
+                if not img_path or not os.path.exists(img_path):
+                    self.print(f"[Val] WARNING: Cannot find image {img_path} for SAHI. Falling back to whole image.")
+                    sliced_predictions[img_id] = predictions[img_id]
+                    continue
+                
+                def predict_fn(image_np):
+                    # Convert numpy array to tensor (H, W, 3) -> (3, H, W)
+                    img_tensor = torch.from_numpy(image_np).permute(2, 0, 1).contiguous()
+                    img_tensor = F.convert_image_dtype(img_tensor, dtype=torch.float32)
+                    img_tensor = img_tensor.to(self.device)
+                    if next(self.model.parameters()).dtype == torch.float16:
+                        img_tensor = img_tensor.half()
+                    elif next(self.model.parameters()).dtype == torch.bfloat16:
+                        img_tensor = img_tensor.bfloat16()
+                    
+                    with torch.no_grad():
+                        out = self.model([img_tensor])
+                    
+                    orig_size = torch.tensor([[image_np.shape[0], image_np.shape[1]]], device=self.device)
+                    post = self.postprocess(out, orig_size)[0]
+                    return to_cpu_device(post)
+
+                img_pil = Image.open(img_path).convert("RGB")
+                sahi_cfg = self.config.get("eval_inference", {}).get("sahi", {})
+                # For RF-DETR we often pad/resize. Just use config input size or 640
+                input_size = getattr(self.config.data, 'model_input_size', 640)
+                
+                preds = run_sahi_sliced_eval(img_pil, predict_fn, sahi_cfg, input_size)
+                sliced_predictions[img_id] = preds
+
+            self.validation_step_outputs_sliced.append({"predictions": sliced_predictions, "image_ids": image_ids})
+
+        # EMA validation
         # EMA validation
         from utils.ema import EMACallback
         ema_callback = next((cb for cb in self.trainer.callbacks if isinstance(cb, EMACallback)), None)
         if ema_callback and ema_callback.ema_model:
             ema_outputs = ema_callback.ema_model.module(samples)
             ema_predictions, ema_image_ids = self._collect_batch_predictions(ema_outputs, targets)
-            self.validation_step_outputs_ema.append({"predictions": ema_predictions, "image_ids": ema_image_ids})
+            
+            if eval_mode in ["whole", "both"]:
+                self.validation_step_outputs_ema.append({"predictions": ema_predictions, "image_ids": ema_image_ids})
+            
+            if eval_mode in ["sliced", "both"]:
+                sliced_ema_predictions = {}
+                for i, target in enumerate(targets):
+                    img_id = int(target["image_id"].item())
+                    img_path = self._get_image_path(img_id, "val")
+                    
+                    if not img_path or not os.path.exists(img_path):
+                        sliced_ema_predictions[img_id] = ema_predictions[img_id]
+                        continue
+                    
+                    def predict_fn_ema(image_np):
+                        img_tensor = torch.from_numpy(image_np).permute(2, 0, 1).contiguous()
+                        img_tensor = F.convert_image_dtype(img_tensor, dtype=torch.float32)
+                        img_tensor = img_tensor.to(self.device)
+                        if next(ema_callback.ema_model.module.parameters()).dtype == torch.float16:
+                            img_tensor = img_tensor.half()
+                        elif next(ema_callback.ema_model.module.parameters()).dtype == torch.bfloat16:
+                            img_tensor = img_tensor.bfloat16()
+                            
+                        with torch.no_grad():
+                            out = ema_callback.ema_model.module([img_tensor])
+                            
+                        orig_size = torch.tensor([[image_np.shape[0], image_np.shape[1]]], device=self.device)
+                        post = self.postprocess(out, orig_size)[0]
+                        return to_cpu_device(post)
+
+                    img_pil = Image.open(img_path).convert("RGB")
+                    sahi_cfg = self.config.get("eval_inference", {}).get("sahi", {})
+                    input_size = getattr(self.config.data, 'model_input_size', 640)
+                    
+                    preds = run_sahi_sliced_eval(img_pil, predict_fn_ema, sahi_cfg, input_size)
+                    sliced_ema_predictions[img_id] = preds
+                
+                self.validation_step_outputs_sliced_ema.append({"predictions": sliced_ema_predictions, "image_ids": ema_image_ids})
 
         return {"predictions": predictions, "image_ids": image_ids}
 
     def on_validation_epoch_end(self):
-        all_outputs = gather_outputs_across_processes(self.validation_step_outputs)
-        merged_predictions = self._merge_predictions_map(all_outputs)
-        metrics = {}
-        viz_predictions = merged_predictions
-        if self.trainer.is_global_zero:
-            val_predictions = []
-            val_image_ids = []
-            for batch_out in all_outputs:
-                val_predictions.extend(
-                    convert_preds_to_coco(batch_out["predictions"], model_to_coco=self.model_to_coco)
-                )
-                val_image_ids.extend(batch_out["image_ids"])
+        viz_predictions = None
 
-            if val_predictions:
-                metrics = compute_coco_metrics(
-                    coco_gt=self.val_coco_gt,
-                    predictions=val_predictions,
-                    image_ids=sorted(set(val_image_ids)),
-                    max_detections=int(self.config.model.max_detections),
-                    label_map=self.config.model.label_map,
-                )
-            else:
-                metrics = {"map": 0.0, "map_50": 0.0, "map_75": 0.0}
-
-        metrics = broadcast_object(metrics, src=0)
-        for key, value in metrics.items():
-            self.log(f"val/{key}", value, prog_bar=(key in {"map", "map_50"}), sync_dist=True)
-            if key == "map":
-                self.log("val_map", value, prog_bar=False, sync_dist=True)
-
-        self.validation_step_outputs.clear()
-
-        all_ema_outputs = gather_outputs_across_processes(getattr(self, "validation_step_outputs_ema", []))
-        if hasattr(self, "validation_step_outputs_ema"):
-            ema_metrics = {}
-            merged_ema_predictions = self._merge_predictions_map(all_ema_outputs)
+        def _compute_and_log(outputs_list, prefix_name, log_prefix):
+            all_outputs = gather_outputs_across_processes(outputs_list)
+            merged = self._merge_predictions_map(all_outputs)
+            metrics = {}
             if self.trainer.is_global_zero:
-                ema_predictions = []
-                ema_image_ids = []
-                for batch_out in all_ema_outputs:
-                    ema_predictions.extend(
-                        convert_preds_to_coco(batch_out["predictions"], model_to_coco=self.model_to_coco)
-                    )
-                    ema_image_ids.extend(batch_out["image_ids"])
+                predictions = []
+                image_ids = []
+                for batch_out in all_outputs:
+                    predictions.extend(convert_preds_to_coco(batch_out["predictions"], model_to_coco=self.model_to_coco))
+                    image_ids.extend(batch_out["image_ids"])
 
-                if ema_predictions:
-                    ema_metrics = compute_coco_metrics(
+                if predictions:
+                    metrics = compute_coco_metrics(
                         coco_gt=self.val_coco_gt,
-                        predictions=ema_predictions,
-                        image_ids=sorted(set(ema_image_ids)),
+                        predictions=predictions,
+                        image_ids=sorted(set(image_ids)),
                         max_detections=int(self.config.model.max_detections),
                         label_map=self.config.model.label_map,
+                        prefix=f"{prefix_name} performance"
                     )
-                    viz_predictions = merged_ema_predictions
                 else:
-                    ema_metrics = {"map": 0.0, "map_50": 0.0, "map_75": 0.0}
+                    metrics = {"map": 0.0, "map_50": 0.0, "map_75": 0.0}
 
-            ema_metrics = broadcast_object(ema_metrics, src=0)
-            for key, value in ema_metrics.items():
-                self.log(f"val/{key}_ema", value, prog_bar=True, sync_dist=True)
+            metrics = broadcast_object(metrics, src=0)
+            for key, value in metrics.items():
+                self.log(f"{log_prefix}/{key}", value, prog_bar=(key in {"map", "map_50"}), sync_dist=True)
                 if key == "map":
-                    self.log("val_map_ema", value, prog_bar=False, sync_dist=True)
+                    self.log(f"{log_prefix}_map", value, prog_bar=False, sync_dist=True)
+            
+            outputs_list.clear()
+            return merged
 
-            self.validation_step_outputs_ema.clear()
+        if self.validation_step_outputs:
+            viz_predictions = _compute_and_log(self.validation_step_outputs, "Val", "val")
+            
+        if self.validation_step_outputs_sliced:
+            viz_predictions = _compute_and_log(self.validation_step_outputs_sliced, "Val Sliced", "val_sliced")
 
-        if self.trainer.is_global_zero:
+        if hasattr(self, "validation_step_outputs_ema") and self.validation_step_outputs_ema:
+            viz_predictions = _compute_and_log(self.validation_step_outputs_ema, "Val EMA", "val_ema")
+            
+        if hasattr(self, "validation_step_outputs_sliced_ema") and self.validation_step_outputs_sliced_ema:
+            viz_predictions = _compute_and_log(self.validation_step_outputs_sliced_ema, "Val Sliced EMA", "val_sliced_ema")
+
+        if self.trainer.is_global_zero and viz_predictions is not None:
             self._visualize_aggregated_predictions(viz_predictions, split="val")
             self.print(f"[VAL] Completed validation for epoch {self.current_epoch + 1}.")
 
@@ -296,81 +380,141 @@ class RFDETRLightningModule(pl.LightningModule):
 
         outputs = self.model(samples)
         predictions, image_ids = self._collect_batch_predictions(outputs, targets)
-        self.test_step_outputs.append({"predictions": predictions, "image_ids": image_ids})
         
-        # EMA test
+        eval_mode = self.config.get("eval_inference", {}).get("mode", "whole")
+        
+        if eval_mode in ["whole", "both"]:
+            self.test_step_outputs.append({"predictions": predictions, "image_ids": image_ids})
+
+        if eval_mode in ["sliced", "both"]:
+            sliced_predictions = {}
+            for i, target in enumerate(targets):
+                img_id = int(target["image_id"].item())
+                img_path = self._get_image_path(img_id, "test")
+                
+                if not img_path or not os.path.exists(img_path):
+                    self.print(f"[Test] WARNING: Cannot find image {img_path} for SAHI. Falling back to whole image.")
+                    sliced_predictions[img_id] = predictions[img_id]
+                    continue
+                
+                def predict_fn(image_np):
+                    img_tensor = torch.from_numpy(image_np).permute(2, 0, 1).contiguous()
+                    img_tensor = F.convert_image_dtype(img_tensor, dtype=torch.float32)
+                    img_tensor = img_tensor.to(self.device)
+                    if next(self.model.parameters()).dtype == torch.float16:
+                        img_tensor = img_tensor.half()
+                    elif next(self.model.parameters()).dtype == torch.bfloat16:
+                        img_tensor = img_tensor.bfloat16()
+                        
+                    with torch.no_grad():
+                        out = self.model([img_tensor])
+                        
+                    orig_size = torch.tensor([[image_np.shape[0], image_np.shape[1]]], device=self.device)
+                    post = self.postprocess(out, orig_size)[0]
+                    return to_cpu_device(post)
+
+                img_pil = Image.open(img_path).convert("RGB")
+                sahi_cfg = self.config.get("eval_inference", {}).get("sahi", {})
+                input_size = getattr(self.config.data, 'model_input_size', 640)
+                
+                preds = run_sahi_sliced_eval(img_pil, predict_fn, sahi_cfg, input_size)
+                sliced_predictions[img_id] = preds
+
+            self.test_step_outputs_sliced.append({"predictions": sliced_predictions, "image_ids": image_ids})
+
+        # EMA validation during test
         from utils.ema import EMACallback
         ema_callback = next((cb for cb in self.trainer.callbacks if isinstance(cb, EMACallback)), None)
         if ema_callback and ema_callback.ema_model:
             ema_outputs = ema_callback.ema_model.module(samples)
             ema_predictions, ema_image_ids = self._collect_batch_predictions(ema_outputs, targets)
-            self.test_step_outputs_ema.append({"predictions": ema_predictions, "image_ids": ema_image_ids})
+            
+            if eval_mode in ["whole", "both"]:
+                self.test_step_outputs_ema.append({"predictions": ema_predictions, "image_ids": ema_image_ids})
+                
+            if eval_mode in ["sliced", "both"]:
+                sliced_ema_predictions = {}
+                for i, target in enumerate(targets):
+                    img_id = int(target["image_id"].item())
+                    img_path = self._get_image_path(img_id, "test")
+                    
+                    if not img_path or not os.path.exists(img_path):
+                        sliced_ema_predictions[img_id] = ema_predictions[img_id]
+                        continue
+                    
+                    def predict_fn_ema(image_np):
+                        img_tensor = torch.from_numpy(image_np).permute(2, 0, 1).contiguous()
+                        img_tensor = F.convert_image_dtype(img_tensor, dtype=torch.float32)
+                        img_tensor = img_tensor.to(self.device)
+                        if next(ema_callback.ema_model.module.parameters()).dtype == torch.float16:
+                            img_tensor = img_tensor.half()
+                        elif next(ema_callback.ema_model.module.parameters()).dtype == torch.bfloat16:
+                            img_tensor = img_tensor.bfloat16()
+                            
+                        with torch.no_grad():
+                            out = ema_callback.ema_model.module([img_tensor])
+                            
+                        orig_size = torch.tensor([[image_np.shape[0], image_np.shape[1]]], device=self.device)
+                        post = self.postprocess(out, orig_size)[0]
+                        return to_cpu_device(post)
+
+                    img_pil = Image.open(img_path).convert("RGB")
+                    sahi_cfg = self.config.get("eval_inference", {}).get("sahi", {})
+                    input_size = getattr(self.config.data, 'model_input_size', 640)
+                    
+                    preds = run_sahi_sliced_eval(img_pil, predict_fn_ema, sahi_cfg, input_size)
+                    sliced_ema_predictions[img_id] = preds
+                
+                self.test_step_outputs_sliced_ema.append({"predictions": sliced_ema_predictions, "image_ids": ema_image_ids})
 
         return {"predictions": predictions, "image_ids": image_ids}
 
     def on_test_epoch_end(self):
-        all_outputs = gather_outputs_across_processes(self.test_step_outputs)
-        merged_predictions = self._merge_predictions_map(all_outputs)
-        metrics = {}
-        viz_predictions = merged_predictions
-        if self.trainer.is_global_zero:
-            test_predictions = []
-            test_image_ids = []
-            for batch_out in all_outputs:
-                test_predictions.extend(
-                    convert_preds_to_coco(batch_out["predictions"], model_to_coco=self.model_to_coco)
-                )
-                test_image_ids.extend(batch_out["image_ids"])
+        viz_predictions = None
 
-            if test_predictions:
-                metrics = compute_coco_metrics(
-                    coco_gt=self.test_coco_gt,
-                    predictions=test_predictions,
-                    image_ids=sorted(set(test_image_ids)),
-                    max_detections=int(self.config.model.max_detections),
-                    label_map=self.config.model.label_map,
-                )
-            else:
-                metrics = {"map": 0.0, "map_50": 0.0, "map_75": 0.0}
-
-        metrics = broadcast_object(metrics, src=0)
-        for key, value in metrics.items():
-            self.log(f"test/{key}", value, prog_bar=(key in {"map", "map_50"}), sync_dist=True)
-
-        self.test_step_outputs.clear()
-
-        all_ema_outputs = gather_outputs_across_processes(getattr(self, "test_step_outputs_ema", []))
-        if hasattr(self, "test_step_outputs_ema"):
-            ema_metrics = {}
-            merged_ema_predictions = self._merge_predictions_map(all_ema_outputs)
+        def _compute_and_log(outputs_list, prefix_name, log_prefix):
+            all_outputs = gather_outputs_across_processes(outputs_list)
+            merged = self._merge_predictions_map(all_outputs)
+            metrics = {}
             if self.trainer.is_global_zero:
-                ema_predictions = []
-                ema_image_ids = []
-                for batch_out in all_ema_outputs:
-                    ema_predictions.extend(
-                        convert_preds_to_coco(batch_out["predictions"], model_to_coco=self.model_to_coco)
-                    )
-                    ema_image_ids.extend(batch_out["image_ids"])
+                predictions = []
+                image_ids = []
+                for batch_out in all_outputs:
+                    predictions.extend(convert_preds_to_coco(batch_out["predictions"], model_to_coco=self.model_to_coco))
+                    image_ids.extend(batch_out["image_ids"])
 
-                if ema_predictions:
-                    ema_metrics = compute_coco_metrics(
+                if predictions:
+                    metrics = compute_coco_metrics(
                         coco_gt=self.test_coco_gt,
-                        predictions=ema_predictions,
-                        image_ids=sorted(set(ema_image_ids)),
+                        predictions=predictions,
+                        image_ids=sorted(set(image_ids)),
                         max_detections=int(self.config.model.max_detections),
                         label_map=self.config.model.label_map,
+                        prefix=f"{prefix_name} performance"
                     )
-                    viz_predictions = merged_ema_predictions
                 else:
-                    ema_metrics = {"map": 0.0, "map_50": 0.0, "map_75": 0.0}
+                    metrics = {"map": 0.0, "map_50": 0.0, "map_75": 0.0}
 
-            ema_metrics = broadcast_object(ema_metrics, src=0)
-            for key, value in ema_metrics.items():
-                self.log(f"test/{key}_ema", value, prog_bar=True, sync_dist=True)
+            metrics = broadcast_object(metrics, src=0)
+            for key, value in metrics.items():
+                self.log(f"{log_prefix}/{key}", value, prog_bar=(key in {"map", "map_50"}), sync_dist=True)
+            
+            outputs_list.clear()
+            return merged
 
-            self.test_step_outputs_ema.clear()
+        if self.test_step_outputs:
+            viz_predictions = _compute_and_log(self.test_step_outputs, "Test", "test")
+            
+        if self.test_step_outputs_sliced:
+            viz_predictions = _compute_and_log(self.test_step_outputs_sliced, "Test Sliced", "test_sliced")
 
-        if self.trainer.is_global_zero:
+        if hasattr(self, "test_step_outputs_ema") and self.test_step_outputs_ema:
+            viz_predictions = _compute_and_log(self.test_step_outputs_ema, "Test EMA", "test_ema")
+            
+        if hasattr(self, "test_step_outputs_sliced_ema") and self.test_step_outputs_sliced_ema:
+            viz_predictions = _compute_and_log(self.test_step_outputs_sliced_ema, "Test Sliced EMA", "test_sliced_ema")
+
+        if self.trainer.is_global_zero and viz_predictions is not None:
             self._visualize_aggregated_predictions(viz_predictions, split="test")
 
     def _merge_predictions_map(self, gathered_outputs):
