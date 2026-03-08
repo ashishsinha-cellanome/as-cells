@@ -128,6 +128,11 @@ def _extract_regular_state_dict(ckpt: Dict[str, Any]) -> Optional[Dict[str, Any]
     if isinstance(state_dict, dict):
         return state_dict
 
+    # Native YOLOv5 checkpoint (Ultralytics format)
+    if "model" in ckpt and hasattr(ckpt["model"], "state_dict"):
+        raw_sd = ckpt["model"].float().state_dict()
+        return {f"model.{k}": v for k, v in raw_sd.items()}
+
     # Fallback: checkpoint may itself be a state_dict-like mapping
     tensor_items = [(k, v) for k, v in ckpt.items() if isinstance(k, str) and isinstance(v, torch.Tensor)]
     if tensor_items and all("." in k for k, _ in tensor_items[: min(8, len(tensor_items))]):
@@ -135,10 +140,17 @@ def _extract_regular_state_dict(ckpt: Dict[str, Any]) -> Optional[Dict[str, Any]
     return None
 
 
-def _select_eval_weights_source(ckpt_path: str, ckpt: Dict[str, Any]) -> Literal["ema", "regular"]:
+def _select_eval_weights_source(ckpt_path: str, ckpt: Dict[str, Any], config: Optional[DictConfig] = None) -> Literal["ema", "regular"]:
     """Choose EMA vs regular weights for evaluation using path hint + key availability."""
     path_has_ema = "ema" in os.path.basename(ckpt_path).lower()
-    has_ema = isinstance(ckpt.get("ema_state_dict"), dict)
+    if config is not None and config.get("inference", {}).get("use_ema", False):
+        path_has_ema = True
+    
+    has_lightning_ema = isinstance(ckpt.get("ema_state_dict"), dict)
+    has_native_ema = "ema" in ckpt and ckpt["ema"] is not None and hasattr(ckpt["ema"], "ema")
+    has_native_model = "model" in ckpt and hasattr(ckpt["model"], "state_dict")
+    has_ema = has_lightning_ema or has_native_ema or has_native_model
+    
     has_regular = _extract_regular_state_dict(ckpt) is not None
 
     if path_has_ema and has_ema:
@@ -165,17 +177,30 @@ def _load_selected_weights(
 ) -> Tuple[list, list]:
     """Load selected evaluation weights and return missing/unexpected keys."""
     if source == "ema":
-        ema_state = ckpt.get("ema_state_dict")
-        if not isinstance(ema_state, dict):
-            raise ValueError("Requested EMA weights but checkpoint has no valid 'ema_state_dict'.")
+        if isinstance(ckpt.get("ema_state_dict"), dict):
+            ema_state = ckpt.get("ema_state_dict")
+        elif "ema" in ckpt and ckpt["ema"] is not None and hasattr(ckpt["ema"], "ema"):
+            ema_state = ckpt["ema"].ema.float().state_dict()
+        elif "model" in ckpt and hasattr(ckpt["model"], "state_dict"):
+            ema_state = ckpt["model"].float().state_dict()
+        else:
+            raise ValueError("Requested EMA weights but checkpoint has no valid EMA state.")
+
         if hasattr(lightning_module, "model") and hasattr(lightning_module.model, "load_state_dict"):
+            current_state = lightning_module.model.state_dict()
+            ema_state = {k: v for k, v in ema_state.items() if k in current_state and v.shape == current_state[k].shape}
             result = lightning_module.model.load_state_dict(ema_state, strict=False)
         else:
+            current_state = lightning_module.state_dict()
+            ema_state = {k: v for k, v in ema_state.items() if k in current_state and v.shape == current_state[k].shape}
             result = lightning_module.load_state_dict(ema_state, strict=False)
     else:
         regular_state = _extract_regular_state_dict(ckpt)
         if regular_state is None:
             raise ValueError("Requested regular weights but checkpoint has no valid 'state_dict'.")
+        
+        current_state = lightning_module.state_dict()
+        regular_state = {k: v for k, v in regular_state.items() if k in current_state and v.shape == current_state[k].shape}
         result = lightning_module.load_state_dict(regular_state, strict=False)
 
     missing = list(getattr(result, "missing_keys", []))

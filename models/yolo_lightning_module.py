@@ -157,9 +157,9 @@ class YOLOv5LightningModule(pl.LightningModule):
             self._compute_loss = self._ComputeLossClass(self.model)
         # breakpoint()
         imgs, targets, paths, _ = batch
-        # imgs = imgs.float() / 255.0  # Normalize to 0.0 - 1.0
+        imgs = imgs.float() / 255.0  # Normalize to 0.0 - 1.0
         
-        imgs = self.normalize(imgs)
+        # imgs = self.normalize(imgs)
         
         pred = self.model(imgs)
         loss, loss_items = self._compute_loss(pred, targets)
@@ -175,9 +175,9 @@ class YOLOv5LightningModule(pl.LightningModule):
         """Executes forward pass, NMS, and evaluation scaling. Can run on regular or EMA model."""
         imgs, targets, paths, shapes = batch
         # breakpoint()
-        # imgs = imgs.float() / 255.0 
+        imgs = imgs.float() / 255.0 
 
-        imgs = self.normalize(imgs)
+        # imgs = self.normalize(imgs)
         
         preds, _ = model_instance(imgs)
         
@@ -492,8 +492,8 @@ class YOLOv5LightningModule(pl.LightningModule):
             new_filename = f"rank{rank}_{filename}"
             image.save(os.path.join(save_dir, new_filename))
             counter += 1
-            if counter % 500 == 0:
-                self.print(f"[VIZ] {prefix.upper()} progress: saved {counter} images...")
+            # if counter % 500 == 0:
+            #     self.print(f"[VIZ] {prefix.upper()} progress: saved {counter} images...")
         return counter
 
     def configure_optimizers(self):

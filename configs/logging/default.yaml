@@ -6,5 +6,5 @@ wandb:
   # project: "rt-detr-cell-detection"
   project: 'cell-detection'
   # 'name' will be set by the top-level 'run_name'
-  tags: ["rt-detr", "dinov2", "cell-detection"]
+  tags: ["rt-detr", "cell-detection"]
   notes: "Training RT-DETR with DINOv2 backbone"

@@ -9,8 +9,8 @@
 #SBATCH --cpus-per-task=4
 ##SBATCH --exclusive
 #SBATCH --mem-per-gpu=32G
-#SBATCH --array=0-26
-#SBATCH --time=3-00:00:00
+#SBATCH --array=0-15
+#SBATCH --time=3-10:00:00
 #SBATCH --output=logs/%x-%A_%a.out
 #SBATCH --error=logs/%x-%A_%a.err
 
@@ -35,14 +35,20 @@ echo "Job started at: $(date)"
 echo "Account used: $SLURM_JOB_ACCOUNT"
 echo "Array Task ID: $SLURM_ARRAY_TASK_ID"
 
-LRS=("5e-4" "5e-5" "1e-5")
-MODEL_SIZE=("medium" "base" "small")  # ResNet stages: 0 (train all), 2 (partial freeze), 4 (freeze all)
-SCHEDULERS=("onecycle" "step" "cosine_warmup")
+# LRS=("5e-4" "5e-5" "1e-5")
+LRS=("5e-4" "5e-5")
+# MODEL_SIZE=("medium" "base" "small")  # ResNet stages: 0 (train all), 2 (partial freeze), 4 (freeze all)
+MODEL_SIZE=("medium" "base")
+# SCHEDULERS=("onecycle" "step" "cosine_warmup")
+SCHEDULERS=("onecycle" "step")
+DATA_CONFIG=("vulcan" "vulcan_no300_eval_train_plus_valgt300")
 CONFIGS=()
 for lr in "${LRS[@]}"; do
     for sched in "${SCHEDULERS[@]}"; do
-        for stage in "${MODEL_SIZE[@]}"; do
-            CONFIGS+=("optimizer.optimizer.lr=${lr} model.rfdetr.size=${stage} scheduler=${sched}")
+        for model_size in "${MODEL_SIZE[@]}"; do
+            for data_path in "${DATA_CONFIG[@]}"; do
+                CONFIGS+=("optimizer.optimizer.lr=${lr} model.rfdetr.size=${model_size} scheduler=${sched} data=${data_path}")
+            done
         done
     done
 done
@@ -57,7 +63,6 @@ echo "========================================================"
 
 # Run the training command
 srun uv run train_rf_detr.py \
-    data=vulcan \
     model=rfdetr \
     trainer.max_epochs=100 \
     ${MY_CONFIG}

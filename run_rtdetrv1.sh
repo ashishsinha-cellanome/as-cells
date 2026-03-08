@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=rtdetrv1
+#SBATCH --job-name=rtdetr
 #SBATCH --account=aip-robsc
 #SBATCH --nodes=1
 #SBATCH --mail-user=ashish.sinha@amii.ca
@@ -9,8 +9,8 @@
 #SBATCH --cpus-per-task=4
 ##SBATCH --exclusive
 #SBATCH --mem-per-gpu=32G
-#SBATCH --array=0-26
-#SBATCH --time=3-00:00:00
+#SBATCH --array=0-7
+#SBATCH --time=5-00:00:00
 #SBATCH --output=logs/%x-%A_%a.out
 #SBATCH --error=logs/%x-%A_%a.err
 
@@ -35,14 +35,23 @@ echo "Job started at: $(date)"
 echo "Account used: $SLURM_JOB_ACCOUNT"
 echo "Array Task ID: $SLURM_ARRAY_TASK_ID"
 
-LRS=("5e-4" "5e-5" "1e-5")
-FREEZE_STAGES=("2" "4" "0")  # ResNet stages: 0 (train all), 2 (partial freeze), 4 (freeze all)
-SCHEDULERS=("onecycle" "step" "cosine_warmup")
+LRS=("5e-4")
+# LRS=("5e-4" "5e-5" "1e-5")
+FREEZE_STAGES=("4" "0")  # ResNet stages: 0 (train all), 2 (partial freeze), 4 (freeze all)
+# SCHEDULERS=("onecycle" "step" "cosine_warmup")
+SCHEDULERS=("onecycle")
+MODELS=("rtdetr_v1" "rtdetr_v2")
+BACKBONES=("resnet50" "dinov2")
+DATA_CONFIG=("vulcan" "vulcan_no300_eval_train_plus_valgt300")
 CONFIGS=()
 for lr in "${LRS[@]}"; do
     for stage in "${FREEZE_STAGES[@]}"; do
         for sched in "${SCHEDULERS[@]}"; do
-            CONFIGS+=("optimizer.optimizer.lr=${lr} model.backbone.freeze_at_stage=${stage} scheduler=${sched}")
+        	for model in "${MODELS[@]}"; do
+    			for data_path in "${DATA_CONFIG[@]}"; do
+                    CONFIGS+=("optimizer.optimizer.lr=${lr} model.backbone.freeze_at_stage=${stage} scheduler=${sched} model=${model} data=${data_path}")
+				done
+			done
         done
     done
 done
@@ -78,8 +87,6 @@ echo "========================================================"
 
 # Run the training command
 srun uv run train_rt_detr_v2.py \
-    data=vulcan \
-    model=rtdetr_v1 \
     model.rtdetr.num_queries=600 \
     model/backbone=resnet50 \
     model.backbone.train_backbone=True \

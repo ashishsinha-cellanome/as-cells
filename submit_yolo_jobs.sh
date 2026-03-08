@@ -8,8 +8,8 @@
 #SBATCH --ntasks-per-node=4
 #SBATCH --cpus-per-task=4
 #SBATCH --mem-per-gpu=32G
-#SBATCH --time=1-02:00:00
-#SBATCH --array=0-15  # 🟢 Launches 60 jobs (0 through 59)
+#SBATCH --time=3-02:00:00
+#SBATCH --array=0-7  # 🟢 Launches 60 jobs (0 through 59)
 #SBATCH --output=logs/%x-%A_%a.out  # %A is the array job ID, %a is the specific task ID
 #SBATCH --error=logs/%x-%A_%a.err
 
@@ -36,17 +36,21 @@ echo "Account used: $SLURM_JOB_ACCOUNT"
 echo "Array Task ID: $SLURM_ARRAY_TASK_ID"
 
 # 1. Define the parameter arrays
-YOLO_SIZES=("m" "l")
+# YOLO_SIZES=("m" "l")
+YOLO_SIZES=("m")
 LRS=("0.01" "0.001")
-SCHEDULERS=("cosine_warmup" "step" "reduce_lr_on_plateau" "onecycle")
+DATA_CONFIG=("vulcan" "vulcan_no300_eval_train_plus_valgt300")
+SCHEDULERS=("cosine_warmup" "step")
 
 # 2. Build a flat list of all combinations in memory
 CONFIGS=()
 for size in "${YOLO_SIZES[@]}"; do
     for lr in "${LRS[@]}"; do
         for sched in "${SCHEDULERS[@]}"; do
-            # Combine the dynamic arguments into a single string
-            CONFIGS+=("model.yolov5.yolo_size=${size} model.yolov5.optimizer.lr=${lr} scheduler=${sched}")
+            for data_path in "${DATA_CONFIG[@]}"; do
+                # Combine the dynamic arguments into a single string
+                CONFIGS+=("model.yolov5.yolo_size=${size} model.yolov5.optimizer.lr=${lr} scheduler=${sched} data=${data_path}")
+            done
         done
     done
 done
@@ -62,7 +66,6 @@ echo "======================================================================"
 # 4. Run the training script using the selected config
 # Notice we pass $MY_CONFIG unquoted so Bash expands it into separate arguments
 srun uv run train_yolov5.py \
-    data=vulcan \
     model=yolov5 \
     $MY_CONFIG
 

@@ -534,9 +534,9 @@ class YOLOv5LightningModule(pl.LightningModule):
                     continue
                 
                 def predict_fn(image_np):
-                    from utils.cv_utils import letterbox # Custom YOLOv5 augmentations
+                    from data.yolov5_data_module import _letterbox
                     # Ensure dimensions match what the model expects
-                    im = letterbox(image_np, int(self.config.model.input_size), stride=self.stride, auto=True)[0]
+                    im, _, _ = _letterbox(image_np, int(self.config.model.input_size))
                     im = im.transpose((2, 0, 1))[::-1]  # HWC to CHW, BGR to RGB
                     im = np.ascontiguousarray(im)
                     
@@ -567,13 +567,10 @@ class YOLOv5LightningModule(pl.LightningModule):
                     labels = torch.empty((0,), dtype=torch.long, device=self.device)
                     
                     if preds is not None and len(preds):
-                        # Construct a fake shape meta for undo_letterbox
-                        # shape_meta: ((h0, w0), ((h/h0, w/w0), (dw, dh)))
+                        # Use _letterbox ratio/pad to undo letterbox correctly
+                        _, ratio, (dw, dh) = _letterbox(image_np, int(self.config.model.input_size))
                         h0, w0 = image_np.shape[:2]
-                        h, w = im_tensor.shape[2:]
-                        r = min(h / h0, w / w0)
-                        dh, dw = (h - h0 * r) / 2, (w - w0 * r) / 2
-                        shape_meta = ((h0, w0), ((r, r), (dw, dh)))
+                        shape_meta = ((h0, w0), ((ratio, ratio), (dw, dh)))
                         
                         preds[:, :4] = self._undo_letterbox(preds[:, :4], shape_meta)
                         boxes = preds[:, :4]
@@ -974,8 +971,8 @@ class YOLOv5LightningModule(pl.LightningModule):
             save_path = os.path.join(save_dir, new_filename)
             image.save(save_path)
             counter += 1
-            if counter % 500 == 0:
-                self.print(f"[VIZ] {split.upper()} progress: saved {counter} images...")
+            # if counter % 500 == 0:
+            #     self.print(f"[VIZ] {split.upper()} progress: saved {counter} images...")
             
         return counter
         

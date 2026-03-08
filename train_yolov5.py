@@ -62,7 +62,6 @@ def _setup_logger(config: DictConfig):
         name=config.run_name,
         tags=list(wandb_cfg.tags),
         notes=wandb_cfg.notes,
-        # group=wandb_cfg.get("group"),
         config=cfg_for_log,
         save_dir=os.getcwd(),
         reinit='finish_previous',
@@ -197,7 +196,30 @@ def main(config: DictConfig):
                 "'initialization.load_from_checkpoint=/abs/path/model.ckpt'."
             )
 
+        # Inject YOLOv5 repo into sys.path so torch.load can deserialize native YOLOv5 model classes
+        import sys
+        import importlib
+        original_path = sys.path.copy()
+        original_modules = {}
+        try:
+            yolo_repo_path = to_absolute_path(config.model.yolov5.repo_path)
+            # Remove current directory and project paths from sys.path
+            sys.path = [p for p in sys.path if p not in ("", ".", str(os.getcwd()))]
+            if yolo_repo_path not in sys.path:
+                sys.path.insert(0, yolo_repo_path)
+                rank_zero_print(f"Injected YOLO repo path: {yolo_repo_path}")
+                
+            for key in list(sys.modules.keys()):
+                if key.startswith(("models", "utils", "detect", "export")):
+                    original_modules[key] = sys.modules.pop(key)
+        except Exception as e:
+            rank_zero_print(f"Warning: Could not isolate YOLO repo path. {e}")
+
         test_only_checkpoint = _load_ckpt(early_ckpt_path)
+        
+        # Restore sys.path
+        sys.path = original_path
+        # Keep imported yolov5 modules so models can be unpickled properly if used later
         config = _merge_test_only_config_from_ckpt(config, test_only_checkpoint)
         OmegaConf.set_struct(config, False)
         config.initialization.load_from_checkpoint = early_ckpt_path
@@ -208,7 +230,7 @@ def main(config: DictConfig):
             config.model.ema.enabled = False
             rank_zero_print("test_only: disabled EMA callback/branch for single selected-model evaluation.")
 
-        test_only_weight_source = _select_eval_weights_source(early_ckpt_path, test_only_checkpoint)
+        test_only_weight_source = _select_eval_weights_source(early_ckpt_path, test_only_checkpoint, config)
         rank_zero_print(f"test_only: selected checkpoint weight source = {test_only_weight_source.upper()}")
 
     OmegaConf.set_struct(config, True)
