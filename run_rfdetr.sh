@@ -14,14 +14,6 @@
 #SBATCH --output=logs/%x-%A_%a.out
 #SBATCH --error=logs/%x-%A_%a.err
 
-ACCOUNT="aip-robsc"
-# --- Account Handling ---
-# If not running under SLURM, submit this script to sbatch
-if [ -z "$SLURM_JOB_ID" ]; then
-    echo "Submitting job with account: $ACCOUNT"
-    sbatch --account=$ACCOUNT "$0"
-    exit
-fi
 
 # --- Training Logic (Only runs inside SLURM) ---
 set -e
