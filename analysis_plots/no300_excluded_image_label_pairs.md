@@ -1,6 +1,6 @@
 # Excluded Image/Label Pairs (`>300` BBoxes)
 
-- Generated At: `2026-03-04T21:14:35-07:00`
+- Generated At: `2026-03-12T21:55:58-06:00`
 - Dataset Path: `/project/aip-robsc/asinha/cellanome/DATA/TRAINING_DATA`
 - Threshold Rule: `bbox_count > 300`
 - Promoted To Train Source: `valid`

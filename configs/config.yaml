@@ -46,18 +46,19 @@ training:
 eval_inference:
   mode: whole   # whole | sliced | both
   sahi:
-    slice_height: null
-    slice_width: null
-    overlap_height_ratio: null
-    overlap_width_ratio: null
-    overlap_height_px: 80
-    overlap_width_px: 80
+    slice_height: 256
+    slice_width: 256
+    overlap_height_ratio: 0.25
+    overlap_width_ratio: 0.25
+    overlap_height_px: null
+    overlap_width_px: null
     perform_standard_pred: true
-    postprocess_type: NMS
+    postprocess_type: NMS # NMS/WBF
     postprocess_match_metric: IOU
     postprocess_match_threshold: 0.5
     postprocess_class_agnostic: false
-    auto_slice_resolution: false
+    # auto_slice_resolution: true
+    # auto_slice_resolution_target_size: 256
     verbose: 0
 
 inference:

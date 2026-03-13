@@ -100,7 +100,10 @@ class YOLOv5DataModule(pl.LightningDataModule):
             self._convert_coco_to_yolo(self.data_config.val_name, os.path.join(dp, 'images', self.data_config.val_name), os.path.join(dp, f'{self.data_config.val_name}_annotations.json'))
             self._convert_coco_to_yolo(self.data_config.test_name, os.path.join(dp, 'images', self.data_config.test_name), os.path.join(dp, f'{self.data_config.test_name}_annotations.json'))
             
-            names = [self.config.model.label_map[k] for k in sorted(self.config.model.label_map.keys())]
+            # names = [self.config.model.label_map[k] for k in sorted(self.config.model.label_map.keys())]
+            # instead of list, keep it as key:value pairs
+            names = self.config.model.label_map.items()
+            # print(f"{*}*80\n{names}\n{*}*80")
             yaml_content = f"train: {self.cache_dir / 'images' / self.data_config.train_name}\nval: {self.cache_dir / 'images' / self.data_config.val_name}\ntest: {self.cache_dir / 'images' / self.data_config.test_name}\nnc: {len(names)}\nnames: {names}\n"
             with open(self.yaml_path, "w") as f: f.write(yaml_content)
         

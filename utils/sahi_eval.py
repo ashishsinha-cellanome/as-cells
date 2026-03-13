@@ -69,7 +69,9 @@ class LightningDetectionModel(DetectionModel):
             box = boxes[i]
             score = scores[i]
             category_id = int(labels[i])
-            category_name = self.category_mapping.get(str(category_id), str(category_id))
+            
+            mapping = self.category_mapping or {}
+            category_name = mapping.get(str(category_id), str(category_id))
 
             # Apply shift
             shifted_box = [
@@ -91,6 +93,7 @@ class LightningDetectionModel(DetectionModel):
                 )
             )
 
+        self._object_prediction_list_per_image = [object_prediction_list]
         return object_prediction_list
 
 
@@ -114,7 +117,7 @@ def resolve_sahi_overlap(sahi_cfg, slice_dim: int, is_height: bool) -> float:
     return 0.2 # Fallback
 
 
-def run_sahi_sliced_eval(image, predict_fn, sahi_config, input_size):
+def run_sahi_sliced_eval(image, predict_fn, sahi_config, input_size, label_map=None, export_dir=None, file_name=None):
     """
     Runs SAHI sliced inference using the provided image and generic model wrapper.
     
@@ -123,6 +126,9 @@ def run_sahi_sliced_eval(image, predict_fn, sahi_config, input_size):
         predict_fn: Callable that takes a numpy array and returns standard predictions dict
         sahi_config: OmegaConf dict containing SAHI parameters
         input_size: The default slice size (from config.model.input_size)
+        label_map: Mapping from category ID to category name (for visualisation)
+        export_dir: Directory to save visualisations (if any)
+        file_name: Name of the file for the visualisation
     """
     slice_height = sahi_config.get('slice_height')
     if slice_height is None: slice_height = input_size
@@ -133,10 +139,16 @@ def run_sahi_sliced_eval(image, predict_fn, sahi_config, input_size):
     overlap_height_ratio = resolve_sahi_overlap(sahi_config, slice_height, is_height=True)
     overlap_width_ratio = resolve_sahi_overlap(sahi_config, slice_width, is_height=False)
 
+    # Convert label map keys to str for SAHI
+    category_mapping = None
+    if label_map is not None:
+        category_mapping = {str(k): str(v) for k, v in label_map.items()}
+
     model = LightningDetectionModel(
         predict_fn=predict_fn,
         confidence_threshold=0.001, # Pass highly confident and low confident predictions, let the metric eval filter them
         device='cpu', # Device management is handled internally by predict_fn
+        category_mapping=category_mapping
     )
 
     result = get_sliced_prediction(
@@ -153,6 +165,14 @@ def run_sahi_sliced_eval(image, predict_fn, sahi_config, input_size):
         postprocess_class_agnostic=sahi_config.get('postprocess_class_agnostic', False),
         verbose=sahi_config.get('verbose', 0)
     )
+
+    if export_dir is not None:
+        import os
+        os.makedirs(export_dir, exist_ok=True)
+        # file_name usually has an extension, remove it if sahi adds one or just pass it
+        if file_name and file_name.endswith(('.png', '.jpg', '.jpeg')):
+            file_name = file_name.rsplit('.', 1)[0]
+        result.export_visuals(export_dir=export_dir, file_name=file_name, text_size=0.5, rect_th=2)
 
     # Convert SAHI result back to standard PyTorch dictionaries
     # (boxes, scores, labels) on CPU

@@ -64,7 +64,7 @@ label_map:
   2: "cell-adhered"
   3: "soma"
 
-detection_threshold: 0.05
+detection_threshold: 0.001
 draw_threshold: 0.4
 max_detections: 100
 
@@ -73,3 +73,6 @@ ema:
   decay: 0.9999
   tau: 2000
   warmup_steps: 100
+
+# /project/aip-robsc/asinha/cellanome/DATA/checkpoints/yolov5_2026-02-28_12_4176937_12-07/ckpts/yolov5-ema-epoch-19-val_map_ema-0.4979.ckpt
+# /project/aip-robsc/asinha/cellanome/DATA/checkpoints/yolov5_2026-02-28_12_4176937_12-07/ckpts/yolov5-regular-epoch-15-val_map-0.4917.ckpt

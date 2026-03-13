@@ -137,15 +137,15 @@ class RFDETRLightningModule(pl.LightningModule):
         self._log_loss_dict("train", loss_dict, weight_dict, batch_size=batch_size)
 
         # Heartbeat logs for long epochs when progress bars are not visible in tmux/srun.
-        heartbeat_interval = 500
-        if self.trainer.is_global_zero and (batch_idx == 0 or (batch_idx + 1) % heartbeat_interval == 0):
-            total_batches = getattr(self.trainer, "num_training_batches", None)
-            total_batches_str = str(total_batches) if isinstance(total_batches, int) else "?"
-            self.print(
-                f"[TRAIN] epoch={self.current_epoch + 1} "
-                f"batch={batch_idx + 1}/{total_batches_str} "
-                f"loss={float(loss.detach().item()):.4f}"
-            )
+        # heartbeat_interval = 500
+        # if self.trainer.is_global_zero and (batch_idx == 0 or (batch_idx + 1) % heartbeat_interval == 0):
+        #     total_batches = getattr(self.trainer, "num_training_batches", None)
+        #     total_batches_str = str(total_batches) if isinstance(total_batches, int) else "?"
+        #     self.print(
+        #         f"[TRAIN] epoch={self.current_epoch + 1} "
+        #         f"batch={batch_idx + 1}/{total_batches_str} "
+        #         f"loss={float(loss.detach().item()):.4f}"
+        #     )
 
         return loss
 
@@ -193,9 +193,9 @@ class RFDETRLightningModule(pl.LightningModule):
             "val/loss",
             loss,
             batch_size=batch_size,
-            on_step=False,
+            on_step=True,
             on_epoch=True,
-            prog_bar=False,
+            prog_bar=True,
             sync_dist=True,
         )
         self._log_loss_dict("val", loss_dict, weight_dict, batch_size=batch_size)
@@ -297,7 +297,8 @@ class RFDETRLightningModule(pl.LightningModule):
     def on_validation_epoch_end(self):
         viz_predictions = None
 
-        def _compute_and_log(outputs_list, prefix_name, log_prefix):
+        # Added base_prefix and suffix parameters
+        def _compute_and_log(outputs_list, prefix_name, base_prefix, suffix=""):
             all_outputs = gather_outputs_across_processes(outputs_list)
             merged = self._merge_predictions_map(all_outputs)
             metrics = {}
@@ -322,24 +323,30 @@ class RFDETRLightningModule(pl.LightningModule):
 
             metrics = broadcast_object(metrics, src=0)
             for key, value in metrics.items():
-                self.log(f"{log_prefix}/{key}", value, prog_bar=(key in {"map", "map_50"}), sync_dist=True)
+                # Formats as: val/map_ema instead of val_ema/map
+                self.log(f"{base_prefix}/{key}{suffix}", value, prog_bar=(key in {"map", "map_50"}), sync_dist=True)
                 if key == "map":
-                    self.log(f"{log_prefix}_map", value, prog_bar=False, sync_dist=True)
+                    # Formats as: val_map_ema instead of val_ema_map
+                    self.log(f"{base_prefix}_{key}{suffix}", value, prog_bar=False, sync_dist=True)
             
             outputs_list.clear()
             return merged
 
+        # 1. Standard Whole
         if self.validation_step_outputs:
-            viz_predictions = _compute_and_log(self.validation_step_outputs, "Val", "val")
+            viz_predictions = _compute_and_log(self.validation_step_outputs, "Val", "val", "")
             
+        # 2. Standard Sliced
         if self.validation_step_outputs_sliced:
-            viz_predictions = _compute_and_log(self.validation_step_outputs_sliced, "Val Sliced", "val_sliced")
+            viz_predictions = _compute_and_log(self.validation_step_outputs_sliced, "Val Sliced", "val", "_sliced")
 
+        # 3. EMA Whole
         if hasattr(self, "validation_step_outputs_ema") and self.validation_step_outputs_ema:
-            viz_predictions = _compute_and_log(self.validation_step_outputs_ema, "Val EMA", "val_ema")
+            viz_predictions = _compute_and_log(self.validation_step_outputs_ema, "Val EMA", "val", "_ema")
             
+        # 4. EMA Sliced
         if hasattr(self, "validation_step_outputs_sliced_ema") and self.validation_step_outputs_sliced_ema:
-            viz_predictions = _compute_and_log(self.validation_step_outputs_sliced_ema, "Val Sliced EMA", "val_sliced_ema")
+            viz_predictions = _compute_and_log(self.validation_step_outputs_sliced_ema, "Val Sliced EMA", "val", "_sliced_ema")
 
         if self.trainer.is_global_zero and viz_predictions is not None:
             self._visualize_aggregated_predictions(viz_predictions, split="val")
@@ -472,7 +479,8 @@ class RFDETRLightningModule(pl.LightningModule):
     def on_test_epoch_end(self):
         viz_predictions = None
 
-        def _compute_and_log(outputs_list, prefix_name, log_prefix):
+        # Added base_prefix and suffix parameters
+        def _compute_and_log(outputs_list, prefix_name, base_prefix, suffix=""):
             all_outputs = gather_outputs_across_processes(outputs_list)
             merged = self._merge_predictions_map(all_outputs)
             metrics = {}
@@ -497,22 +505,27 @@ class RFDETRLightningModule(pl.LightningModule):
 
             metrics = broadcast_object(metrics, src=0)
             for key, value in metrics.items():
-                self.log(f"{log_prefix}/{key}", value, prog_bar=(key in {"map", "map_50"}), sync_dist=True)
+                # Formats as: test/map_ema instead of test_ema/map
+                self.log(f"{base_prefix}/{key}{suffix}", value, prog_bar=(key in {"map", "map_50"}), sync_dist=True)
             
             outputs_list.clear()
             return merged
 
+        # 1. Standard Whole
         if self.test_step_outputs:
-            viz_predictions = _compute_and_log(self.test_step_outputs, "Test", "test")
+            viz_predictions = _compute_and_log(self.test_step_outputs, "Test", "test", "")
             
+        # 2. Standard Sliced
         if self.test_step_outputs_sliced:
-            viz_predictions = _compute_and_log(self.test_step_outputs_sliced, "Test Sliced", "test_sliced")
+            viz_predictions = _compute_and_log(self.test_step_outputs_sliced, "Test Sliced", "test", "_sliced")
 
+        # 3. EMA Whole
         if hasattr(self, "test_step_outputs_ema") and self.test_step_outputs_ema:
-            viz_predictions = _compute_and_log(self.test_step_outputs_ema, "Test EMA", "test_ema")
+            viz_predictions = _compute_and_log(self.test_step_outputs_ema, "Test EMA", "test", "_ema")
             
+        # 4. EMA Sliced
         if hasattr(self, "test_step_outputs_sliced_ema") and self.test_step_outputs_sliced_ema:
-            viz_predictions = _compute_and_log(self.test_step_outputs_sliced_ema, "Test Sliced EMA", "test_sliced_ema")
+            viz_predictions = _compute_and_log(self.test_step_outputs_sliced_ema, "Test Sliced EMA", "test", "_sliced_ema")
 
         if self.trainer.is_global_zero and viz_predictions is not None:
             self._visualize_aggregated_predictions(viz_predictions, split="test")
@@ -693,8 +706,8 @@ class RFDETRLightningModule(pl.LightningModule):
             save_path = os.path.join(save_dir, f"image_{int(image_id)}_{original_filename}")
             image.save(save_path)
             saved_count += 1
-            if saved_count % 500 == 0:
-                self.print(f"[VIZ] {split.upper()} progress: saved {saved_count} images...")
+            # if saved_count % 500 == 0:
+            #     self.print(f"[VIZ] {split.upper()} progress: saved {saved_count} images...")
 
         self.print(f"[VIZ] {split.upper()} saved {saved_count} aggregated visualizations to: {save_dir}")
 

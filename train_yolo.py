@@ -219,7 +219,8 @@ def main(config: DictConfig):
 
     callbacks = setup_callbacks(config)
 
-    trainer = pl.Trainer(
+    import inspect
+    trainer_kwargs = dict(
         accelerator=config.trainer.accelerator,
         devices=config.trainer.devices,
         num_nodes=int(os.environ.get("SLURM_NNODES", 1)),
@@ -228,12 +229,24 @@ def main(config: DictConfig):
         gradient_clip_val=config.trainer.max_grad_norm,
         callbacks=callbacks,
         logger=logger,
-        use_distributed_sampler = False, # YOLO loader handles DDP sampling
         limit_train_batches=config.data.limit_train_batches,
         limit_val_batches=config.data.limit_val_batches,
         limit_test_batches=config.data.limit_test_batches,
-        overfit_batches=config.data.num_overfit_samples ,
+        overfit_batches=config.data.num_overfit_samples,
     )
+    trainer_sig = inspect.signature(pl.Trainer)
+    if "use_distributed_sampler" in trainer_sig.parameters:
+        trainer_kwargs["use_distributed_sampler"] = False
+    if "replace_sampler_ddp" in trainer_sig.parameters:
+        trainer_kwargs["replace_sampler_ddp"] = False
+
+    trainer = pl.Trainer(**trainer_kwargs)
+    # Extra guard: prevent Lightning from injecting a distributed sampler.
+    if hasattr(trainer, "_data_connector"):
+        if hasattr(trainer._data_connector, "_use_distributed_sampler"):
+            trainer._data_connector._use_distributed_sampler = False
+        if hasattr(trainer._data_connector, "_replace_sampler_ddp"):
+            trainer._data_connector._replace_sampler_ddp = False
     
     if config.get("test_only", False):
         if not ckpt_path: raise ValueError("Must provide load_from_checkpoint for test-only.")

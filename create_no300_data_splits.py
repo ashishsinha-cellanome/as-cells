@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 import json
-import shutil
 from collections import Counter, defaultdict
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
@@ -18,14 +16,6 @@ THRESHOLD = 300
 VAL_OUTPUT_NAME = "valid_no300"
 TEST_OUTPUT_NAME = "test_no300"
 TRAIN_PROMOTED_OUTPUT_NAME = "train_plus_valgt300"
-
-
-def _strip_split_prefix(file_name: str, split_name: str) -> str:
-    if file_name.startswith(f"../{split_name}/"):
-        return file_name[len(f"../{split_name}/") :]
-    if file_name.startswith(f"{split_name}/"):
-        return file_name[len(f"{split_name}/") :]
-    return file_name
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -71,10 +61,7 @@ def _load_coco_quiet(path: Path) -> COCO:
 
 
 def analyze_and_filter_split(
-    payload: dict[str, Any],
-    split_name: str,
-    threshold: int,
-    normalize_file_names: bool = False,
+    payload: dict[str, Any], split_name: str, threshold: int
 ) -> dict[str, Any]:
     images = payload.get("images", [])
     annotations = payload.get("annotations", [])
@@ -98,12 +85,14 @@ def analyze_and_filter_split(
     for image in images:
         img_id = int(image["id"])
         if img_id in dropped_image_ids:
+            # Keep original reference for reporting & downstream promotion
             dropped_images.append(image)
         else:
             new_image = dict(image)
-            if normalize_file_names:
-                orig_file_name = str(image.get("file_name", ""))
-                new_image["file_name"] = _strip_split_prefix(orig_file_name, split_name)
+            orig_file_name = str(image.get("file_name", ""))
+            # Force relative path to breakout of dynamically assumed folders
+            if not orig_file_name.startswith(f"../{split_name}/"):
+                new_image["file_name"] = f"../{split_name}/{orig_file_name}"
             filtered_images.append(new_image)
 
     filtered_annotations = []
@@ -175,7 +164,6 @@ def build_train_plus_val_promoted(
     dropped_val_annotations: list[dict[str, Any]],
     val_split_name: str,
     train_split_name: str,
-    copy_images: bool = False,
 ) -> dict[str, Any]:
     train_images = train_payload.get("images", [])
     train_annotations = train_payload.get("annotations", [])
@@ -183,12 +171,14 @@ def build_train_plus_val_promoted(
     max_image_id = max((int(image["id"]) for image in train_images), default=0)
     max_annotation_id = max((int(ann["id"]) for ann in train_annotations), default=0)
 
+    # Base train images need the prefix too, because the dataloader might look
+    # in `images/train_plus_valgt300/` instead of `images/train/`.
     new_train_images = []
     for image in train_images:
         new_image = dict(image)
-        if copy_images:
-            orig_file_name = str(image.get("file_name", ""))
-            new_image["file_name"] = f"train/{_strip_split_prefix(orig_file_name, train_split_name)}"
+        orig_file_name = str(image.get("file_name", ""))
+        if not orig_file_name.startswith(f"../{train_split_name}/"):
+            new_image["file_name"] = f"../{train_split_name}/{orig_file_name}"
         new_train_images.append(new_image)
 
     promoted_images = []
@@ -198,11 +188,13 @@ def build_train_plus_val_promoted(
         source_image_id = int(image["id"])
         new_image = dict(image)
         new_image["id"] = int(next_image_id)
+        
         orig_file_name = str(image.get("file_name", ""))
-        if copy_images:
-            new_image["file_name"] = f"valid/{_strip_split_prefix(orig_file_name, val_split_name)}"
-        else:
+        if not orig_file_name.startswith(f"../{val_split_name}/"):
             new_image["file_name"] = f"../{val_split_name}/{orig_file_name}"
+        else:
+            new_image["file_name"] = orig_file_name
+            
         promoted_images.append(new_image)
         source_to_new_image_id[source_image_id] = int(next_image_id)
         next_image_id += 1
@@ -368,7 +360,6 @@ def validate_outputs(
     threshold: int,
     promoted_val_split_name: str,
     train_split_name: str,
-    copy_images: bool,
 ) -> dict[str, Any]:
     val_coco = _load_coco_quiet(val_path)
     test_coco = _load_coco_quiet(test_path)
@@ -388,18 +379,12 @@ def validate_outputs(
     for image in train_plus_payload.get("images", []):
         image_id = int(image["id"])
         file_name = str(image.get("file_name", ""))
-        if copy_images:
-            if image_id in promoted_id_set and not file_name.startswith("valid/"):
-                promoted_image_path_violations.append(file_name)
-            if image_id not in promoted_id_set and not file_name.startswith("train/"):
-                base_train_image_path_violations.append(file_name)
-        else:
-            if image_id in promoted_id_set and not file_name.startswith(
-                f"../{promoted_val_split_name}/"
-            ):
-                promoted_image_path_violations.append(file_name)
-            if image_id not in promoted_id_set and file_name.startswith("../"):
-                base_train_image_path_violations.append(file_name)
+        
+        if image_id in promoted_id_set and not file_name.startswith(f"../{promoted_val_split_name}/"):
+            promoted_image_path_violations.append(file_name)
+            
+        if image_id not in promoted_id_set and not file_name.startswith(f"../{train_split_name}/"):
+            base_train_image_path_violations.append(file_name)
 
     image_ids = [int(image["id"]) for image in train_plus_payload.get("images", [])]
     ann_ids = [int(ann["id"]) for ann in train_plus_payload.get("annotations", [])]
@@ -425,37 +410,6 @@ def validate_outputs(
     }
 
 
-def _copy_images(
-    *,
-    items: list[tuple[Path, Path]],
-    workers: int,
-) -> tuple[int, int]:
-    copied = 0
-    skipped = 0
-    if workers <= 1:
-        for src, dst in items:
-            if dst.exists():
-                skipped += 1
-                continue
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, dst)
-            copied += 1
-        return copied, skipped
-
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = {}
-        for src, dst in items:
-            if dst.exists():
-                skipped += 1
-                continue
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            futures[pool.submit(shutil.copy2, src, dst)] = dst
-        for fut in as_completed(futures):
-            fut.result()
-            copied += 1
-    return copied, skipped
-
-
 @hydra.main(config_path="configs", config_name="config.yaml", version_base=None)
 def main(cfg: DictConfig) -> None:
     data_root = Path(cfg.data.path).expanduser()
@@ -466,13 +420,6 @@ def main(cfg: DictConfig) -> None:
     train_split_name = str(getattr(cfg, "train_name", "train"))
     val_split_name = str(getattr(cfg, "val_name", "valid"))
     test_split_name = str(getattr(cfg, "test_name", "test"))
-
-    no300_cfg = getattr(cfg, "no300", None)
-    copy_images = bool(getattr(no300_cfg, "copy_images", False)) if no300_cfg else False
-    images_dir_name = (
-        str(getattr(no300_cfg, "images_dir", "images")) if no300_cfg else "images"
-    )
-    copy_workers = int(getattr(no300_cfg, "copy_workers", 8)) if no300_cfg else 8
 
     train_src_path = data_root / f"{train_split_name}_annotations.json"
     val_src_path = data_root / f"{val_split_name}_annotations.json"
@@ -486,16 +433,10 @@ def main(cfg: DictConfig) -> None:
     print(f"Dataset root: {data_root}")
     print(f"Using splits: train={train_split_name}, val={val_split_name}, test={test_split_name}")
     print(f"Threshold: >{THRESHOLD}")
-    print(f"Copy images: {copy_images}")
 
     print("\nLoading and filtering validation annotations...")
     val_payload = load_json(val_src_path)
-    val_stats = analyze_and_filter_split(
-        val_payload,
-        val_split_name,
-        THRESHOLD,
-        normalize_file_names=copy_images,
-    )
+    val_stats = analyze_and_filter_split(val_payload, val_split_name, THRESHOLD)
     valid_no300_path = data_root / f"{VAL_OUTPUT_NAME}_annotations.json"
     write_json(valid_no300_path, val_stats["filtered_payload"], pretty=False)
     print(
@@ -508,12 +449,7 @@ def main(cfg: DictConfig) -> None:
 
     print("\nLoading and filtering test annotations...")
     test_payload = load_json(test_src_path)
-    test_stats = analyze_and_filter_split(
-        test_payload,
-        test_split_name,
-        THRESHOLD,
-        normalize_file_names=copy_images,
-    )
+    test_stats = analyze_and_filter_split(test_payload, test_split_name, THRESHOLD)
     test_no300_path = data_root / f"{TEST_OUTPUT_NAME}_annotations.json"
     write_json(test_no300_path, test_stats["filtered_payload"], pretty=False)
     print(
@@ -529,7 +465,6 @@ def main(cfg: DictConfig) -> None:
         dropped_val_annotations=dropped_val_annotations,
         val_split_name=val_split_name,
         train_split_name=train_split_name,
-        copy_images=copy_images,
     )
     train_plus_path = data_root / f"{TRAIN_PROMOTED_OUTPUT_NAME}_annotations.json"
     write_json(train_plus_path, train_plus["payload"], pretty=False)
@@ -555,45 +490,6 @@ def main(cfg: DictConfig) -> None:
     report_path.write_text(report_text, encoding="utf-8")
     print(f"\nWrote report: {report_path}")
 
-    if copy_images:
-        images_root = data_root / images_dir_name
-        val_src_root = images_root / val_split_name
-        test_src_root = images_root / test_split_name
-        train_src_root = images_root / train_split_name
-        val_dst_root = images_root / VAL_OUTPUT_NAME
-        test_dst_root = images_root / TEST_OUTPUT_NAME
-        train_plus_dst_root = images_root / TRAIN_PROMOTED_OUTPUT_NAME
-
-        print("\nCopying filtered validation images...")
-        val_items: list[tuple[Path, Path]] = []
-        for image in val_stats["filtered_payload"].get("images", []):
-            rel = str(image.get("file_name", ""))
-            val_items.append((val_src_root / rel, val_dst_root / rel))
-        copied, skipped = _copy_images(items=val_items, workers=copy_workers)
-        print(f"  valid_no300: copied={copied}, skipped={skipped}")
-
-        print("\nCopying filtered test images...")
-        test_items: list[tuple[Path, Path]] = []
-        for image in test_stats["filtered_payload"].get("images", []):
-            rel = str(image.get("file_name", ""))
-            test_items.append((test_src_root / rel, test_dst_root / rel))
-        copied, skipped = _copy_images(items=test_items, workers=copy_workers)
-        print(f"  test_no300: copied={copied}, skipped={skipped}")
-
-        print("\nCopying train_plus_valgt300 images...")
-        train_items: list[tuple[Path, Path]] = []
-        for image in train_plus["payload"].get("images", []):
-            rel = str(image.get("file_name", ""))
-            if rel.startswith("valid/"):
-                src = val_src_root / rel[len("valid/") :]
-            elif rel.startswith("train/"):
-                src = train_src_root / rel[len("train/") :]
-            else:
-                src = train_src_root / rel
-            train_items.append((src, train_plus_dst_root / rel))
-        copied, skipped = _copy_images(items=train_items, workers=copy_workers)
-        print(f"  train_plus_valgt300: copied={copied}, skipped={skipped}")
-
     validation_results = validate_outputs(
         val_path=valid_no300_path,
         test_path=test_no300_path,
@@ -602,7 +498,6 @@ def main(cfg: DictConfig) -> None:
         threshold=THRESHOLD,
         promoted_val_split_name=val_split_name,
         train_split_name=train_split_name,
-        copy_images=copy_images,
     )
 
     if not validation_results["val_filter_rule_satisfied"]:
@@ -629,7 +524,7 @@ def main(cfg: DictConfig) -> None:
         )
     if validation_results["base_train_image_path_violations"]:
         raise RuntimeError(
-            "Found base train images missing the expected path prefix: "
+            "Found base train images missing the expected relative path prefix: "
             f"{validation_results['base_train_image_path_violations'][:10]}"
         )
 
@@ -648,9 +543,6 @@ def main(cfg: DictConfig) -> None:
             "test_filtered": TEST_OUTPUT_NAME,
             "train_promoted": TRAIN_PROMOTED_OUTPUT_NAME,
         },
-        "copy_images": copy_images,
-        "images_dir": images_dir_name,
-        "copy_workers": copy_workers,
         "source_files": {
             "train": _file_signature(train_src_path),
             "val": _file_signature(val_src_path),
