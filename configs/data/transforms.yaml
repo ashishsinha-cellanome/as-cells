@@ -8,13 +8,13 @@ transforms:
         p: 1.0
     - name: PadIfNeeded
       params:
-        min_height: 672 
-        min_width: 672  
+        min_height: ${model.input_size} # change as per model input size
+        min_width: ${model.input_size}
         position: 'random'
     - name: RandomCrop
       params:
-        height: 672 
-        width: 672  
+        height: ${model.input_size}
+        width: ${model.input_size}
         pad_if_needed: False
         p: 1.0
     - name: RandomRotate90

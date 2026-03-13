@@ -3,6 +3,7 @@
 *.pt
 *.pth
 .cache
+*.zip
 test_ema_safety.py
 GEMINI.md
 ClAUDE.md

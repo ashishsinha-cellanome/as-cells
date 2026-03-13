@@ -10,11 +10,25 @@ Use model configs from `configs/model/`:
 
 ```bash
 # RT-DETR (existing)
-uv run train_rt_detr_v2.py model=rtdetr_base
+uv run train_rt_detr_v2.py model=rtdetr_v1
 
 # RF-DETR (new)
-uv run train_rf_detr.py model=rf_detr_base
+uv run train_rf_detr.py model=rf_detr
 
 # YOLOv5 (new, requires official YOLOv5 source at model.yolov5.repo_path)
-uv run train_yolov5.py model=yolov5_base
+uv run train_yolov5.py model=yolov5
+```
+
+## Inference
+Use model configs from `configs/model/`:
+
+```bash
+# RT-DETR (existing)
+uv run train_rt_detr_v2.py model=rtdetr_v1 test_only=True initialization.load_from_checkpoint=/path/to/checkpoint.ckpt
+
+# RF-DETR (new)
+uv run train_rf_detr.py model=rf_detr test_only=True initialization.load_from_checkpoint=/path/to/checkpoint.ckpt
+
+# YOLOv5 (new, requires official YOLOv5 source at model.yolov5.repo_path)
+uv run train_yolov5.py model=yolov5 test_only=True initialization.load_from_checkpoint=/path/to/checkpoint.ckpt
 ```
