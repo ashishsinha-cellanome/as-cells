@@ -6,7 +6,7 @@ pretrained_name_or_path: "facebook/dinov2-base" # facebook/dinov2-with-registers
 name: "dinov2"  # Matches the supported model names
 model_name: "${extract_name:${.pretrained_name_or_path}}"
 
-output_indices_for_fpn: [3,7,11]
+output_indices_for_fpn: [3,7,11] # [4,8,12]
 fpn_type: 'fused' # simple/fused/tiny
 fusion_method: 'conv'
 first_layer_dims: [80,80]

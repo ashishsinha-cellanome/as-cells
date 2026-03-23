@@ -1,7 +1,7 @@
-  type: "reduce_lr_on_plateau"
-  warmup_steps: 5000
-  factor: 0.9
-  patience: 5
-  T_max: ${trainer.max_epochs}
-  last_epoch: -1
-  eta_min: 1e-6
+type: "reduce_lr_on_plateau"
+warmup_steps: 5000
+factor: 0.9
+patience: 5
+T_max: ${trainer.max_epochs}
+last_epoch: -1
+eta_min: 1e-6

@@ -14,7 +14,7 @@ yolov5:
   weights: /project/aip-robsc/asinha/cellanome/as-cells/yolov5${model.yolov5.yolo_size}.pt
 
   # YOLO inference/eval settings
-  iou_threshold: 0.2 # 0.45
+  iou_threshold: 0.6 # 0.45
   cache_images: false
 
   # Native YOLO hyperparameters passed into dataloader/train behavior.
