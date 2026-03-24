@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# USE this file only to create the splits
 import json
 import shutil
 from collections import Counter, defaultdict
