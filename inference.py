@@ -26,7 +26,7 @@ from torch.utils.data import ConcatDataset
 from utils.dataset_utils import create_dataset_classes
 
 # Import sliding window utility from the Inference package
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'Inference'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "Inference"))
 from model_utils import get_crop_corners
 
 
@@ -79,7 +79,7 @@ def run_dataset_mode(config: DictConfig, model, processor):
         org_images_in_model_input_size=config.data.org_images_in_model_input_size,
         config=config,
     )
-    
+
     data_module.setup(stage="test")
     test_loader = data_module.test_dataloader()
     coco_gt = data_module.test_dataset.dataset_coco.coco
@@ -103,7 +103,9 @@ def run_dataset_mode(config: DictConfig, model, processor):
     gt_remap = _build_gt_label_remap(coco_gt, config)
 
     print(f"[dataset mode] Using detection threshold: {detection_threshold}")
-    print(f"[dataset mode] Starting inference on {len(data_module.test_dataset)} images ...")
+    print(
+        f"[dataset mode] Starting inference on {len(data_module.test_dataset)} images ..."
+    )
 
     with torch.no_grad():
         for batch in tqdm(test_loader, desc="Dataset inference"):
@@ -111,9 +113,13 @@ def run_dataset_mode(config: DictConfig, model, processor):
             labels_batch = batch["labels"]
 
             outputs = model.model(pixel_values=pixel_values, labels=None)
-            batch_image_sizes = [to_cpu(x["orig_size"]).numpy().tolist() for x in labels_batch]
+            batch_image_sizes = [
+                to_cpu(x["orig_size"]).numpy().tolist() for x in labels_batch
+            ]
             post_processed = processor.post_process_object_detection(
-                outputs, threshold=detection_threshold, target_sizes=batch_image_sizes,
+                outputs,
+                threshold=detection_threshold,
+                target_sizes=batch_image_sizes,
             )
 
             for i, pred in enumerate(post_processed):
@@ -124,10 +130,18 @@ def run_dataset_mode(config: DictConfig, model, processor):
 
                 # Visualization
                 if max_viz == -1 or viz_count < max_viz:
-                    mean = torch.tensor(processor.image_mean, device=pixel_values.device).view(1, 3, 1, 1)
-                    std = torch.tensor(processor.image_std, device=pixel_values.device).view(1, 3, 1, 1)
-                    img_tensor = torch.clamp((pixel_values[i : i + 1] * std) + mean, 0, 1)
-                    img_np = (img_tensor.squeeze().permute(1, 2, 0).cpu().numpy() * 255).astype("uint8")
+                    mean = torch.tensor(
+                        processor.image_mean, device=pixel_values.device
+                    ).view(1, 3, 1, 1)
+                    std = torch.tensor(
+                        processor.image_std, device=pixel_values.device
+                    ).view(1, 3, 1, 1)
+                    img_tensor = torch.clamp(
+                        (pixel_values[i : i + 1] * std) + mean, 0, 1
+                    )
+                    img_np = (
+                        img_tensor.squeeze().permute(1, 2, 0).cpu().numpy() * 255
+                    ).astype("uint8")
                     pil_img = Image.fromarray(img_np)
 
                     ann_ids = coco_gt.getAnnIds(imgIds=image_id)
@@ -139,29 +153,64 @@ def run_dataset_mode(config: DictConfig, model, processor):
                         gt_boxes_viz.append([x, y, x + w, y + h])
                         gt_labels_viz.append(ann["category_id"])
 
-                    draw_boxes_on_image(pil_img, gt_boxes_viz, gt_labels_viz, label_map, color=(0, 255, 0), prefix="GT: ")
                     draw_boxes_on_image(
-                        pil_img, boxes.numpy(), pred_labels.numpy(), label_map,
-                        color=(255, 0, 0), scores=scores.numpy(), prefix="Pred: ",
+                        pil_img,
+                        gt_boxes_viz,
+                        gt_labels_viz,
+                        label_map,
+                        color=(0, 255, 0),
+                        prefix="GT: ",
+                    )
+                    draw_boxes_on_image(
+                        pil_img,
+                        boxes.numpy(),
+                        pred_labels.numpy(),
+                        label_map,
+                        color=(255, 0, 0),
+                        scores=scores.numpy(),
+                        prefix="Pred: ",
                     )
                     pil_img.save(os.path.join(viz_dir, f"img_{image_id}_viz.jpg"))
                     viz_count += 1
 
                 # COCO format accumulation
                 xywh_boxes = convert_to_xywh(boxes)
-                for b, s, l in zip(xywh_boxes.tolist(), scores.tolist(), pred_labels.tolist()):
+                for b, s, l in zip(
+                    xywh_boxes.tolist(), scores.tolist(), pred_labels.tolist()
+                ):
                     predictions_coco.append(
-                        {"image_id": image_id, "category_id": int(l), "bbox": b, "score": s}
+                        {
+                            "image_id": image_id,
+                            "category_id": int(l),
+                            "bbox": b,
+                            "score": s,
+                        }
                     )
 
                 # Per-image TP/FP/FN
                 ann_ids = coco_gt.getAnnIds(imgIds=image_id)
                 anns = coco_gt.loadAnns(ann_ids)
-                gt_boxes_all = np.array([[a["bbox"][0], a["bbox"][1], a["bbox"][0] + a["bbox"][2], a["bbox"][1] + a["bbox"][3]] for a in anns]) if anns else np.zeros((0, 4))
-                gt_labels_all = np.array([a["category_id"] for a in anns]) if anns else np.array([])
+                gt_boxes_all = (
+                    np.array(
+                        [
+                            [
+                                a["bbox"][0],
+                                a["bbox"][1],
+                                a["bbox"][0] + a["bbox"][2],
+                                a["bbox"][1] + a["bbox"][3],
+                            ]
+                            for a in anns
+                        ]
+                    )
+                    if anns
+                    else np.zeros((0, 4))
+                )
+                gt_labels_all = (
+                    np.array([a["category_id"] for a in anns]) if anns else np.array([])
+                )
                 pred_boxes_np = boxes.numpy()
                 pred_labels_np = pred_labels.numpy()
-                
+
                 # Fetch filename if available
                 file_name = f"image_{image_id}"
                 if image_id in coco_gt.imgs:
@@ -170,13 +219,28 @@ def run_dataset_mode(config: DictConfig, model, processor):
                 image_stats = {"image_id": image_id, "file_name": file_name}
                 for cls_id in class_ids:
                     cls_name = label_map[cls_id]
-                    tp, fp, fn = _compute_tp_fp_fn(gt_boxes_all, gt_labels_all, pred_boxes_np, pred_labels_np, cls_id, gt_remap=gt_remap)
+                    tp, fp, fn = _compute_tp_fp_fn(
+                        gt_boxes_all,
+                        gt_labels_all,
+                        pred_boxes_np,
+                        pred_labels_np,
+                        cls_id,
+                        gt_remap=gt_remap,
+                    )
                     image_stats[f"{cls_name}_TP"] = tp
                     image_stats[f"{cls_name}_FP"] = fp
                     image_stats[f"{cls_name}_FN"] = fn
                 per_image_analysis.append(image_stats)
 
-    _save_results(predictions_coco, per_image_analysis, coco_gt, label_map, class_ids, metrics_dir, viz_dir)
+    _save_results(
+        predictions_coco,
+        per_image_analysis,
+        coco_gt,
+        label_map,
+        class_ids,
+        metrics_dir,
+        viz_dir,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -197,7 +261,7 @@ def run_folder_mode(config: DictConfig, model, processor):
     os.makedirs(metrics_dir, exist_ok=True)
 
     # Check for Cellanome dataset structure
-    csv_path = os.path.join(folder_path, 'annotation_images_mapping.csv')
+    csv_path = os.path.join(folder_path, "annotation_images_mapping.csv")
     is_cellanome_dataset = os.path.exists(csv_path)
 
     # Prepare sliding window parameters
@@ -205,12 +269,12 @@ def run_folder_mode(config: DictConfig, model, processor):
     overlap_x = sliding_window_cfg.overlap_x
     overlap_y = sliding_window_cfg.overlap_y
     nms_threshold = sliding_window_cfg.nms_threshold
-    
+
     # Model input size from config (default to 640 if missing)
     input_size = (640, 640)
-    if hasattr(config.model, 'val_image_size'):
-         sz = config.model.val_image_size
-         input_size = (sz, sz)
+    if hasattr(config.model, "val_image_size"):
+        sz = config.model.val_image_size
+        input_size = (sz, sz)
 
     # Sliding window crops generator
     corners_generator = lambda img_h, img_w: get_crop_corners(
@@ -218,16 +282,16 @@ def run_folder_mode(config: DictConfig, model, processor):
         image_height=img_h,
         input_size=input_size,
         overlap_in_x=overlap_x,
-        overlap_in_y=overlap_y
+        overlap_in_y=overlap_y,
     )
 
     # Setup COCO GT object strictly for evaluation at the end
     coco_gt = COCO()
     coco_gt.dataset = {"images": [], "annotations": [], "categories": [], "info": []}
     coco_gt.createIndex()
-    
+
     # Categories
-    label_map = dict(config.model.label_map) # id -> name
+    label_map = dict(config.model.label_map)  # id -> name
     # Ensure keys are ints
     label_map = {int(k): v for k, v in label_map.items()}
     class_ids = list(label_map.keys())
@@ -235,49 +299,51 @@ def run_folder_mode(config: DictConfig, model, processor):
     coco_gt.dataset["categories"] = categories
 
     dataset_iterator = []
-    
+
     if is_cellanome_dataset:
-        print(f"[folder mode] Found annotation_images_mapping.csv. Using Cellanome dataset loader...")
+        print(
+            f"[folder mode] Found annotation_images_mapping.csv. Using Cellanome dataset loader..."
+        )
         # Invert label map for create_dataset_classes (name -> id)
         class_name_to_id = {v: k for k, v in label_map.items()}
-        
+
         # Use a large max_side to avoid resizing during loading (we want full res for sliding window)
         train_ds, test_ds = create_dataset_classes(
             dataset_path=folder_path,
             class_names_to_class_ids_map=class_name_to_id,
-            max_larger_side=10000, 
-            max_smaller_side=10000
+            max_larger_side=10000,
+            max_smaller_side=10000,
         )
         try:
-             # Combine both splits to run on everything in the folder
-             dataset = ConcatDataset([train_ds, test_ds])
+            # Combine both splits to run on everything in the folder
+            dataset = ConcatDataset([train_ds, test_ds])
         except Exception:
-             dataset = train_ds if len(train_ds) > 0 else test_ds
-        
+            dataset = train_ds if len(train_ds) > 0 else test_ds
+
         print(f"[folder mode] Loaded {len(dataset)} images from Cellanome dataset.")
-        
+
         # Helper to yield from dataset
         def cellanome_generator():
             for i in range(len(dataset)):
                 sample = dataset[i]
                 # sample is a dict: {'name': str, 'image': np.ndarray, 'annotations': DataFrame, ...}
-                img_name = sample['name']
-                img_rgb = sample['image'] # Already RGB (or grayscale converted)
+                img_name = sample["name"]
+                img_rgb = sample["image"]  # Already RGB (or grayscale converted)
                 if len(img_rgb.shape) == 2:
                     img_rgb = cv2.cvtColor(img_rgb, cv2.COLOR_GRAY2RGB)
-                
+
                 # Parse annotations to standard format: list of [x1, y1, x2, y2] (xyxy) and labels
                 gt_boxes = []
                 gt_labels = []
-                
-                if 'annotations' in sample and not sample['annotations'].empty:
-                    df = sample['annotations']
+
+                if "annotations" in sample and not sample["annotations"].empty:
+                    df = sample["annotations"]
                     for _, row in df.iterrows():
-                        x1, y1, x2, y2 = row['xtl'], row['ytl'], row['xbr'], row['ybr']
-                        label = row['label']
+                        x1, y1, x2, y2 = row["xtl"], row["ytl"], row["xbr"], row["ybr"]
+                        label = row["label"]
                         gt_boxes.append([x1, y1, x2, y2])
                         gt_labels.append(int(label))
-                
+
                 yield i + 1, img_name, img_rgb, gt_boxes, gt_labels
 
         dataset_iterator = cellanome_generator()
@@ -285,26 +351,28 @@ def run_folder_mode(config: DictConfig, model, processor):
     else:
         # Standard flat folder mode
         print(f"[folder mode] Using flat folder structure (no csv found).")
-        valid_exts = ('.jpg', '.jpeg', '.png', '.tif', '.tiff', '.bmp')
-        image_files = sorted([f for f in os.listdir(folder_path) if f.lower().endswith(valid_exts)])
-        
+        valid_exts = (".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp")
+        image_files = sorted(
+            [f for f in os.listdir(folder_path) if f.lower().endswith(valid_exts)]
+        )
+
         # Load COCO GT if available
         gt_lookup = {}
         coco_json_path = config.inference.gt_json
         gt_coco_obj = None
         if coco_json_path and os.path.exists(os.path.join(folder_path, coco_json_path)):
-             gt_coco_obj = COCO(os.path.join(folder_path, coco_json_path))
-             # Ensure 'info' key exists
-             if 'info' not in gt_coco_obj.dataset:
-                 gt_coco_obj.dataset['info'] = []
-             # Map image filename to annotations
-             for img_id in gt_coco_obj.getImgIds():
-                 img_info = gt_coco_obj.loadImgs(img_id)[0]
-                 fname = img_info['file_name']
-                 ann_ids = gt_coco_obj.getAnnIds(imgIds=img_id)
-                 anns = gt_coco_obj.loadAnns(ann_ids)
-                 gt_lookup[fname] = anns
-        
+            gt_coco_obj = COCO(os.path.join(folder_path, coco_json_path))
+            # Ensure 'info' key exists
+            if "info" not in gt_coco_obj.dataset:
+                gt_coco_obj.dataset["info"] = []
+            # Map image filename to annotations
+            for img_id in gt_coco_obj.getImgIds():
+                img_info = gt_coco_obj.loadImgs(img_id)[0]
+                fname = img_info["file_name"]
+                ann_ids = gt_coco_obj.getAnnIds(imgIds=img_id)
+                anns = gt_coco_obj.loadAnns(ann_ids)
+                gt_lookup[fname] = anns
+
         def flat_folder_generator():
             for i, img_name in enumerate(image_files):
                 img_path = os.path.join(folder_path, img_name)
@@ -319,135 +387,153 @@ def run_folder_mode(config: DictConfig, model, processor):
                     img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_GRAY2RGB)
                 else:
                     img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
-                
+
                 gt_boxes = []
                 gt_labels = []
-                
+
                 if img_name in gt_lookup:
                     anns = gt_lookup[img_name]
                     for ann in anns:
-                        bbox = ann['bbox'] # xywh
+                        bbox = ann["bbox"]  # xywh
                         # Convert to xyxy
-                        gt_boxes.append([bbox[0], bbox[1], bbox[0]+bbox[2], bbox[1]+bbox[3]])
-                        gt_labels.append(ann['category_id'])
-                        
+                        gt_boxes.append(
+                            [bbox[0], bbox[1], bbox[0] + bbox[2], bbox[1] + bbox[3]]
+                        )
+                        gt_labels.append(ann["category_id"])
+
                 yield i + 1, img_name, img_rgb, gt_boxes, gt_labels
 
         dataset_iterator = flat_folder_generator()
 
     # Shared processing loop
-    results_coco = [] # For COCOeval
+    results_coco = []  # For COCOeval
     per_image_metrics = []
-    
+
     # Global accumulator for creating the final COCO GT object for evaluation
     coco_gt_images = []
     coco_gt_annotations = []
     ann_id_counter = 1
-    
-    gt_remap = _build_gt_label_remap(coco_gt, config) 
+
+    gt_remap = _build_gt_label_remap(coco_gt, config)
 
     print(f"[folder mode] Starting inference on images...")
-    
-    for image_id, img_name, img_rgb, gt_boxes_list, gt_labels_list in tqdm(dataset_iterator, desc="Processing"):
-        
+
+    for image_id, img_name, img_rgb, gt_boxes_list, gt_labels_list in tqdm(
+        dataset_iterator, desc="Processing"
+    ):
         h, w = img_rgb.shape[:2]
-        
+
         # Add to COCO GT for final eval
-        coco_gt_images.append({
-            "id": image_id, 
-            "width": w, 
-            "height": h, 
-            "file_name": img_name
-        })
-        
+        coco_gt_images.append(
+            {"id": image_id, "width": w, "height": h, "file_name": img_name}
+        )
+
         # Add GT annotations
         gt_boxes_xyxy = []
         gt_labels_np = []
-        
+
         for box, lbl in zip(gt_boxes_list, gt_labels_list):
             # box is xyxy from generator
             bx1, by1, bx2, by2 = box
             gt_boxes_xyxy.append([bx1, by1, bx2, by2])
             gt_labels_np.append(lbl)
-            
-            coco_gt_annotations.append({
-                "id": ann_id_counter,
-                "image_id": image_id,
-                "category_id": int(lbl),
-                "bbox": [bx1, by1, bx2 - bx1, by2 - by1], # xywh for COCO
-                "area": (bx2 - bx1) * (by2 - by1),
-                "iscrowd": 0
-            })
+
+            coco_gt_annotations.append(
+                {
+                    "id": ann_id_counter,
+                    "image_id": image_id,
+                    "category_id": int(lbl),
+                    "bbox": [bx1, by1, bx2 - bx1, by2 - by1],  # xywh for COCO
+                    "area": (bx2 - bx1) * (by2 - by1),
+                    "iscrowd": 0,
+                }
+            )
             ann_id_counter += 1
-            
+
         gt_boxes_xyxy = np.array(gt_boxes_xyxy) if gt_boxes_xyxy else np.zeros((0, 4))
         gt_labels_np = np.array(gt_labels_np) if gt_labels_np else np.zeros((0,))
-        
+
         # SLIDING WINDOW INFERENCE
         crops = corners_generator(h, w)
         all_pred_boxes = []
         all_pred_scores = []
         all_pred_labels = []
-        
+
         for crop_id, (cx1, cy1, cx2, cy2) in enumerate(crops):
             crop_img = img_rgb[cy1:cy2, cx1:cx2]
             crop_h, crop_w = crop_img.shape[:2]
 
             inputs = processor(images=crop_img, return_tensors="pt").to(model.device)
             with torch.no_grad():
-                outputs = model.model(pixel_values=inputs['pixel_values'], labels=None)
-            
+                outputs = model.model(pixel_values=inputs["pixel_values"], labels=None)
+
             # Post-process
             target_sizes = torch.tensor([[crop_h, crop_w]], device=model.device)
             results = processor.post_process_object_detection(
-                outputs, 
-                target_sizes=target_sizes, 
-                threshold=0.0 # Get all, filter later
+                outputs,
+                target_sizes=target_sizes,
+                threshold=0.0,  # Get all, filter later
             )[0]
-            
+
             boxes = results["boxes"].cpu().numpy()
             scores = results["scores"].cpu().numpy()
             labels = results["labels"].cpu().numpy()
-            
+
             # Filter by score
             mask = scores >= config.model.detection_threshold
             boxes = boxes[mask]
             scores = scores[mask]
             labels = labels[mask]
-            
+
             # Shift boxes to global coordinates
             if len(boxes) > 0:
                 boxes[:, [0, 2]] += cx1
                 boxes[:, [1, 3]] += cy1
-                
+
                 all_pred_boxes.append(boxes)
                 all_pred_scores.append(scores)
                 all_pred_labels.append(labels)
-                
+
         # Merge crops with NMS
         if all_pred_boxes:
             final_boxes, final_scores, final_labels = _cross_crop_nms(
-                all_pred_boxes, 
-                all_pred_scores, 
-                all_pred_labels, 
-                nms_threshold
+                all_pred_boxes, all_pred_scores, all_pred_labels, nms_threshold
             )
         else:
-            final_boxes, final_scores, final_labels = np.zeros((0, 4)), np.zeros((0,)), np.zeros((0,), dtype=int)
-            
+            final_boxes, final_scores, final_labels = (
+                np.zeros((0, 4)),
+                np.zeros((0,)),
+                np.zeros((0,), dtype=int),
+            )
+
         # VISUALIZATION
-        if config.inference.max_viz == -1 or len(per_image_metrics) < config.inference.max_viz:
+        if (
+            config.inference.max_viz == -1
+            or len(per_image_metrics) < config.inference.max_viz
+        ):
             viz_img = img_rgb.copy()
             pil_viz = Image.fromarray(viz_img)
 
             # Draw GT (Green)
             if len(gt_boxes_xyxy) > 0:
-                draw_boxes_on_image(pil_viz, gt_boxes_xyxy, gt_labels_np, label_map, color=(0, 255, 0), prefix="GT: ")
-            
+                draw_boxes_on_image(
+                    pil_viz,
+                    gt_boxes_xyxy,
+                    gt_labels_np,
+                    label_map,
+                    color=(0, 255, 0),
+                    prefix="GT: ",
+                )
+
             # Draw Pred (Red)
             draw_boxes_on_image(
-                pil_viz, final_boxes, final_labels, label_map,
-                color=(255, 0, 0), scores=final_scores, prefix="Pred: ",
+                pil_viz,
+                final_boxes,
+                final_labels,
+                label_map,
+                color=(255, 0, 0),
+                scores=final_scores,
+                prefix="Pred: ",
             )
             stem = os.path.splitext(os.path.basename(img_name))[0]
             pil_viz.save(os.path.join(viz_dir, f"{stem}_viz.jpg"))
@@ -457,37 +543,53 @@ def run_folder_mode(config: DictConfig, model, processor):
         image_stats = {"image_id": image_id, "file_name": img_name}
         for cls_id in class_ids:
             cls_name = label_map[cls_id]
-            tp, fp, fn = _compute_tp_fp_fn(gt_boxes_xyxy, gt_labels_np, final_boxes, final_labels, cls_id, gt_remap=gt_remap)
+            tp, fp, fn = _compute_tp_fp_fn(
+                gt_boxes_xyxy,
+                gt_labels_np,
+                final_boxes,
+                final_labels,
+                cls_id,
+                gt_remap=gt_remap,
+            )
             image_stats[f"{cls_name}_TP"] = tp
             image_stats[f"{cls_name}_FP"] = fp
             image_stats[f"{cls_name}_FN"] = fn
         per_image_metrics.append(image_stats)
-        
+
         # Add to COCO results
         for box, sc, lbl in zip(final_boxes, final_scores, final_labels):
-            results_coco.append({
-                "image_id": image_id,
-                "category_id": int(lbl),
-                "bbox": [float(box[0]), float(box[1]), float(box[2]-box[0]), float(box[3]-box[1])],
-                "score": float(sc)
-            })
+            results_coco.append(
+                {
+                    "image_id": image_id,
+                    "category_id": int(lbl),
+                    "bbox": [
+                        float(box[0]),
+                        float(box[1]),
+                        float(box[2] - box[0]),
+                        float(box[3] - box[1]),
+                    ],
+                    "score": float(sc),
+                }
+            )
 
     # Save Per-Image CSV
-    pd.DataFrame(per_image_metrics).to_csv(os.path.join(output_dir, "per_image_stats.csv"), index=False)
-    
+    pd.DataFrame(per_image_metrics).to_csv(
+        os.path.join(output_dir, "per_image_stats.csv"), index=False
+    )
+
     # Run COCO Eval
     if results_coco and coco_gt_annotations:
         print("[folder mode] Running COCO evaluation...")
         coco_gt.dataset["images"] = coco_gt_images
         coco_gt.dataset["annotations"] = coco_gt_annotations
         coco_gt.createIndex()
-        
+
         coco_dt = coco_gt.loadRes(results_coco)
-        coco_eval = COCOeval(coco_gt, coco_dt, 'bbox')
+        coco_eval = COCOeval(coco_gt, coco_dt, "bbox")
         coco_eval.evaluate()
         coco_eval.accumulate()
         coco_eval.summarize()
-        
+
         # Save metrics
         stats = {
             "mAP_50_95": coco_eval.stats[0],
@@ -496,7 +598,7 @@ def run_folder_mode(config: DictConfig, model, processor):
         }
         with open(os.path.join(output_dir, "metrics.json"), "w") as f:
             json.dump(stats, f, indent=2)
-            
+
     print(f"[folder mode] Done. Output saved to {output_dir}")
 
 
@@ -543,11 +645,15 @@ def run_single_mode(config: DictConfig, model, processor):
     H, W = img_rgb.shape[:2]
     crop_size = (model_input_size, model_input_size)
     crop_corners = get_crop_corners(
-        image_width=W, image_height=H,
-        overlap_in_x=sw_cfg.overlap_x, overlap_in_y=sw_cfg.overlap_y,
+        image_width=W,
+        image_height=H,
+        overlap_in_x=sw_cfg.overlap_x,
+        overlap_in_y=sw_cfg.overlap_y,
         input_size=crop_size,
     )
-    print(f"[single mode] Image {os.path.basename(image_path)} ({W}x{H}): {len(crop_corners)} crops")
+    print(
+        f"[single mode] Image {os.path.basename(image_path)} ({W}x{H}): {len(crop_corners)} crops"
+    )
 
     all_boxes, all_scores, all_labels = [], [], []
     with torch.no_grad():
@@ -623,9 +729,24 @@ def run_single_mode(config: DictConfig, model, processor):
         if image_id is not None:
             ann_ids = coco_gt.getAnnIds(imgIds=image_id)
             anns = coco_gt.loadAnns(ann_ids)
-            gt_boxes_viz = [[a["bbox"][0], a["bbox"][1], a["bbox"][0] + a["bbox"][2], a["bbox"][1] + a["bbox"][3]] for a in anns]
+            gt_boxes_viz = [
+                [
+                    a["bbox"][0],
+                    a["bbox"][1],
+                    a["bbox"][0] + a["bbox"][2],
+                    a["bbox"][1] + a["bbox"][3],
+                ]
+                for a in anns
+            ]
             gt_labels_viz = [a["category_id"] for a in anns]
-            draw_boxes_on_image(pil_img, gt_boxes_viz, gt_labels_viz, label_map, color=(0, 255, 0), prefix="GT: ")
+            draw_boxes_on_image(
+                pil_img,
+                gt_boxes_viz,
+                gt_labels_viz,
+                label_map,
+                color=(0, 255, 0),
+                prefix="GT: ",
+            )
 
             gt_boxes_all = np.array(gt_boxes_viz) if gt_boxes_viz else np.zeros((0, 4))
             gt_labels_all = np.array(gt_labels_viz) if gt_labels_viz else np.array([])
@@ -633,11 +754,18 @@ def run_single_mode(config: DictConfig, model, processor):
             image_stats = {"image_id": image_id, "file_name": file_name}
             for cls_id in class_ids:
                 cls_name = label_map[cls_id]
-                tp, fp, fn = _compute_tp_fp_fn(gt_boxes_all, gt_labels_all, merged_boxes, merged_labels, cls_id, gt_remap=gt_remap)
+                tp, fp, fn = _compute_tp_fp_fn(
+                    gt_boxes_all,
+                    gt_labels_all,
+                    merged_boxes,
+                    merged_labels,
+                    cls_id,
+                    gt_remap=gt_remap,
+                )
                 image_stats[f"{cls_name}_TP"] = tp
                 image_stats[f"{cls_name}_FP"] = fp
                 image_stats[f"{cls_name}_FN"] = fn
-            
+
             df = pd.DataFrame([image_stats])
             df.to_csv(os.path.join(metrics_dir, "per_image_analysis.csv"), index=False)
 
@@ -645,12 +773,14 @@ def run_single_mode(config: DictConfig, model, processor):
             predictions_coco = []
             for b, s, l in zip(merged_boxes, merged_scores, merged_labels):
                 x1, y1, x2, y2 = b
-                predictions_coco.append({
-                    "image_id": image_id,
-                    "category_id": int(l),
-                    "bbox": [float(x1), float(y1), float(x2 - x1), float(y2 - y1)],
-                    "score": float(s),
-                })
+                predictions_coco.append(
+                    {
+                        "image_id": image_id,
+                        "category_id": int(l),
+                        "bbox": [float(x1), float(y1), float(x2 - x1), float(y2 - y1)],
+                        "score": float(s),
+                    }
+                )
             if predictions_coco:
                 coco_dt = coco_gt.loadRes(predictions_coco)
                 coco_eval = COCOeval(coco_gt, coco_dt, "bbox")
@@ -660,11 +790,18 @@ def run_single_mode(config: DictConfig, model, processor):
                 coco_eval.summarize()
             print(f"[single mode] Metrics for {file_name}: {image_stats}")
         else:
-            logging.warning(f"Image {file_name} not found in GT JSON, skipping evaluation")
+            logging.warning(
+                f"Image {file_name} not found in GT JSON, skipping evaluation"
+            )
 
     draw_boxes_on_image(
-        pil_img, merged_boxes, merged_labels, label_map,
-        color=(255, 0, 0), scores=merged_scores, prefix="Pred: ",
+        pil_img,
+        merged_boxes,
+        merged_labels,
+        label_map,
+        color=(255, 0, 0),
+        scores=merged_scores,
+        prefix="Pred: ",
     )
     stem = os.path.splitext(os.path.basename(image_path))[0]
     viz_path = os.path.join(viz_dir, f"{stem}_viz.jpg")
@@ -689,12 +826,12 @@ def _build_gt_label_remap(coco_gt, config) -> Dict[int, int]:
         return {}
 
     # Only apply remapping if explicitly enabled
-    if not getattr(config, 'remap_labels', False):
+    if not getattr(config, "remap_labels", False):
         return {}
 
     # Check if class_remapping is configured
     remapping_rules = {}
-    if hasattr(config, 'data') and config.data and 'class_remapping' in config.data:
+    if hasattr(config, "data") and config.data and "class_remapping" in config.data:
         class_remap = config.data.class_remapping
         if class_remap is not None:
             remapping_rules = dict(class_remap)
@@ -707,7 +844,7 @@ def _build_gt_label_remap(coco_gt, config) -> Dict[int, int]:
 
     remap = {}
     for cat_id, cat_info in coco_gt.cats.items():
-        src_name = cat_info['name']
+        src_name = cat_info["name"]
         effective_name = remapping_rules.get(src_name, src_name)
         if effective_name in name_to_model_id:
             remap[cat_id] = name_to_model_id[effective_name]
@@ -727,7 +864,9 @@ def _remap_gt_labels(gt_labels: np.ndarray, gt_remap: Dict[int, int]) -> np.ndar
     return remapped
 
 
-def _compute_tp_fp_fn(gt_boxes, gt_labels, pred_boxes, pred_labels, cls_id, gt_remap=None):
+def _compute_tp_fp_fn(
+    gt_boxes, gt_labels, pred_boxes, pred_labels, cls_id, gt_remap=None
+):
     # Remap GT labels if annotation filter is configured
     if gt_remap:
         gt_labels = _remap_gt_labels(gt_labels, gt_remap)
@@ -751,7 +890,9 @@ def _compute_tp_fp_fn(gt_boxes, gt_labels, pred_boxes, pred_labels, cls_id, gt_r
     elif len(cls_pred) == 0:
         return 0, 0, len(cls_gt)
     else:
-        paired, unpaired_gt, unpaired_pred = pair_gts_dets_bbox(cls_gt, cls_pred, min_iou=0.5)
+        paired, unpaired_gt, unpaired_pred = pair_gts_dets_bbox(
+            cls_gt, cls_pred, min_iou=0.5
+        )
         return len(paired), len(unpaired_pred), len(unpaired_gt)
 
 
@@ -784,13 +925,21 @@ def _cross_crop_nms(
     return boxes_cat[keep_indices], scores_cat[keep_indices], labels_cat[keep_indices]
 
 
-def _save_results(predictions_coco, per_image_analysis, coco_gt, label_map, class_ids, metrics_dir, viz_dir):
+def _save_results(
+    predictions_coco,
+    per_image_analysis,
+    coco_gt,
+    label_map,
+    class_ids,
+    metrics_dir,
+    viz_dir,
+):
     """Save COCO metrics, per-image CSV, and aggregate JSON (shared by dataset and folder modes)."""
     metrics_summary = {}
 
     # Ensure coco_gt has 'info' key to avoid KeyError
-    if coco_gt is not None and 'info' not in coco_gt.dataset:
-        coco_gt.dataset['info'] = []
+    if coco_gt is not None and "info" not in coco_gt.dataset:
+        coco_gt.dataset["info"] = []
 
     if len(predictions_coco) > 0 and coco_gt is not None:
         print("\nComputing COCO Metrics...")
@@ -842,10 +991,18 @@ def _save_results(predictions_coco, per_image_analysis, coco_gt, label_map, clas
             fn = int(df[fn_col].sum())
             precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
             recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-            f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
+            f1 = (
+                2 * precision * recall / (precision + recall)
+                if (precision + recall) > 0
+                else 0.0
+            )
             agg_stats[cls_name] = {
-                "Total_TP": tp, "Total_FP": fp, "Total_FN": fn,
-                "Precision": float(precision), "Recall": float(recall), "F1": float(f1),
+                "Total_TP": tp,
+                "Total_FP": fp,
+                "Total_FN": fn,
+                "Precision": float(precision),
+                "Recall": float(recall),
+                "F1": float(f1),
             }
 
     with open(os.path.join(metrics_dir, "aggregate_metrics.json"), "w") as f:
@@ -868,7 +1025,9 @@ def main(config: DictConfig):
     # Load checkpoint
     ckpt_path = config.initialization.load_from_checkpoint
     if not ckpt_path:
-        raise ValueError("Provide a checkpoint path via 'initialization.load_from_checkpoint=/path/to/ckpt'")
+        raise ValueError(
+            "Provide a checkpoint path via 'initialization.load_from_checkpoint=/path/to/ckpt'"
+        )
 
     ckpt_path = hydra.utils.to_absolute_path(ckpt_path)
     if not os.path.exists(ckpt_path):
@@ -877,11 +1036,11 @@ def main(config: DictConfig):
     print(f"Loading checkpoint from: {ckpt_path}")
 
     # First load checkpoint to get the saved config
-    checkpoint = torch.load(ckpt_path, map_location='cpu')
+    checkpoint = torch.load(ckpt_path, map_location="cpu")
 
     # Extract config from checkpoint if available
-    if 'hyper_parameters' in checkpoint:
-        ckpt_config = checkpoint['hyper_parameters'].get('config')
+    if "hyper_parameters" in checkpoint:
+        ckpt_config = checkpoint["hyper_parameters"].get("config")
         if ckpt_config is not None:
             print("Using config from checkpoint (override any CLI args)")
             # Merge checkpoint config with current config (checkpoint takes priority)
@@ -890,7 +1049,7 @@ def main(config: DictConfig):
     # Build model architecture based on the (possibly merged) config
     from models.custom_rt_detr_with_dinov2_backbone import (
         RTDetrV2ForObjectDetectionWithCustomBackbone,
-        RTDetrV2ConfigWithCustomBackBone
+        RTDetrV2ConfigWithCustomBackBone,
     )
     from transformers import RTDetrV2ForObjectDetection, RTDetrForObjectDetection
 
@@ -902,23 +1061,25 @@ def main(config: DictConfig):
     #     model_cls = RTDetrV2ForObjectDetectionWithCustomBackbone
     # else:
     #     model_cls = RTDetrV2ForObjectDetection
-    if 'rtdetr_v2' in config.model.rtdetr.model_name:
+    if "rtdetr_v2" in config.model.rtdetr.model_name:
         model_cls = RTDetrV2ForObjectDetectionWithCustomBackbone
     else:
         model_cls = RTDetrForObjectDetection
 
     # First, determine the number of classes from the checkpoint
     # by inspecting the shape of classification head weights
-    state_dict = checkpoint.get('state_dict', checkpoint)
+    state_dict = checkpoint.get("state_dict", checkpoint)
     num_classes = None
     for key in state_dict.keys():
-        if 'class_embed.0.weight' in key or 'enc_score_head.weight' in key:
+        if "class_embed.0.weight" in key or "enc_score_head.weight" in key:
             num_classes = state_dict[key].shape[0]
             print(f"Detected {num_classes} classes from checkpoint")
             break
 
     # Load config and modify num_labels before building model
-    model_config = RTDetrV2ConfigWithCustomBackBone.from_pretrained(model_checkpoint_path)
+    model_config = RTDetrV2ConfigWithCustomBackBone.from_pretrained(
+        model_checkpoint_path
+    )
     if num_classes is not None:
         print(f"Setting model num_labels to {num_classes}")
         model_config.num_labels = num_classes
@@ -928,25 +1089,30 @@ def main(config: DictConfig):
     model.eval()
 
     # Setup processor
-    processor = RTDetrImageProcessor.from_pretrained(config.model.rtdetr.pretrained_name_or_path)
+    processor = RTDetrImageProcessor.from_pretrained(
+        config.model.rtdetr.pretrained_name_or_path
+    )
     processor.do_normalize = True
     processor.resample = 3
-    processor.size = {"height": config.data.model_input_size, "width": config.data.model_input_size}
+    processor.size = {
+        "height": config.data.model_input_size,
+        "width": config.data.model_input_size,
+    }
 
     # Create LightningModule and load checkpoint weights
     lightning_module = RTDETRLightningModule(
-        model=model,
-        image_processor=processor,
-        config=config
+        model=model, image_processor=processor, config=config
     )
 
     # Load state dict from checkpoint
-    if config.inference.get("use_ema", False) and 'ema_state_dict' in checkpoint:
+    if config.inference.get("use_ema", False) and "ema_state_dict" in checkpoint:
         print("[EMA] Loading EMA weights from checkpoint...")
-        lightning_module.model.load_state_dict(checkpoint['ema_state_dict'], strict=False)
-    elif 'state_dict' in checkpoint:
+        lightning_module.model.load_state_dict(
+            checkpoint["ema_state_dict"], strict=False
+        )
+    elif "state_dict" in checkpoint:
         print("[Weights] Loading standard weights from checkpoint...")
-        lightning_module.load_state_dict(checkpoint['state_dict'], strict=False)
+        lightning_module.load_state_dict(checkpoint["state_dict"], strict=False)
     else:
         print("[Weights] Loading weights directly from checkpoint object...")
         lightning_module.load_state_dict(checkpoint, strict=False)
@@ -956,14 +1122,14 @@ def main(config: DictConfig):
 
     # Update output_dir to include checkpoint name (sanitized)
     ckpt_stem = os.path.splitext(os.path.basename(ckpt_path))[0]
-    sanitized_stem = ckpt_stem.replace('=', '-')
+    sanitized_stem = ckpt_stem.replace("=", "-")
     base_output = config.inference.output_dir
     config.inference.output_dir = os.path.join(base_output, sanitized_stem)
-    
+
     mode = config.inference.mode
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"Inference mode: {mode}")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
 
     if mode == "dataset":
         run_dataset_mode(config, lightning_module, processor)
@@ -972,7 +1138,9 @@ def main(config: DictConfig):
     elif mode == "single":
         run_single_mode(config, lightning_module, processor)
     else:
-        raise ValueError(f"Unknown inference mode: '{mode}'. Use 'dataset', 'folder', or 'single'.")
+        raise ValueError(
+            f"Unknown inference mode: '{mode}'. Use 'dataset', 'folder', or 'single'."
+        )
 
 
 if __name__ == "__main__":

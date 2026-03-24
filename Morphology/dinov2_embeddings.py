@@ -119,7 +119,6 @@ def extract_dinov2_embeddings(
     crops_list: List[np.ndarray] = []
 
     for obj_id in range(obj_boxes.shape[0]):
-
         reliable_embeddings_flag: bool = True
         resize_this_obj: bool = not keep_obj_sizes
 

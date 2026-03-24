@@ -81,7 +81,7 @@ def _normalize_state_dict(sd: dict):
         if not k.startswith("model."):
             continue
         if k.startswith("model.model."):
-            k = "model." + k[len("model.model."):]
+            k = "model." + k[len("model.model.") :]
         out[k] = v
     return out
 
@@ -114,7 +114,9 @@ def convert_ckpt(ckpt_path: Path, out_dir: Path | None):
     model_cfg = _get_nested(cfg_dict, "model.yolov5.model_cfg")
     label_map = _get_nested(cfg_dict, "model.label_map")
 
-    repo_path = Path(_resolve_interpolations(repo_path, cfg_dict, cwd)).expanduser().resolve()
+    repo_path = (
+        Path(_resolve_interpolations(repo_path, cfg_dict, cwd)).expanduser().resolve()
+    )
     model_cfg = _resolve_interpolations(model_cfg, cfg_dict, cwd)
     model_cfg_path = Path(model_cfg)
     if not model_cfg_path.is_absolute():
@@ -143,7 +145,9 @@ def convert_ckpt(ckpt_path: Path, out_dir: Path | None):
     missing = list(getattr(result, "missing_keys", []))
     unexpected = list(getattr(result, "unexpected_keys", []))
     if missing or unexpected:
-        print(f"[WARN] {ckpt_path.name}: missing={len(missing)} unexpected={len(unexpected)} ({source})")
+        print(
+            f"[WARN] {ckpt_path.name}: missing={len(missing)} unexpected={len(unexpected)} ({source})"
+        )
     else:
         print(f"[INFO] {ckpt_path.name}: loaded weights ({source})")
 
@@ -175,8 +179,12 @@ def main():
     parser = argparse.ArgumentParser(
         description="Convert Lightning YOLOv5 .ckpt to Ultralytics .pt for models/yolov5/val.py"
     )
-    parser.add_argument("--ckpt", nargs="+", required=True, help="Path(s) to .ckpt file(s)")
-    parser.add_argument("--out-dir", default=None, help="Optional output directory for .pt files")
+    parser.add_argument(
+        "--ckpt", nargs="+", required=True, help="Path(s) to .ckpt file(s)"
+    )
+    parser.add_argument(
+        "--out-dir", default=None, help="Optional output directory for .pt files"
+    )
     args = parser.parse_args()
 
     out_dir = Path(args.out_dir).expanduser().resolve() if args.out_dir else None

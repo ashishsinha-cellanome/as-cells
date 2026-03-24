@@ -104,7 +104,9 @@ def prepare_rfdetr_roboflow_layout(
         "dataset_path": str(dataset_root.resolve()),
         "splits": split_map,
         "ann_files": {
-            source_split: _file_signature(dataset_root / f"{source_split}_annotations.json")
+            source_split: _file_signature(
+                dataset_root / f"{source_split}_annotations.json"
+            )
             for source_split in split_map.values()
         },
     }
@@ -112,7 +114,9 @@ def prepare_rfdetr_roboflow_layout(
     if meta and meta.get("signature") == signature:
         return str(out_root)
 
-    for target_split, source_split in tqdm(split_map.items(), desc="RF-DETR layout", leave=False):
+    for target_split, source_split in tqdm(
+        split_map.items(), desc="RF-DETR layout", leave=False
+    ):
         src_img_dir = dataset_root / "images" / source_split
         src_ann = dataset_root / f"{source_split}_annotations.json"
 
@@ -238,7 +242,9 @@ def prepare_yolov5_layout(
 
     # Build class mapping from training categories for deterministic ids.
     train_coco = _load_coco(dataset_root / f"{train_name}_annotations.json")
-    coco_to_yolo, yolo_to_coco, yolo_names = _build_yolo_class_maps(train_coco, label_map=label_map)
+    coco_to_yolo, yolo_to_coco, yolo_names = _build_yolo_class_maps(
+        train_coco, label_map=label_map
+    )
     signature = {
         "version": LAYOUT_VERSION,
         "kind": "yolov5",
@@ -246,7 +252,9 @@ def prepare_yolov5_layout(
         "splits": source_splits,
         "label_map": {str(k): v for k, v in (label_map or {}).items()},
         "ann_files": {
-            source_split: _file_signature(dataset_root / f"{source_split}_annotations.json")
+            source_split: _file_signature(
+                dataset_root / f"{source_split}_annotations.json"
+            )
             for source_split in source_splits.values()
         },
     }
@@ -265,7 +273,9 @@ def prepare_yolov5_layout(
         }
 
     split_path_to_image_id = {}
-    for target_split, source_split in tqdm(source_splits.items(), desc="YOLOv5 layout", leave=False):
+    for target_split, source_split in tqdm(
+        source_splits.items(), desc="YOLOv5 layout", leave=False
+    ):
         src_img_dir = dataset_root / "images" / source_split
         src_ann_path = dataset_root / f"{source_split}_annotations.json"
         coco_payload = _load_coco(src_ann_path)

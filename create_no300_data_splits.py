@@ -43,7 +43,9 @@ def _file_signature(path: Path) -> dict[str, Any]:
 def _label_counts_str(label_counts: dict[str, int]) -> str:
     if not label_counts:
         return ""
-    ordered = sorted(label_counts.items(), key=lambda item: (-int(item[1]), str(item[0])))
+    ordered = sorted(
+        label_counts.items(), key=lambda item: (-int(item[1]), str(item[0]))
+    )
     return ", ".join(f"{name}:{count}" for name, count in ordered)
 
 
@@ -78,7 +80,9 @@ def analyze_and_filter_split(
         ann_count_by_image[image_id] += 1
         label_count_by_image[image_id][cat_id] += 1
 
-    dropped_image_ids = {img_id for img_id, c in ann_count_by_image.items() if c > threshold}
+    dropped_image_ids = {
+        img_id for img_id, c in ann_count_by_image.items() if c > threshold
+    }
 
     filtered_images = []
     dropped_images = []
@@ -125,7 +129,7 @@ def analyze_and_filter_split(
                 "file_name": str(image.get("file_name", "")),
                 "bbox_count": int(ann_count_by_image.get(img_id, 0)),
                 "label_counts": dict(
-                    sorted(per_label_by_name.items(), key=lambda item: (item[0]))
+                    sorted(per_label_by_name.items(), key=lambda item: item[0])
                 ),
             }
         )
@@ -151,7 +155,7 @@ def analyze_and_filter_split(
         "dropped_images": dropped_images,
         "dropped_annotations": dropped_annotations,
         "aggregate_label_counts": dict(
-            sorted(aggregate_label_counts.items(), key=lambda item: (item[0]))
+            sorted(aggregate_label_counts.items(), key=lambda item: item[0])
         ),
         "excluded_rows": excluded_rows,
         "filtered_payload": filtered_payload,
@@ -188,13 +192,13 @@ def build_train_plus_val_promoted(
         source_image_id = int(image["id"])
         new_image = dict(image)
         new_image["id"] = int(next_image_id)
-        
+
         orig_file_name = str(image.get("file_name", ""))
         if not orig_file_name.startswith(f"../{val_split_name}/"):
             new_image["file_name"] = f"../{val_split_name}/{orig_file_name}"
         else:
             new_image["file_name"] = orig_file_name
-            
+
         promoted_images.append(new_image)
         source_to_new_image_id[source_image_id] = int(next_image_id)
         next_image_id += 1
@@ -219,8 +223,12 @@ def build_train_plus_val_promoted(
         "payload": out_payload,
         "promoted_images_count": int(len(promoted_images)),
         "promoted_annotations_count": int(len(promoted_annotations)),
-        "promoted_source_image_ids": sorted(int(k) for k in source_to_new_image_id.keys()),
-        "promoted_new_image_ids": sorted(int(v) for v in source_to_new_image_id.values()),
+        "promoted_source_image_ids": sorted(
+            int(k) for k in source_to_new_image_id.keys()
+        ),
+        "promoted_new_image_ids": sorted(
+            int(v) for v in source_to_new_image_id.values()
+        ),
         "new_image_id_range": (
             [max_image_id + 1, max_image_id + len(promoted_images)]
             if promoted_images
@@ -308,7 +316,7 @@ def render_exclusion_markdown(
         if not label_counts:
             lines.append(f"| {split_name} | _none_ | 0 |")
             continue
-        for label, count in sorted(label_counts.items(), key=lambda item: (item[0])):
+        for label, count in sorted(label_counts.items(), key=lambda item: item[0]):
             lines.append(f"| {split_name} | {_md_escape(str(label))} | {int(count)} |")
     lines.append("")
 
@@ -379,11 +387,15 @@ def validate_outputs(
     for image in train_plus_payload.get("images", []):
         image_id = int(image["id"])
         file_name = str(image.get("file_name", ""))
-        
-        if image_id in promoted_id_set and not file_name.startswith(f"../{promoted_val_split_name}/"):
+
+        if image_id in promoted_id_set and not file_name.startswith(
+            f"../{promoted_val_split_name}/"
+        ):
             promoted_image_path_violations.append(file_name)
-            
-        if image_id not in promoted_id_set and not file_name.startswith(f"../{train_split_name}/"):
+
+        if image_id not in promoted_id_set and not file_name.startswith(
+            f"../{train_split_name}/"
+        ):
             base_train_image_path_violations.append(file_name)
 
     image_ids = [int(image["id"]) for image in train_plus_payload.get("images", [])]
@@ -425,13 +437,19 @@ def main(cfg: DictConfig) -> None:
     val_src_path = data_root / f"{val_split_name}_annotations.json"
     test_src_path = data_root / f"{test_split_name}_annotations.json"
 
-    missing_paths = [path for path in (train_src_path, val_src_path, test_src_path) if not path.exists()]
+    missing_paths = [
+        path
+        for path in (train_src_path, val_src_path, test_src_path)
+        if not path.exists()
+    ]
     if missing_paths:
         missing_msg = "\n".join(f"- {path}" for path in missing_paths)
         raise FileNotFoundError(f"Missing source annotation files:\n{missing_msg}")
 
     print(f"Dataset root: {data_root}")
-    print(f"Using splits: train={train_split_name}, val={val_split_name}, test={test_split_name}")
+    print(
+        f"Using splits: train={train_split_name}, val={val_split_name}, test={test_split_name}"
+    )
     print(f"Threshold: >{THRESHOLD}")
 
     print("\nLoading and filtering validation annotations...")
@@ -583,7 +601,9 @@ def main(cfg: DictConfig) -> None:
                 "promoted_images_count": train_plus["promoted_images_count"],
                 "promoted_annotations_count": train_plus["promoted_annotations_count"],
                 "total_images_count": len(train_plus["payload"].get("images", [])),
-                "total_annotations_count": len(train_plus["payload"].get("annotations", [])),
+                "total_annotations_count": len(
+                    train_plus["payload"].get("annotations", [])
+                ),
                 "promoted_source_image_ids": train_plus["promoted_source_image_ids"],
                 "new_image_id_range": train_plus["new_image_id_range"],
                 "new_annotation_id_range": train_plus["new_annotation_id_range"],

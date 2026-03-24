@@ -12,16 +12,21 @@ import logging
 from typing import Tuple, List, Final, Optional, Dict, Union
 
 
-MODEL_WEIGHTS_PATH: Final[str] = '/home/cellareye/Cellanome/dl-mehdi/PointRend/output/model_final_best.pth'
-# the default location of the config file defining PointRend RCNN model the ResNet50 + RPN 
-MODEL_CONFIG_PATH: Final[str] = '/home/cellareye/Development/detectron2/projects/PointRend/configs/InstanceSegmentation/pointrend_rcnn_R_50_FPN_3x_coco.yaml'
+MODEL_WEIGHTS_PATH: Final[str] = (
+    "/home/cellareye/Cellanome/dl-mehdi/PointRend/output/model_final_best.pth"
+)
+# the default location of the config file defining PointRend RCNN model the ResNet50 + RPN
+MODEL_CONFIG_PATH: Final[str] = (
+    "/home/cellareye/Development/detectron2/projects/PointRend/configs/InstanceSegmentation/pointrend_rcnn_R_50_FPN_3x_coco.yaml"
+)
 # Detectron2 class IDs start from 0
-LABEL_MAP: Final[Dict[int, str]] = {0: 'cell', 1: 'bead', 2: 'cage'}
+LABEL_MAP: Final[Dict[int, str]] = {0: "cell", 1: "bead", 2: "cage"}
 DEFAULT_DETECTION_CONFIDENCE: Final[float] = 0.5
 # see the note on the logic of expanding the bounding boxes
 DEFAULT_MASK_THRESHOLD_FOR_BBOX_EXPANSION: Final[float] = 0.1
 DEFAULT_BBOX_EXPANSION_FACTOR: Final[float] = 0.2
 MAX_BBOX_EXPANSION_FACTOR: Final[float] = 0.25
+
 
 # Utility functions
 # very efficient batch IoU calculation
@@ -53,12 +58,15 @@ def iou_batch(bboxes1: np.ndarray, bboxes2: np.ndarray) -> np.ndarray:
     )  # pairwise union area NxM
     return inter_areas / union_areas  # pairwise intersection divided by union (iou) NxM
 
-def overlap_batch(bboxes1: np.ndarray, bboxes2: np.ndarray, ordered: bool = False) -> np.ndarray:
-    """Given Nx4 & Mx4 ndarrays of bounding boxes, compute pairwise overlaps defined as the intersection over 
+
+def overlap_batch(
+    bboxes1: np.ndarray, bboxes2: np.ndarray, ordered: bool = False
+) -> np.ndarray:
+    """Given Nx4 & Mx4 ndarrays of bounding boxes, compute pairwise overlaps defined as the intersection over
     the smallest box area (ordered set to False); a small box fully enclosed by a large box has an "overlap" of 1.
-    if ordered is set to 1, the overlap is the intersection over the area of the box from bboxes2 set. In this case, 
+    if ordered is set to 1, the overlap is the intersection over the area of the box from bboxes2 set. In this case,
     overlap is close to 1 only if the box from bboxes2 lies inside the box from bboxes1"""
-    
+
     # expand dims to allow computing pairwise overlap via outerproducts (creates NxM below)
     bboxes1 = np.expand_dims(bboxes1, 1)  # Nx1x4
     bboxes2 = np.expand_dims(bboxes2, 0)  # 1xMx4
@@ -68,31 +76,45 @@ def overlap_batch(bboxes1: np.ndarray, bboxes2: np.ndarray, ordered: bool = Fals
     inter_y1s = np.maximum(bboxes1[..., 1], bboxes2[..., 1])  # pairwise max NxM
     inter_x2s = np.minimum(bboxes1[..., 2], bboxes2[..., 2])  # pairwise min NxM
     inter_y2s = np.minimum(bboxes1[..., 3], bboxes2[..., 3])  # pairwise min NxM
-    inter_ws = np.maximum(0., inter_x2s - inter_x1s)  # pairwise width of intersection rectangle NxM
-    inter_hs = np.maximum(0., inter_y2s - inter_y1s)  # pairwise height of intersection rectangle NxM
+    inter_ws = np.maximum(
+        0.0, inter_x2s - inter_x1s
+    )  # pairwise width of intersection rectangle NxM
+    inter_hs = np.maximum(
+        0.0, inter_y2s - inter_y1s
+    )  # pairwise height of intersection rectangle NxM
     inter_areas = inter_ws * inter_hs  # pairwise intersection area NxM
     if ordered:
         # use the box area of bboxes2 as the denominator
-        smallest_bb_areas = (bboxes2[..., 2] - bboxes2[..., 0]) * (bboxes2[..., 3] - bboxes2[..., 1])
+        smallest_bb_areas = (bboxes2[..., 2] - bboxes2[..., 0]) * (
+            bboxes2[..., 3] - bboxes2[..., 1]
+        )
     else:
-        smallest_bb_areas = (np.minimum((bboxes1[..., 2] - bboxes1[..., 0])
-                                        * (bboxes1[..., 3] - bboxes1[..., 1]),
-                                        (bboxes2[..., 2] - bboxes2[..., 0])
-                                        * (bboxes2[..., 3] - bboxes2[..., 1]))
-                             + 1e-30)  # smallest bb area of each paired box NXM
-    return inter_areas / smallest_bb_areas  # pairwise intersection divided by smallest box (overlap) NxM
+        smallest_bb_areas = (
+            np.minimum(
+                (bboxes1[..., 2] - bboxes1[..., 0])
+                * (bboxes1[..., 3] - bboxes1[..., 1]),
+                (bboxes2[..., 2] - bboxes2[..., 0])
+                * (bboxes2[..., 3] - bboxes2[..., 1]),
+            )
+            + 1e-30
+        )  # smallest bb area of each paired box NXM
+    return (
+        inter_areas / smallest_bb_areas
+    )  # pairwise intersection divided by smallest box (overlap) NxM
 
 
-def iou_mask_pair(box1: np.ndarray, mask1: np.ndarray, box2: np.ndarray, mask2: np.ndarray) -> float:
+def iou_mask_pair(
+    box1: np.ndarray, mask1: np.ndarray, box2: np.ndarray, mask2: np.ndarray
+) -> float:
     """
-    Given two np.uint8 M1xN1 and M2xN2 numpy arrays (mask1, mask2) for two object masks and 
-    two (4,) (4-element) integer numpy arrays of the top-left/bottom-right corners of the 
-    bounding boxes around these objects (box1, box2), the code returns the IoU between the masks of the two objects. 
-    The passed masks should be defined within the passed bounding boxes, and should have 
-    values set to 1 for the object. The bounding boxes should be passed in xtl, ytl, xbr, ybr order, e.g.,  
+    Given two np.uint8 M1xN1 and M2xN2 numpy arrays (mask1, mask2) for two object masks and
+    two (4,) (4-element) integer numpy arrays of the top-left/bottom-right corners of the
+    bounding boxes around these objects (box1, box2), the code returns the IoU between the masks of the two objects.
+    The passed masks should be defined within the passed bounding boxes, and should have
+    values set to 1 for the object. The bounding boxes should be passed in xtl, ytl, xbr, ybr order, e.g.,
     if [xtl, ytl, xbr, ybr] are the passed integer values of the top-left and bottle-right corner of the bounding box
     for an object, the passed masks should be a numpy array of type np.uint8 and size (ybr - ytl, xbr - xtl)
-    with values set to 1 for the object. 
+    with values set to 1 for the object.
     """
     # union of the box coordinates, make sure the coordinates are integers
     xtl_1, ytl_1, xbr_1, ybr_1 = box1.astype(int)
@@ -103,13 +125,14 @@ def iou_mask_pair(box1: np.ndarray, mask1: np.ndarray, box2: np.ndarray, mask2: 
     xbr: int = max(xbr_1, xbr_2)
     ybr: int = max(ybr_1, ybr_2)
     union_mask_1: np.ndarray = np.zeros((ybr - ytl, xbr - xtl), np.uint8)
-    union_mask_1[(ytl_1 - ytl):(ybr_1 - ytl), (xtl_1 - xtl):(xbr_1 - xtl)] = mask1
+    union_mask_1[(ytl_1 - ytl) : (ybr_1 - ytl), (xtl_1 - xtl) : (xbr_1 - xtl)] = mask1
     union_mask_2: np.ndarray = np.zeros((ybr - ytl, xbr - xtl), np.uint8)
-    union_mask_2[(ytl_2 - ytl):(ybr_2 - ytl), (xtl_2 - xtl):(xbr_2 - xtl)] = mask2
+    union_mask_2[(ytl_2 - ytl) : (ybr_2 - ytl), (xtl_2 - xtl) : (xbr_2 - xtl)] = mask2
     union: int = cv2.bitwise_or(union_mask_1, union_mask_2).sum()
     intersection: int = cv2.bitwise_and(union_mask_1, union_mask_2).sum()
 
     return intersection / (float(union) + 1e-30)
+
 
 # a function to return the area of bounding box
 def box_area(box: np.array) -> float:
@@ -119,7 +142,8 @@ def box_area(box: np.array) -> float:
     Return the area.
     """
     return (box[3] - box[1]) * (box[2] - box[0])
-    
+
+
 def show_detections(input_image, predictions, label_map):
 
     # colors for displaying bounding boxes
@@ -131,21 +155,21 @@ def show_detections(input_image, predictions, label_map):
         (0, 255, 255),
         (255, 255, 0),
     ]
-    
+
     class_ids = list(label_map.keys())
     if isinstance(input_image, np.ndarray):
         image = input_image.copy()
     else:
         # convert to a numpy array
         image = np.array(input_image)
-    
+
     # convert to 3-channels
     if len(image.shape) < 3:
         image = np.repeat(np.expand_dims(image, axis=2), 3, axis=2)
-    
-    boxes = predictions['boxes']
-    labels = predictions['labels']
-    masks = predictions['masks']
+
+    boxes = predictions["boxes"]
+    labels = predictions["labels"]
+    masks = predictions["masks"]
 
     for i in range(len(masks)):
         # the bounding box
@@ -157,7 +181,7 @@ def show_detections(input_image, predictions, label_map):
         else:
             color = COLORS[labels[i] % len(COLORS)]
             text = label_map[labels[i]]
-        
+
         color_mask = color * np.repeat(np.expand_dims(masks[i], axis=2), 3, axis=2)
         blended = 0.4 * color_mask
         blended[color_mask == 0] = image[ytl:ybr, xtl:xbr][color_mask == 0]
@@ -172,7 +196,8 @@ def show_detections(input_image, predictions, label_map):
             image, text, (xtl, ytl + 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1
         )
     return image
-    
+
+
 def get_crop_corners(
     image_width: int,
     image_height: int,
@@ -221,8 +246,9 @@ def get_crop_corners(
             crop_coords = [xc_tl, yc_tl, xc_br, yc_br]
             crop_corners.append(crop_coords)
 
-    return crop_corners   
-    
+    return crop_corners
+
+
 def to_numpy(tensor):
     """
     A function to convert a torch input to numpy array.
@@ -231,31 +257,34 @@ def to_numpy(tensor):
     Returns:
         Converted to numpy array.
     """
-    return tensor.detach().cpu().numpy() if tensor.requires_grad else tensor.cpu().numpy()
-    
+    return (
+        tensor.detach().cpu().numpy() if tensor.requires_grad else tensor.cpu().numpy()
+    )
 
-def get_point_rend_model_config(num_classes: int, 
-                                point_rend_model_config_path: str,
-                                model_weights_path: str, 
-                                anchor_sizes: List[List[int]] = [[12], [24], [36], [48], [60]],
-                                detection_confidence: float = 0.5
-                               ) -> detectron2.config.config.CfgNode:
+
+def get_point_rend_model_config(
+    num_classes: int,
+    point_rend_model_config_path: str,
+    model_weights_path: str,
+    anchor_sizes: List[List[int]] = [[12], [24], [36], [48], [60]],
+    detection_confidence: float = 0.5,
+) -> detectron2.config.config.CfgNode:
     """
-    A function to return the config file for a trained PointRend model with a 
+    A function to return the config file for a trained PointRend model with a
     ResNet50 + RPN backbone.
-    
+
     Args:
         num_classes (int): Number of object classes for detection. Should be consistent
-            with the model weights. 
-        point_rend_model_config_path (str): The path to the default PointRend model with 
-            ResNet50 + RPN backbone. This should be the config for the original model 
-            that has been modified before training. 
-        model_weights_path (str): Path to the trained model weights. 
-        anchor_sizes(list of list of integers): Anchor sizes for each feature map (1, 0.5 and 
+            with the model weights.
+        point_rend_model_config_path (str): The path to the default PointRend model with
+            ResNet50 + RPN backbone. This should be the config for the original model
+            that has been modified before training.
+        model_weights_path (str): Path to the trained model weights.
+        anchor_sizes(list of list of integers): Anchor sizes for each feature map (1, 0.5 and
             2 is used for aspect ratios)
-        detection_confidence (float): The confidence threshold used for inferencing. 
+        detection_confidence (float): The confidence threshold used for inferencing.
     Returns:
-        A Detectron2 config node. 
+        A Detectron2 config node.
     """
     # get detectron2's default config
     cfg = get_cfg()
@@ -264,13 +293,15 @@ def get_point_rend_model_config(num_classes: int,
     # load a specific PointRend config from file
     try:
         cfg.merge_from_file(point_rend_model_config_path)
-    
+
     except Exception as ex:
-        logging.error(f"Unable to load PointRend default model config! " 
-                      f"The path to the model config may be incorrect: {repr(ex)}")
+        logging.error(
+            f"Unable to load PointRend default model config! "
+            f"The path to the model config may be incorrect: {repr(ex)}"
+        )
     # set threshold for this model (needed for inference)
-    cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = detection_confidence 
-    
+    cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = detection_confidence
+
     #  NOTE: this is the number of classes, num_classes and not num_classes+1
     cfg.MODEL.POINT_HEAD.NUM_CLASSES = num_classes
     cfg.MODEL.ROI_HEADS.NUM_CLASSES = num_classes
@@ -286,54 +317,61 @@ def get_point_rend_model_config(num_classes: int,
     cfg.MODEL.RPN.PRE_NMS_TOPK_TEST = 4000
     cfg.MODEL.RPN.POST_NMS_TOPK_TRAIN = 8000
     cfg.MODEL.RPN.POST_NMS_TOPK_TEST = 4000
-    # increase the total number of anchors (positive and negative) that are 
-    # sampled during training of RPN (for computing loss, default is 256; by 
+    # increase the total number of anchors (positive and negative) that are
+    # sampled during training of RPN (for computing loss, default is 256; by
     # default 0.5 will be positive anchors)
     cfg.MODEL.RPN.BATCH_SIZE_PER_IMAGE = 1024
 
-    # increase the total number of anchors (positive and negative) that are 
+    # increase the total number of anchors (positive and negative) that are
     # sampled during training of classification head (for computing loss,
     # default is 512; by default 0.25 will be positive anchors)
     cfg.MODEL.ROI_HEADS.BATCH_SIZE_PER_IMAGE = 2048
-    
+
     # maximum number of detections per image
     cfg.TEST.DETECTIONS_PER_IMAGE = 1000
-    
-    cfg.INPUT.MASK_FORMAT = 'bitmask'
+
+    cfg.INPUT.MASK_FORMAT = "bitmask"
     # the path to the trained model weights
     cfg.MODEL.WEIGHTS = model_weights_path
     cfg.freeze()
     return cfg
+
 
 # PointRend RCNN instance segmentation class
 class PointRendInstanceSegmentation:
     def __init__(
         self,
         weights_path: Optional[str] = MODEL_WEIGHTS_PATH,
-        config_path: Optional[str] = MODEL_CONFIG_PATH, 
+        config_path: Optional[str] = MODEL_CONFIG_PATH,
         label_map: Optional[Dict[int, str]] = LABEL_MAP,
         confidence: float = DEFAULT_DETECTION_CONFIDENCE,
-        mask_threshold_for_bbox_expansion: float = DEFAULT_MASK_THRESHOLD_FOR_BBOX_EXPANSION
+        mask_threshold_for_bbox_expansion: float = DEFAULT_MASK_THRESHOLD_FOR_BBOX_EXPANSION,
     ):
-        
+
         self._weights_path: str = str(weights_path)
         self._config_path: str = str(config_path)
         self._label_map: Dict[int, str] = label_map
         self._reverse_label_map: Dict[str, int] = {
-                value: key for key, value in self._label_map.items()
-                }
+            value: key for key, value in self._label_map.items()
+        }
         self._confidence: float = confidence
-        self._mask_threshold_for_bbox_expansion: float = mask_threshold_for_bbox_expansion
+        self._mask_threshold_for_bbox_expansion: float = (
+            mask_threshold_for_bbox_expansion
+        )
 
         logging.info(f"Mapping between class IDs and class names: {self._label_map}")
-        
+
         # model config
-        self.config = get_point_rend_model_config(num_classes = len(self._label_map), 
-                                                  point_rend_model_config_path = self._config_path, 
-                                                  model_weights_path = self._weights_path, 
-                                                  detection_confidence = self._confidence)
+        self.config = get_point_rend_model_config(
+            num_classes=len(self._label_map),
+            point_rend_model_config_path=self._config_path,
+            model_weights_path=self._weights_path,
+            detection_confidence=self._confidence,
+        )
         # available device
-        self.device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+        self.device = (
+            torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+        )
 
         # loading the PyTorch model
         self.model = None
@@ -345,68 +383,69 @@ class PointRendInstanceSegmentation:
                 f"Failed to load PointRend model. Likely the paths to model .pth weights "
                 f"{self._weights_path} is incorrect: {repr(ex)}."
             )
-    
-    
-    # note that the passed image can be also a numpy array returned by 
+
+    # note that the passed image can be also a numpy array returned by
     # cv2.imread(img_path, cv2.IMREAD_UNCHANGED), it does not necessarily have to be a PIL image
     # in fact OpenCV is slightly more efficient in reading the images
-    def detect(self, image: Union[Image.Image, np.ndarray], log_time: bool = False) -> Dict[str, List]:
+    def detect(
+        self, image: Union[Image.Image, np.ndarray], log_time: bool = False
+    ) -> Dict[str, List]:
         """
         The main function to detect the bounding box and masks for objects in the input image.
-        
+
         Args:
            img (PIL.Image or numpy array): Input image, should have 8 bits per channel bit depth (np.uint8 in
-               case of a numpy array). 
-           log_time (bool): A flag to log the model run time. 
-        
+               case of a numpy array).
+           log_time (bool): A flag to log the model run time.
+
         Returns:
            A dictionary with keys and values as below:
-               "boxes": List of 4-tuples or 4-element lists for the detected objects' bounding boxes in 
+               "boxes": List of 4-tuples or 4-element lists for the detected objects' bounding boxes in
                 xtl, ytl, xbr, ybr format/order
                "labels": List of integer class IDs for the detected objects
                "scores": List of float detection scores, thresholded by self._confidence
                "masks": List of masks for the detected objects. Each mask is a numpy array of the same size
                as the bounding box (xbr - xtl, ybr - ytl)
         """
-        
+
         if self.model is None:
             logging.error(
                 "Mask RCNN model has not been initialized. Please initialize the class before detect()."
             )
             out: dict = {}
-            out['boxes']: List = []
-            out['scores']: List = []
-            out['labels']: List = []
-            out['masks']: List = []
+            out["boxes"]: List = []
+            out["scores"]: List = []
+            out["labels"]: List = []
+            out["masks"]: List = []
             return out
-        
+
         start: float = time.time()
-        
+
         if len(image.shape) < 3:
             img = np.repeat(np.expand_dims(image, axis=2), 3, axis=2)
         else:
             img = image
-        
+
         # convert the input image to a tensor and scale it to [0, 1]
         # F.to_tensor takes care of it, however, make sure the passed img has bit depth = 8 (is np.uint8 if numpy array)
         with torch.cuda.amp.autocast():
             # run inference
-            predictions = self.model(img)['instances']
-        
-        # before moving the results to CPU, crop the masks within the detection boxes 
+            predictions = self.model(img)["instances"]
+
+        # before moving the results to CPU, crop the masks within the detection boxes
         # to significantly reduce their sizes
         # for a large number of detected cells, 2/3 of the model runtime is
-        # spent on moving these image-sized masks from GPU to CPU, reduce their sizes in GPU to 
+        # spent on moving these image-sized masks from GPU to CPU, reduce their sizes in GPU to
         # save time moving them back to CPU
-        
+
         out = {}
-            
+
         # preductions (out) is a dictionary of four keys, 'boxes', 'labels', 'scores' and 'masks'
-        out['boxes'] = to_numpy(predictions.pred_boxes.tensor).astype(int)
-        out['labels'] = to_numpy(predictions.pred_classes)
-        out['scores'] = to_numpy(predictions.scores)
+        out["boxes"] = to_numpy(predictions.pred_boxes.tensor).astype(int)
+        out["labels"] = to_numpy(predictions.pred_classes)
+        out["scores"] = to_numpy(predictions.scores)
         masks_tensors: torch.tensor = predictions.pred_masks
-    
+
         # masks will no longer be the same size for each detection, hence we return a list
         # of numpy arrays
         # to be consistent, we do the same (returning a list) for the rest
@@ -414,27 +453,32 @@ class PointRendInstanceSegmentation:
         boxes: List[List[int, int, int, int]] = []
         labels: List[int] = []
         scores: List[float] = []
-    
-        for i in range(out['boxes'].shape[0]):
+
+        for i in range(out["boxes"].shape[0]):
             # skip unreliable or invalid detections
-            (xtl, ytl, xbr, ybr) = out['boxes'][i]
-            if out['scores'][i] <  self._confidence or ytl >= ybr or  xtl >= xbr:
+            (xtl, ytl, xbr, ybr) = out["boxes"][i]
+            if out["scores"][i] < self._confidence or ytl >= ybr or xtl >= xbr:
                 continue
-            
+
             # the following logic for expanding the bounding boxes and preventing the cropping effect on the masks
             # by the boxes does not work for PointRend as the returned masks are already binary
             # the logic below simply update the bounding boxes according to masks
             if self._mask_threshold_for_bbox_expansion > 0:
                 # threshold the mask to keep only the values more than the passed threshold
                 # then update the bounding box according to the remaining values
-                pos = torch.where(masks_tensors[i] >= self._mask_threshold_for_bbox_expansion)
+                pos = torch.where(
+                    masks_tensors[i] >= self._mask_threshold_for_bbox_expansion
+                )
                 xmin: int = pos[1].min().item()
                 xmax: int = pos[1].max().item()
                 ymin: int = pos[0].min().item()
                 ymax: int = pos[0].max().item()
                 # apply some sanity checks on the expanded bounding box coordinates to avoid over expanding
-                if 0 < (xmax - xmin) <= (1 + MAX_BBOX_EXPANSION_FACTOR) * (xbr - xtl) and \
-                        0 < (ymax - ymin) <= (1 + MAX_BBOX_EXPANSION_FACTOR) * (ybr - ytl):
+                if 0 < (xmax - xmin) <= (1 + MAX_BBOX_EXPANSION_FACTOR) * (
+                    xbr - xtl
+                ) and 0 < (ymax - ymin) <= (1 + MAX_BBOX_EXPANSION_FACTOR) * (
+                    ybr - ytl
+                ):
                     xtl = xmin
                     ytl = ymin
                     xbr = xmax
@@ -448,22 +492,22 @@ class PointRendInstanceSegmentation:
                     ytl = max(0, ytl - delta_y)
                     xbr = min(masks_tensors[i].shape[1], xbr + delta_x)
                     ybr = min(masks_tensors[i].shape[0], ybr + delta_y)
-            
+
             boxes.append([xtl, ytl, xbr, ybr])
-            labels.append(out['labels'][i])
-            scores.append(out['scores'][i])
+            labels.append(out["labels"][i])
+            scores.append(out["scores"][i])
             # cast as float because with autocast, the masks will be float16, which may not
             # be supported by some OpenCV functions
             masks.append(to_numpy(masks_tensors[i, ytl:ybr, xtl:xbr]).astype(float))
-        
-        elap = time.time() - start 
+
+        elap = time.time() - start
         if log_time:
             logging.info(f"PointRend instance segmentation took {elap:.4f} seconds")
-            
-        out['boxes'] = boxes
-        out['scores'] = scores
-        out['labels'] = labels
-        out['masks'] = masks
+
+        out["boxes"] = boxes
+        out["scores"] = scores
+        out["labels"] = labels
+        out["masks"] = masks
         return out
 
     def set_confidence(self, confidence):
@@ -477,7 +521,6 @@ class PointRendInstanceSegmentation:
         only_report_cells: bool = False,
         log_time=False,
     ) -> Dict[str, List]:
-
         """
         A function to apply the model on a high resolution image. If the
         image is high resolution with many objects, after resizing the image
@@ -488,8 +531,8 @@ class PointRendInstanceSegmentation:
         then combining the detections over multiple overlapping sub-images
         by applying NMS
         Args:
-            image (PIL.Image or numpy array): Input image, should have 8 bits per channel 
-                bit depth (np.uint8 in case of a numpy array). 
+            image (PIL.Image or numpy array): Input image, should have 8 bits per channel
+                bit depth (np.uint8 in case of a numpy array).
             crop_corners (list of 4-tuples (x1, y1, x2, y2)): Each element of
                 this list specifies a cropped sub-image of the input image with
                 top-left corner (x1, y1) and bottom-right corner (x2, y2). All
@@ -503,7 +546,7 @@ class PointRendInstanceSegmentation:
             log_time(bool): A flag to print the runtime of the function.
         Returns:
             A dictionary with keys and values as below:
-               "boxes": List of 4-tuples or 4-element lists for the detected objects' bounding boxes in 
+               "boxes": List of 4-tuples or 4-element lists for the detected objects' bounding boxes in
                xtl, ytl, xbr, ybr format/order
                "labels": List of integer class IDs for the detected objects
                "scores": List of float detection scores, thresholded by self._confidence
@@ -518,10 +561,10 @@ class PointRendInstanceSegmentation:
                 "Returning no detections"
             )
             out: dict = {}
-            out['boxes']: List = []
-            out['scores']: List = []
-            out['labels']: List = []
-            out['masks']: List = []
+            out["boxes"]: List = []
+            out["scores"]: List = []
+            out["labels"]: List = []
+            out["masks"]: List = []
             return out
 
         if only_report_cells and "cell" not in self._reverse_label_map:
@@ -529,10 +572,10 @@ class PointRendInstanceSegmentation:
                 "'cell' classname is not included in the model label map. Returning no detections"
             )
             out: dict = {}
-            out['boxes']: List = []
-            out['scores']: List = []
-            out['labels']: List = []
-            out['masks']: List = []
+            out["boxes"]: List = []
+            out["scores"]: List = []
+            out["labels"]: List = []
+            out["masks"]: List = []
             return out
 
         H, W = image.shape[:2]
@@ -548,10 +591,10 @@ class PointRendInstanceSegmentation:
                 "Returning no detections"
             )
             out: dict = {}
-            out['boxes']: List = []
-            out['scores']: List = []
-            out['labels']: List = []
-            out['masks']: List = []
+            out["boxes"]: List = []
+            out["scores"]: List = []
+            out["labels"]: List = []
+            out["masks"]: List = []
             return out
 
         crop_width: int = max(crop_widths)
@@ -574,12 +617,12 @@ class PointRendInstanceSegmentation:
             # crop the image and run the model
             cropped_image = image[y1c:y2c, x1c:x2c]
             preds = self.detect(cropped_image)
-            
-            boxes: np.array = np.array(preds["boxes"]) 
-            labels: np.arary = np.array(preds["labels"]) 
+
+            boxes: np.array = np.array(preds["boxes"])
+            labels: np.arary = np.array(preds["labels"])
             scores: np.array = np.array(preds["scores"])
             # we leave the masks as a list of mask numpy arrays as each mask has different sizes below
-            masks: List[np.array] = preds["masks"] 
+            masks: List[np.array] = preds["masks"]
 
             # combine the detection results
             if len(scores) == 0:
@@ -594,14 +637,14 @@ class PointRendInstanceSegmentation:
             # modify the score for these detected boxes (assign the minimum score of self._confidence)
             # to give them lower priority during NMS when the results in the overlapping parts
             # of cropped images are combined
-            
+
             scores[
                 (boxes[:, 0] < 4)
                 | (boxes[:, 1] < 4)
                 | (boxes[:, 2] > crop_width - 4)
                 | (boxes[:, 3] > crop_height - 4)
             ] = self._confidence
-            
+
             crop_ids_with_detection.append(crop_id)
             results["scores"].append(scores)
             results["boxes"].append(boxes + np.array([x1c, y1c, x1c, y1c], dtype=int))
@@ -611,10 +654,10 @@ class PointRendInstanceSegmentation:
         # no object detected, return
         if len(crop_ids_with_detection) == 0:
             out: dict = {}
-            out['boxes']: List = []
-            out['scores']: List = []
-            out['labels']: List = []
-            out['masks']: List = []
+            out["boxes"]: List = []
+            out["scores"]: List = []
+            out["labels"]: List = []
+            out["masks"]: List = []
             return out
 
         # list to contain the detections
@@ -635,7 +678,6 @@ class PointRendInstanceSegmentation:
         # we also keep objects with IoU > nms_threshold_for_combining_crop_results, if the detection
         # score for the object in the crop is higher than the objects in the other crops
         for idx, crop_id in enumerate(crop_ids_with_detection):
-
             crop_labels: np.array = results["labels"][idx]
             crop_scores: np.array = results["scores"][idx]
             crop_boxes: np.array = results["boxes"][idx]
@@ -679,16 +721,15 @@ class PointRendInstanceSegmentation:
                     if i != idx
                 ]
             )
-            
+
             # masks for detections in other cropped sub-images
             rest_masks: List[np.ndarray] = [
-                    results["masks"][i]
-                    for i in range(len(crop_ids_with_detection))
-                    if i != idx
-                    ]
+                results["masks"][i]
+                for i in range(len(crop_ids_with_detection))
+                if i != idx
+            ]
 
             for label in set(list(crop_labels) + list(rest_labels)):
-
                 # the indexes of detections of the same label in each crop and rest set
                 crop_class_idxs: np.array = np.where(crop_labels == label)
                 rest_class_idxs: np.array = np.where(rest_labels == label)
@@ -702,7 +743,6 @@ class PointRendInstanceSegmentation:
                         [i for i in range(len(crop_class_idxs[0]))], dtype=int
                     )
                 else:
-
                     # compute the IoU matrix, use torchvision implementation for efficiency
                     iou_matrix: np.array = iou_batch(
                         crop_boxes[crop_class_idxs], rest_boxes[rest_class_idxs]
@@ -767,7 +807,6 @@ class PointRendInstanceSegmentation:
                                 # in another crop
                                 results["scores"][idx][crop_class_idxs[0][i]] += 1e-5
 
-
         if only_report_cells:
             cell_class_id: int = self._reverse_label_map["cell"]
             cell_detection_ids: List[int] = []
@@ -789,14 +828,15 @@ class PointRendInstanceSegmentation:
                     len(crop_corners), elap
                 )
             )
-        
+
         out: dict = {}
-        out['boxes']: List = [[box[0], box[1], box[2], box[3]] for box in boxes]
-        out['scores']: List = scores
-        out['labels']: List = labels
-        out['masks']: List = masks
+        out["boxes"]: List = [[box[0], box[1], box[2], box[3]] for box in boxes]
+        out["scores"]: List = scores
+        out["labels"]: List = labels
+        out["masks"]: List = masks
         return out
-        
+
+
 detector = PointRendInstanceSegmentation()
 
 # A dictionary with keys as the input (original) image size (width, height) tuple and
@@ -812,10 +852,7 @@ RESIZE: Final[Dict[Tuple[int, int], Tuple[int, int]]] = {
 # to run YOLOv5 on each
 # note that the crop coordinates are with respect to resized image dimensions specified above
 CROP_CORNERS: Final[Dict[Tuple[int, int], List[List[int]]]] = {
-    (2000, 1600): [
-        [0, 0, 800, 1024],
-        [480, 0, 1280, 1024]
-    ],
+    (2000, 1600): [[0, 0, 800, 1024], [480, 0, 1280, 1024]],
     (4512, 4512): [
         [0, 0, 1200, 800],
         [0, 448, 1200, 1248],
@@ -828,7 +865,7 @@ CROP_CORNERS: Final[Dict[Tuple[int, int], List[List[int]]]] = {
         [944, 0, 2144, 800],
         [944, 448, 2144, 1248],
         [944, 896, 2144, 1696],
-        [944, 1344, 2144, 2144]
+        [944, 1344, 2144, 2144],
     ],
 }
 
@@ -837,8 +874,14 @@ MASK_THRESHOLD: Final[float] = 0.55
 # threshold for post-processing cells and remove the ones consisting of multiple smaller cells
 OVER_LAP_THRESHOLD: Final[float] = 0.9
 
+
 def run_point_rend(
-        input_image: np.ndarray, normalize_image: bool = True, bit_depth: int = 8, crop: bool = True, post_process: bool = True, plot_results: bool = False, 
+    input_image: np.ndarray,
+    normalize_image: bool = True,
+    bit_depth: int = 8,
+    crop: bool = True,
+    post_process: bool = True,
+    plot_results: bool = False,
 ) -> Tuple[Dict[str, list], float, Optional[np.ndarray]]:
     # make a copy to not modify the input image
     img = input_image.copy()
@@ -849,7 +892,7 @@ def run_point_rend(
         )
         img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-    img = (255 * img.astype(float) / (2 ** bit_depth - 1)).astype(np.uint8)
+    img = (255 * img.astype(float) / (2**bit_depth - 1)).astype(np.uint8)
 
     if normalize_image:
         img = cv2.normalize(img, img, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX)
@@ -859,13 +902,15 @@ def run_point_rend(
     if crop and (image_width, image_height) not in RESIZE:
         logging.error(
             "The input image size {} is not supported! Returning no cells!".format(
-                image_width, )
+                image_width,
+            )
         )
-        out = {'boxes': np.zeros((0, 4), dtype=int),
-               'labels': np.zeros((0,), dtype=int),
-               'scores': np.zeros((0,), dtype=float),
-               'masks': [],
-               }
+        out = {
+            "boxes": np.zeros((0, 4), dtype=int),
+            "labels": np.zeros((0,), dtype=int),
+            "scores": np.zeros((0,), dtype=float),
+            "masks": [],
+        }
         if plot_results:
             return (out, 0, np.zeros((image_height, image_width), dtype=np.uint8))
         else:
@@ -881,7 +926,10 @@ def run_point_rend(
         scale_factor: float = max(smaller_side_size / 800.0, larger_side_size / 1333.0)
         # do not scale the image if the larger and the smaller sides are smaller than the model input sizes (1333, 800)
         scale_factor = max(1, scale_factor)
-        resized_width, resized_height = int(image_width / scale_factor), int(image_height / scale_factor)
+        resized_width, resized_height = (
+            int(image_width / scale_factor),
+            int(image_height / scale_factor),
+        )
 
     if scale_factor != 1:
         resized_img: np.ndarray = cv2.resize(
@@ -902,21 +950,25 @@ def run_point_rend(
 
     if scale_factor != 1:
         # scale the detections back to original image resolution
-        out['boxes'] = (scale_factor * np.array(out['boxes'])).astype(int)
+        out["boxes"] = (scale_factor * np.array(out["boxes"])).astype(int)
         # convert to a list to be consistent with the rest
-        out['boxes'] = [box for box in out['boxes']]
+        out["boxes"] = [box for box in out["boxes"]]
     else:
-        out['boxes'] = [np.array(box) for box in out['boxes']]   
+        out["boxes"] = [np.array(box) for box in out["boxes"]]
 
-    for idx in range(len(out['boxes'])):
+    for idx in range(len(out["boxes"])):
         if scale_factor != 1:
-            xtl, ytl, xbr, ybr = out['boxes'][idx]
+            xtl, ytl, xbr, ybr = out["boxes"][idx]
             # note that mask here is a probability mask and interpolation does not have to be nearest neighbor
-            out['masks'][idx] = cv2.resize(out['masks'][idx], (xbr - xtl, ybr - ytl), interpolation=cv2.INTER_LINEAR)
-        mask_this_cell: np.ndarray = np.zeros(out['masks'][idx].shape, dtype=np.uint8)
-        mask_this_cell[out['masks'][idx] >= MASK_THRESHOLD] = 1
-        out['masks'][idx] = mask_this_cell.astype(np.uint8)
-    
+            out["masks"][idx] = cv2.resize(
+                out["masks"][idx],
+                (xbr - xtl, ybr - ytl),
+                interpolation=cv2.INTER_LINEAR,
+            )
+        mask_this_cell: np.ndarray = np.zeros(out["masks"][idx].shape, dtype=np.uint8)
+        mask_this_cell[out["masks"][idx] >= MASK_THRESHOLD] = 1
+        out["masks"][idx] = mask_this_cell.astype(np.uint8)
+
     # post-process the results
     # in the following, "larger" cells that consist of a number of already detected smaller cells are invalidated
     # list of indexes of cell objects in the results
@@ -924,13 +976,13 @@ def run_point_rend(
     # list of bounding boxes for cells
     cell_boxes: List[np.ndarray] = []
     if post_process:
-        for i, box in enumerate(out['boxes']):
-            if out['labels'][i] == detector._reverse_label_map['cell']:
+        for i, box in enumerate(out["boxes"]):
+            if out["labels"][i] == detector._reverse_label_map["cell"]:
                 cell_idxs.append(i)
                 cell_boxes.append(box)
     # convert to a numpy array
     cell_boxes: np.ndarray = np.array(cell_boxes)
-    
+
     if len(cell_boxes) > 0:
         overlap: np.ndarray = overlap_batch(cell_boxes, cell_boxes, True)
         # remove diagonal elements (as each box has a complete overlap with itself)
@@ -942,33 +994,51 @@ def run_point_rend(
         # list of detection indexes to be excluded (this is with respect to all detected objects and not only cells)
         obj_idxs_to_remove: List[int] = []
         # now double-check the coverage using the masks
-        for (i, j) in zip(covering_cell_idxs, covered_cell_idxs):
+        for i, j in zip(covering_cell_idxs, covered_cell_idxs):
             # larger cell box coordinates
-            xl1, yl1, xl2, yl2 = out['boxes'][i]
+            xl1, yl1, xl2, yl2 = out["boxes"][i]
             # smaller cell box coordinates
-            xs1, ys1, xs2, ys2 = out['boxes'][j]
+            xs1, ys1, xs2, ys2 = out["boxes"][j]
             # union of the two boxes
             x1: int = min(xl1, xs1)
             y1: int = min(yl1, ys1)
             x2: int = max(xl2, xs2)
             y2: int = max(yl2, ys2)
             large_cell_mask: np.ndarray = np.zeros((y2 - y1, x2 - x1), np.uint8)
-            large_cell_mask[(yl1 - y1):(yl2 - y1), (xl1 - x1):(xl2 - x1)] = out['masks'][i]
+            large_cell_mask[(yl1 - y1) : (yl2 - y1), (xl1 - x1) : (xl2 - x1)] = out[
+                "masks"
+            ][i]
             small_cell_mask: np.ndarray = np.zeros((y2 - y1, x2 - x1), np.uint8)
-            small_cell_mask[(ys1 - y1):(ys2 - y1), (xs1 - x1):(xs2 - x1)] = out['masks'][j]
-            
-            if np.sum(small_cell_mask * large_cell_mask) > OVER_LAP_THRESHOLD * np.sum(small_cell_mask):
+            small_cell_mask[(ys1 - y1) : (ys2 - y1), (xs1 - x1) : (xs2 - x1)] = out[
+                "masks"
+            ][j]
+
+            if np.sum(small_cell_mask * large_cell_mask) > OVER_LAP_THRESHOLD * np.sum(
+                small_cell_mask
+            ):
                 # add row index i to the list of cell indexes to be removed
                 if cell_idxs[i] not in obj_idxs_to_remove:
                     obj_idxs_to_remove.append(cell_idxs[i])
-        out['boxes'] = [box for i, box in enumerate(out['boxes']) if i not in obj_idxs_to_remove]
-        out['labels'] = [label for i, label in enumerate(out['labels']) if i not in obj_idxs_to_remove]
-        out['scores'] = [score for i, score in enumerate(out['scores']) if i not in obj_idxs_to_remove]
-        out['masks'] = [mask for i, mask in enumerate(out['masks']) if i not in obj_idxs_to_remove]
-    
+        out["boxes"] = [
+            box for i, box in enumerate(out["boxes"]) if i not in obj_idxs_to_remove
+        ]
+        out["labels"] = [
+            label
+            for i, label in enumerate(out["labels"])
+            if i not in obj_idxs_to_remove
+        ]
+        out["scores"] = [
+            score
+            for i, score in enumerate(out["scores"])
+            if i not in obj_idxs_to_remove
+        ]
+        out["masks"] = [
+            mask for i, mask in enumerate(out["masks"]) if i not in obj_idxs_to_remove
+        ]
+
     et = time.time()
 
     if plot_results:
         return out, et - st, show_detections(img, out, detector._label_map)
-    
+
     return out, et - st

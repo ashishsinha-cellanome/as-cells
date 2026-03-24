@@ -27,7 +27,9 @@ def _letterbox(image: np.ndarray, img_size: int, color=(114, 114, 114)):
 
     top, bottom = int(round(dh - 0.1)), int(round(dh + 0.1))
     left, right = int(round(dw - 0.1)), int(round(dw + 0.1))
-    image = cv2.copyMakeBorder(image, top, bottom, left, right, cv2.BORDER_CONSTANT, value=color)
+    image = cv2.copyMakeBorder(
+        image, top, bottom, left, right, cv2.BORDER_CONSTANT, value=color
+    )
     return image, ratio, (dw, dh)
 
 
@@ -56,7 +58,7 @@ class YoloCocoDataset(Dataset):
             annFile=str(self.dataset_path / f"{split_name}_annotations.json"),
             transforms=None,
         )
-        
+
         # Ensure 'info' key exists to prevent KeyError during COCO evaluation
         if "info" not in self.dataset.coco.dataset:
             self.dataset.coco.dataset["info"] = {}
@@ -161,7 +163,9 @@ class YOLOv5DataModule(pl.LightningDataModule):
 
     def _build_class_maps(self, train_coco):
         target_label_map = {int(k): v for k, v in self.config.model.label_map.items()}
-        name_to_model_id = {name: model_id for model_id, name in target_label_map.items()}
+        name_to_model_id = {
+            name: model_id for model_id, name in target_label_map.items()
+        }
         remap_rules = {}
         if getattr(self.config, "remap_labels", False):
             remap_rules = dict(getattr(self.config.data, "class_remapping", {}))
@@ -182,14 +186,17 @@ class YOLOv5DataModule(pl.LightningDataModule):
         self.model_to_coco_map = model_to_coco
 
         if self.config.debug:
-            print(f"\n{'-'*60}")
+            print(f"\n{'-' * 60}")
             print(f"[DEBUG] Class Mapping Summary:")
             print(f"  Target label_map: {target_label_map}")
             print(f"  COCO cat_to_model: {cat_to_model}")
             print(f"  Model_to_coco: {model_to_coco}")
-            mapped_names = {train_coco.cats[cat_id]['name']: model_id for cat_id, model_id in cat_to_model.items()}
+            mapped_names = {
+                train_coco.cats[cat_id]["name"]: model_id
+                for cat_id, model_id in cat_to_model.items()
+            }
             print(f"  Successful mappings: {mapped_names}")
-            print(f"{'-'*60}\n")
+            print(f"{'-' * 60}\n")
 
     def _build_transforms(self, train: bool):
         data_cfg = self.config.data
@@ -197,7 +204,9 @@ class YOLOv5DataModule(pl.LightningDataModule):
         if hasattr(data_cfg, "transforms"):
             split_key = "train" if train else "test"
             if hasattr(data_cfg.transforms, split_key):
-                transforms_config = OmegaConf.to_container(getattr(data_cfg.transforms, split_key), resolve=True)
+                transforms_config = OmegaConf.to_container(
+                    getattr(data_cfg.transforms, split_key), resolve=True
+                )
 
         return get_transform(
             model_input_width=int(self.config.model.input_size),
@@ -205,7 +214,9 @@ class YOLOv5DataModule(pl.LightningDataModule):
             min_random_scale=float(data_cfg.min_random_scale),
             max_random_scale=float(data_cfg.max_random_scale),
             p_noise=float(data_cfg.p_noise),
-            org_images_in_model_input_size=bool(data_cfg.org_images_in_model_input_size),
+            org_images_in_model_input_size=bool(
+                data_cfg.org_images_in_model_input_size
+            ),
             train=train,
             transforms_config=transforms_config,
         )
@@ -217,7 +228,9 @@ class YOLOv5DataModule(pl.LightningDataModule):
 
         train_coco = CocoDetection(
             root=str(Path(self.dataset_root) / "images" / self.config.train_name),
-            annFile=str(Path(self.dataset_root) / f"{self.config.train_name}_annotations.json"),
+            annFile=str(
+                Path(self.dataset_root) / f"{self.config.train_name}_annotations.json"
+            ),
             transforms=None,
         )
         if "info" not in train_coco.coco.dataset:
@@ -232,7 +245,7 @@ class YOLOv5DataModule(pl.LightningDataModule):
                 transforms=self._build_transforms(train=True),
                 coco_cat_to_model_id=self.coco_cat_to_model_id,
             )
-            
+
             self.val_dataset = YoloCocoDataset(
                 dataset_path=self.dataset_root,
                 split_name=self.config.val_name,
@@ -256,7 +269,7 @@ class YOLOv5DataModule(pl.LightningDataModule):
 
         # Mark setup as called
         self._setup_called = True
-        
+
     @property
     def train_coco_gt(self):
         if self.train_dataset is None:

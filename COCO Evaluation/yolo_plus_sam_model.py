@@ -13,24 +13,32 @@ from typing import Tuple, List, Final, Optional, Dict, Union
 # YOLO_MODEL_WEIGHTS_PATH: Final[str] = '/home/cellareye/Development/yolov5/runs/train/batch_1_batch_2_batch_3_images_20_epochs_m/weights/batch_1_batch_2_batch_3_images_20_epochs_m.onnx'
 # YOLO_MODEL_WEIGHTS_PATH: Final[str] = '/home/cellareye/Development/yolov5/runs/train/batch_1_batch_2_batch_3_images_20_epochs_m/weights/batch_1_4_oof_images_20_epochs_m.onnx'
 # YOLO_MODEL_WEIGHTS_PATH: Final[str] = '/home/cellareye/Development/yolov5/runs/train/sets_1_2_3_8_to_26_10x_bf_10_epochs_m/weights/20240511_sets_1_2_3_8_to_26_10x_bf_10_epochs_m.onnx'
-YOLO_MODEL_WEIGHTS_PATH: Final[str] = '/home/cellareye/Development/yolov5/runs/train/sets_1_2_3_8_to_27_10x_bf_10_epochs_m/weights/20240624_sets_1_2_3_8_to_27_10x_bf_10_epochs_m.onnx'
+YOLO_MODEL_WEIGHTS_PATH: Final[str] = (
+    "/home/cellareye/Development/yolov5/runs/train/sets_1_2_3_8_to_27_10x_bf_10_epochs_m/weights/20240624_sets_1_2_3_8_to_27_10x_bf_10_epochs_m.onnx"
+)
 # YOLO_MODEL_WEIGHTS_PATH: Final[str] = '/home/cellareye/Development/yolov5/runs/train/sets_1_to_5_4x_bf_10_epochs_m/weights/20240611_sets_1_to_5_4x_bf_10_epochs_m.onnx'
 # YOLO_MODEL_WEIGHTS_PATH: Final[str] = '/home/cellareye/Development/darknet/backup/nk92_cells_beads_10000_d.onnx'
 # YOLO_MODEL_WEIGHTS_PATH: Final[str] = '/home/cellareye/Development/yolov5/runs/train/fluorescent_images_batch_1_20_epochs_m/weights/fluorescent_images_batch_1_20_epochs_m.onnx'
 # YOLO_MODEL_WEIGHTS_PATH: Final[str] = '/home/cellareye/Development/yolov5/runs/train/nuclei_bf_25_epochs_m/weights/nuclei_bf_25_epochs_m.onnx'
-DEFAULT_CLASS_NAMES_PATH: Final[str] = '/home/cellareye/Development/yolov5/runs/train/batch_1_and_batch_2_images_20_epochs/weights/caging_analysis_cells.names'
+DEFAULT_CLASS_NAMES_PATH: Final[str] = (
+    "/home/cellareye/Development/yolov5/runs/train/batch_1_and_batch_2_images_20_epochs/weights/caging_analysis_cells.names"
+)
 # CLASS_NAMES_PATH: Final[str] = '/home/cellareye/Development/yolov5/runs/train/fluorescent_images_batch_1_20_epochs/weights/fluorescent_cells.names'
 # CLASS_NAMES_PATH: Final[str] = '/home/cellareye/Development/yolov5/runs/train/nuclei_bf_25_epochs_m/weights/nuclei.names'
 
 
-SAM_MODEL_CHECKPOINTS_PATH: Final[str] = '/home/cellareye/Cellanome/dl-mehdi/SAM/checkpoints'
+SAM_MODEL_CHECKPOINTS_PATH: Final[str] = (
+    "/home/cellareye/Cellanome/dl-mehdi/SAM/checkpoints"
+)
 
-SAM_MODEL_TYPE_TO_CHECKPOINT_MAP: Dict[str, str] = {'vit_b': 'sam_vit_b_01ec64.pth', 
-                                                    'vit_l': 'sam_vit_l_0b3195.pth',
-                                                    'vit_h': 'sam_vit_h_4b8939.pth'}
+SAM_MODEL_TYPE_TO_CHECKPOINT_MAP: Dict[str, str] = {
+    "vit_b": "sam_vit_b_01ec64.pth",
+    "vit_l": "sam_vit_l_0b3195.pth",
+    "vit_h": "sam_vit_h_4b8939.pth",
+}
 
-# mapping the YOLO model label map of {0: 'cell', 1: 'bead', 2: 'soma'} from YOLO to a 
-# Mask R-CNN compatible label map of {1: 'cell', 2: 'bead', 6: 'soma'} 
+# mapping the YOLO model label map of {0: 'cell', 1: 'bead', 2: 'soma'} from YOLO to a
+# Mask R-CNN compatible label map of {1: 'cell', 2: 'bead', 6: 'soma'}
 YOLO_TO_SAM_CLASS_IDS_MAP: Dict[int, int] = {0: 1, 1: 2, 2: 3}
 
 DEFAULT_DETECTION_CONFIDENCE: Final[float] = 0.4
@@ -77,12 +85,15 @@ def iou_batch(bboxes1: np.ndarray, bboxes2: np.ndarray) -> np.ndarray:
     )  # pairwise union area NxM
     return inter_areas / union_areas  # pairwise intersection divided by union (iou) NxM
 
-def overlap_batch(bboxes1: np.ndarray, bboxes2: np.ndarray, ordered: bool = False) -> np.ndarray:
-    """Given Nx4 & Mx4 ndarrays of bounding boxes, compute pairwise overlaps defined as the intersection over 
+
+def overlap_batch(
+    bboxes1: np.ndarray, bboxes2: np.ndarray, ordered: bool = False
+) -> np.ndarray:
+    """Given Nx4 & Mx4 ndarrays of bounding boxes, compute pairwise overlaps defined as the intersection over
     the smallest box area (ordered set to False); a small box fully enclosed by a large box has an "overlap" of 1.
-    if ordered is set to 1, the overlap is the intersection over the area of the box from bboxes2 set. In this case, 
+    if ordered is set to 1, the overlap is the intersection over the area of the box from bboxes2 set. In this case,
     overlap is close to 1 only if the box from bboxes2 lies inside the box from bboxes1"""
-    
+
     # expand dims to allow computing pairwise overlap via outerproducts (creates NxM below)
     bboxes1 = np.expand_dims(bboxes1, 1)  # Nx1x4
     bboxes2 = np.expand_dims(bboxes2, 0)  # 1xMx4
@@ -92,31 +103,45 @@ def overlap_batch(bboxes1: np.ndarray, bboxes2: np.ndarray, ordered: bool = Fals
     inter_y1s = np.maximum(bboxes1[..., 1], bboxes2[..., 1])  # pairwise max NxM
     inter_x2s = np.minimum(bboxes1[..., 2], bboxes2[..., 2])  # pairwise min NxM
     inter_y2s = np.minimum(bboxes1[..., 3], bboxes2[..., 3])  # pairwise min NxM
-    inter_ws = np.maximum(0., inter_x2s - inter_x1s)  # pairwise width of intersection rectangle NxM
-    inter_hs = np.maximum(0., inter_y2s - inter_y1s)  # pairwise height of intersection rectangle NxM
+    inter_ws = np.maximum(
+        0.0, inter_x2s - inter_x1s
+    )  # pairwise width of intersection rectangle NxM
+    inter_hs = np.maximum(
+        0.0, inter_y2s - inter_y1s
+    )  # pairwise height of intersection rectangle NxM
     inter_areas = inter_ws * inter_hs  # pairwise intersection area NxM
     if ordered:
         # use the box area of bboxes2 as the denominator
-        smallest_bb_areas = (bboxes2[..., 2] - bboxes2[..., 0]) * (bboxes2[..., 3] - bboxes2[..., 1])
+        smallest_bb_areas = (bboxes2[..., 2] - bboxes2[..., 0]) * (
+            bboxes2[..., 3] - bboxes2[..., 1]
+        )
     else:
-        smallest_bb_areas = (np.minimum((bboxes1[..., 2] - bboxes1[..., 0])
-                                        * (bboxes1[..., 3] - bboxes1[..., 1]),
-                                        (bboxes2[..., 2] - bboxes2[..., 0])
-                                        * (bboxes2[..., 3] - bboxes2[..., 1]))
-                             + 1e-30)  # smallest bb area of each paired box NXM
-    return inter_areas / smallest_bb_areas  # pairwise intersection divided by smallest box (overlap) NxM
+        smallest_bb_areas = (
+            np.minimum(
+                (bboxes1[..., 2] - bboxes1[..., 0])
+                * (bboxes1[..., 3] - bboxes1[..., 1]),
+                (bboxes2[..., 2] - bboxes2[..., 0])
+                * (bboxes2[..., 3] - bboxes2[..., 1]),
+            )
+            + 1e-30
+        )  # smallest bb area of each paired box NXM
+    return (
+        inter_areas / smallest_bb_areas
+    )  # pairwise intersection divided by smallest box (overlap) NxM
 
 
-def iou_mask_pair(box1: np.ndarray, mask1: np.ndarray, box2: np.ndarray, mask2: np.ndarray) -> float:
+def iou_mask_pair(
+    box1: np.ndarray, mask1: np.ndarray, box2: np.ndarray, mask2: np.ndarray
+) -> float:
     """
-    Given two np.uint8 M1xN1 and M2xN2 numpy arrays (mask1, mask2) for two object masks and 
-    two (4,) (4-element) integer numpy arrays of the top-left/bottom-right corners of the 
-    bounding boxes around these objects (box1, box2), the code returns the IoU between the masks of the two objects. 
-    The passed masks should be defined within the passed bounding boxes, and should have 
-    values set to 1 for the object. The bounding boxes should be passed in xtl, ytl, xbr, ybr order, e.g.,  
+    Given two np.uint8 M1xN1 and M2xN2 numpy arrays (mask1, mask2) for two object masks and
+    two (4,) (4-element) integer numpy arrays of the top-left/bottom-right corners of the
+    bounding boxes around these objects (box1, box2), the code returns the IoU between the masks of the two objects.
+    The passed masks should be defined within the passed bounding boxes, and should have
+    values set to 1 for the object. The bounding boxes should be passed in xtl, ytl, xbr, ybr order, e.g.,
     if [xtl, ytl, xbr, ybr] are the passed integer values of the top-left and bottle-right corner of the bounding box
     for an object, the passed masks should be a numpy array of type np.uint8 and size (ybr - ytl, xbr - xtl)
-    with values set to 1 for the object. 
+    with values set to 1 for the object.
     """
     # union of the box coordinates, make sure the coordinates are integers
     xtl_1, ytl_1, xbr_1, ybr_1 = box1.astype(int)
@@ -127,9 +152,9 @@ def iou_mask_pair(box1: np.ndarray, mask1: np.ndarray, box2: np.ndarray, mask2: 
     xbr: int = max(xbr_1, xbr_2)
     ybr: int = max(ybr_1, ybr_2)
     union_mask_1: np.ndarray = np.zeros((ybr - ytl, xbr - xtl), np.uint8)
-    union_mask_1[(ytl_1 - ytl):(ybr_1 - ytl), (xtl_1 - xtl):(xbr_1 - xtl)] = mask1
+    union_mask_1[(ytl_1 - ytl) : (ybr_1 - ytl), (xtl_1 - xtl) : (xbr_1 - xtl)] = mask1
     union_mask_2: np.ndarray = np.zeros((ybr - ytl, xbr - xtl), np.uint8)
-    union_mask_2[(ytl_2 - ytl):(ybr_2 - ytl), (xtl_2 - xtl):(xbr_2 - xtl)] = mask2
+    union_mask_2[(ytl_2 - ytl) : (ybr_2 - ytl), (xtl_2 - xtl) : (xbr_2 - xtl)] = mask2
     union: int = cv2.bitwise_or(union_mask_1, union_mask_2).sum()
     intersection: int = cv2.bitwise_and(union_mask_1, union_mask_2).sum()
 
@@ -149,22 +174,29 @@ def box_area(box: np.array) -> float:
 def show_detections(input_image, predictions, label_map):
 
     # colors for displaying bounding boxes
-    COLORS = [(0, 0, 255), (255, 0, 0), (0, 255, 0), (255, 255, 0), (255, 0, 255), (0, 255, 255)]
-    
+    COLORS = [
+        (0, 0, 255),
+        (255, 0, 0),
+        (0, 255, 0),
+        (255, 255, 0),
+        (255, 0, 255),
+        (0, 255, 255),
+    ]
+
     class_ids = list(label_map.keys())
     if isinstance(input_image, np.ndarray):
         image = input_image.copy()
     else:
         # convert to a numpy array
         image = np.array(input_image)
-    
+
     # convert to 3-channels
     if len(image.shape) < 3:
         image = np.repeat(np.expand_dims(image, axis=2), 3, axis=2)
-    
-    boxes = predictions['boxes']
-    labels = predictions['labels']
-    masks = predictions['masks']
+
+    boxes = predictions["boxes"]
+    labels = predictions["labels"]
+    masks = predictions["masks"]
 
     for i in range(len(masks)):
         # the bounding box
@@ -176,7 +208,7 @@ def show_detections(input_image, predictions, label_map):
         else:
             color = COLORS[labels[i] % len(COLORS)]
             text = label_map[labels[i]]
-        
+
         color_mask = color * np.repeat(np.expand_dims(masks[i], axis=2), 3, axis=2)
         blended = 0.4 * color_mask
         blended[color_mask == 0] = image[ytl:ybr, xtl:xbr][color_mask == 0]
@@ -191,6 +223,7 @@ def show_detections(input_image, predictions, label_map):
             image, text, (xtl, ytl + 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1
         )
     return image
+
 
 def get_crop_corners(
     image_width: int,
@@ -242,20 +275,22 @@ def get_crop_corners(
 
     return crop_corners
 
-def load_onnx_model_and_metadata(weights_path: str, use_onnx_runtime: bool, classnames_path: str=None):
+
+def load_onnx_model_and_metadata(
+    weights_path: str, use_onnx_runtime: bool, classnames_path: str = None
+):
     # loading the ONNX model
-    logging.info(
-        f"Loading YOLOv5 ONNX weights from {weights_path}."
-    )
+    logging.info(f"Loading YOLOv5 ONNX weights from {weights_path}.")
     try:
         if use_onnx_runtime:
-            logging.info(
-                "Using ONNX Runtime for running the model."
+            logging.info("Using ONNX Runtime for running the model.")
+
+            net = onnxruntime.InferenceSession(
+                weights_path,
+                providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
             )
 
-            net = onnxruntime.InferenceSession(weights_path, providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
-                
-            if 'CUDAExecutionProvider' not in onnxruntime.get_available_providers():
+            if "CUDAExecutionProvider" not in onnxruntime.get_available_providers():
                 logging.warning(
                     "CUDAExecutionProvider is not available in ONNX Runtime! The model will be run on CPU."
                 )
@@ -280,7 +315,7 @@ def load_onnx_model_and_metadata(weights_path: str, use_onnx_runtime: bool, clas
             f"{weights_path} is incorrect or ONNX Runtime is not installed: {repr(ex)}."
         )
         return None, None
-        
+
     # read class names and other metadata from ONNX file and create the label map
     try:
         if use_onnx_runtime:
@@ -301,56 +336,63 @@ def load_onnx_model_and_metadata(weights_path: str, use_onnx_runtime: bool, clas
             metadata: Dict[str, str] = {}
             for field in onnx_model.metadata_props:
                 metadata[field.key] = eval(field.value)
-            
+
     except Exception:
         # try reading from a defualt location
-        try: 
+        try:
             # read class names and create the label map
-            with open(classnames_path, 'r') as f:  # if fails to read then blow with error
+            with open(
+                classnames_path, "r"
+            ) as f:  # if fails to read then blow with error
                 class_names: List[str] = [cname.strip() for cname in f.readlines()]
 
             label_map: Dict[int, str] = {i: c for i, c in enumerate(class_names)}
-            metadata = {'names': label_map}
+            metadata = {"names": label_map}
 
         except Exception as ex:
             logging.error(
                 "Failed to initialize YOLOv5 model with CUDA. The model does not include label map in its metadata and a valid path to classnames file "
-                    f"{classnames_path} is not provided: {repr(ex)}."
-                )
+                f"{classnames_path} is not provided: {repr(ex)}."
+            )
             return net, None
-                
 
     logging.info("Class names were successfully loaded")
-    
+
     return net, metadata
 
+
 def load_sam_model(sam_checkpoints_path: str, model_type: str):
-    """ A function to load the SAM model 
+    """A function to load the SAM model
     Args:
-        sam_checkpoints_path (str): Path to the SAM model checkpoints. 
+        sam_checkpoints_path (str): Path to the SAM model checkpoints.
         model_type (str): The encoder model architecture, can be 'vit_b', 'vit_l' or 'vit_h'.
     Returns the segment_anything.modeling.sam.Sam object
     """
     if model_type not in SAM_MODEL_TYPE_TO_CHECKPOINT_MAP:
-        logging.error(f"Invalid SAM model_type: {model_type}! Impossible to instantiate the SAM model. Returning None ...")
+        logging.error(
+            f"Invalid SAM model_type: {model_type}! Impossible to instantiate the SAM model. Returning None ..."
+        )
         return None
-    
-    sam_checkpoint: str = os.path.join(sam_checkpoints_path, SAM_MODEL_TYPE_TO_CHECKPOINT_MAP[model_type])
+
+    sam_checkpoint: str = os.path.join(
+        sam_checkpoints_path, SAM_MODEL_TYPE_TO_CHECKPOINT_MAP[model_type]
+    )
     sam = sam_model_registry[model_type](checkpoint=sam_checkpoint)
     return sam
+
 
 # YOLOv5 detector followed by a SAM segmentor class
 class Yolov5PlusSamSegmentor:
     def __init__(
-            self,
-            yolo_weights_path: Optional[str] = YOLO_MODEL_WEIGHTS_PATH,
-            sam_checkpoints_path: Optional[str] = SAM_MODEL_CHECKPOINTS_PATH,
-            sam_model_type: Optional[str] = 'vit_b',
-            yolo_to_sam_class_ids_map: Optional[Dict[int, int]] = YOLO_TO_SAM_CLASS_IDS_MAP,
-            model_input_size: Tuple[int, int] = INPUT_IMAGE_SIZE,
-            confidence: float = DEFAULT_DETECTION_CONFIDENCE,
-            nms_threshold: float = DEFAULT_NMS_THRESHOLD,
-            use_onnx_runtime: bool = False
+        self,
+        yolo_weights_path: Optional[str] = YOLO_MODEL_WEIGHTS_PATH,
+        sam_checkpoints_path: Optional[str] = SAM_MODEL_CHECKPOINTS_PATH,
+        sam_model_type: Optional[str] = "vit_b",
+        yolo_to_sam_class_ids_map: Optional[Dict[int, int]] = YOLO_TO_SAM_CLASS_IDS_MAP,
+        model_input_size: Tuple[int, int] = INPUT_IMAGE_SIZE,
+        confidence: float = DEFAULT_DETECTION_CONFIDENCE,
+        nms_threshold: float = DEFAULT_NMS_THRESHOLD,
+        use_onnx_runtime: bool = False,
     ):
 
         self._net = None
@@ -367,35 +409,42 @@ class Yolov5PlusSamSegmentor:
             f"Loading the model with confidence {self._confidence} and"
             f" NMS threshold {self._nms_threshold} ..."
         )
-        
-        self._net, self._metadata = load_onnx_model_and_metadata(weights_path=self._weights_path, 
-                                                                 use_onnx_runtime=self._use_onnx_runtime, 
-                                                                 classnames_path=DEFAULT_CLASS_NAMES_PATH)
-        
-        yolo_label_map: Dict[int, str] = self._metadata['names']
-        
+
+        self._net, self._metadata = load_onnx_model_and_metadata(
+            weights_path=self._weights_path,
+            use_onnx_runtime=self._use_onnx_runtime,
+            classnames_path=DEFAULT_CLASS_NAMES_PATH,
+        )
+
+        yolo_label_map: Dict[int, str] = self._metadata["names"]
+
         # map the YOLO label map to a Mask R-CNN compatible label map for comparison
         self._label_map: Dict[int, str] = {}
         for k, v in yolo_label_map.items():
             # if two class IDs from YOLO are mapped to one class ID, the first name is the list is used for the classname
-            if k in self._yolo_to_sam_class_ids_map and self._yolo_to_sam_class_ids_map[k] not in self._label_map:
+            if (
+                k in self._yolo_to_sam_class_ids_map
+                and self._yolo_to_sam_class_ids_map[k] not in self._label_map
+            ):
                 self._label_map[self._yolo_to_sam_class_ids_map[k]] = v
-        
-        self._reverse_label_map: Dict[str, int] = {v: k for k, v in self._label_map.items()}
 
-        self._device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+        self._reverse_label_map: Dict[str, int] = {
+            v: k for k, v in self._label_map.items()
+        }
+
+        self._device = (
+            torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+        )
         self._sam = load_sam_model(self._sam_checkpoints_path, self._sam_model_type)
 
         if self._net is None or self._metadata is None or self._sam is None:
             self._sam_detector = None
             return
-        
+
         self._sam.to(device=self._device)
         self._sam_detector = SamPredictor(self._sam)
 
-    def detect(
-            self, image: np.ndarray, log_time=False
-    ) -> Dict[str, list]:
+    def detect(self, image: np.ndarray, log_time=False) -> Dict[str, list]:
         """
         The main function to detect the bounding box and masks for objects in the input image.
         """
@@ -403,14 +452,24 @@ class Yolov5PlusSamSegmentor:
             logging.error(
                 "YOLOv5 CV model has not been initialized. Please initialize the class before detect()."
             )
-            out: Dict[str, list] = {"boxes": [], "scores": [], "labels": [], "masks": []}
+            out: Dict[str, list] = {
+                "boxes": [],
+                "scores": [],
+                "labels": [],
+                "masks": [],
+            }
             return out
 
         if self._sam_detector is None:
             logging.error(
                 "SAM model has not been initialized. Please initialize the class before detect()."
             )
-            out: Dict[str, list] = {"boxes": [], "scores": [], "labels": [], "masks": []}
+            out: Dict[str, list] = {
+                "boxes": [],
+                "scores": [],
+                "labels": [],
+                "masks": [],
+            }
             return out
 
         start: float = time.time()
@@ -422,7 +481,7 @@ class Yolov5PlusSamSegmentor:
         # if not, then the input image will be resized without keeping its aspect ratio when it
         # is passed to the model, and this may lead to inaccurate detection
         aspect_ratio_diff: float = (image_width * self._model_input_size[1]) / (
-                image_height * self._model_input_size[0]
+            image_height * self._model_input_size[0]
         ) - 1
 
         if np.abs(aspect_ratio_diff) > INPUT_IMAGE_ASPECT_RATIO_DIFF_DEV_THRESH:
@@ -440,10 +499,9 @@ class Yolov5PlusSamSegmentor:
         else:
             input_image = image
 
-        
         elap: float = time.time() - start
         check_point: float = time.time()
-        
+
         if log_time:
             logging.info(f"Pre-processing took {elap:.4f} seconds")
 
@@ -460,7 +518,9 @@ class Yolov5PlusSamSegmentor:
             # transpose the input image to C x H x W and add batch dimension
             input_image = np.expand_dims(np.transpose(input_image, (2, 0, 1)), axis=0)
             # construct the input dictionary
-            ort_inputs: dict = {self._net.get_inputs()[0].name: input_image.astype(np.float32) / 255.0}
+            ort_inputs: dict = {
+                self._net.get_inputs()[0].name: input_image.astype(np.float32) / 255.0
+            }
             # run the forward pass to get output
             outputs: np.array = self._net.run(None, ort_inputs)
         else:
@@ -478,17 +538,32 @@ class Yolov5PlusSamSegmentor:
             outputs: np.ndarray = self._net.forward(
                 self._net.getUnconnectedOutLayersNames()
             )
-        
+
         # only one output layer, pick the first element in the tuple then remove the batch dimension
         outputs = outputs[0][0]
-        boxes, labels, scores = self._post_process_yolo(outputs, (image_width, image_height))
+        boxes, labels, scores = self._post_process_yolo(
+            outputs, (image_width, image_height)
+        )
 
         for i in range(len(boxes)):
             box = boxes[i]
-            if box[0] < 0 or box[1] < 0 or box[2] > image_width or box[3] > image_height:
-                print(f"[ERROR] Returned box coodinates from YOLO: {box} are out of the image! This should never happen ...")
-                boxes[i] = np.array([max(0, box[0]), max(0, box[1]), min(box[2], image_width), min(box[3], image_height)])
-            
+            if (
+                box[0] < 0
+                or box[1] < 0
+                or box[2] > image_width
+                or box[3] > image_height
+            ):
+                print(
+                    f"[ERROR] Returned box coodinates from YOLO: {box} are out of the image! This should never happen ..."
+                )
+                boxes[i] = np.array(
+                    [
+                        max(0, box[0]),
+                        max(0, box[1]),
+                        min(box[2], image_width),
+                        min(box[3], image_height),
+                    ]
+                )
 
         # convert the YOLO labels to a compatible Mask R-CNN labels
         valid_idxs: List[int] = []
@@ -500,32 +575,45 @@ class Yolov5PlusSamSegmentor:
         boxes = np.array([box for i, box in enumerate(boxes) if i in valid_idxs])
         labels = np.array([label for i, label in enumerate(labels) if i in valid_idxs])
         scores = np.array([score for i, score in enumerate(scores) if i in valid_idxs])
-        
 
         elap: float = time.time() - check_point
         check_point: float = time.time()
         if log_time:
             logging.info(f"YOLO V5 object detection took {elap:.4f} seconds")
 
-        
         masks: List[np.ndarray] = []
         # extract masks for 100 boxes at a time to make sure we are not running out of GPU memory
         num_boxes_step_size: int = 100
         for i in range(0, len(scores), num_boxes_step_size):
-            start_index : int = i
+            start_index: int = i
             end_index = min(i + num_boxes_step_size, len(scores))
-            input_boxes = torch.tensor(boxes[start_index:end_index, :], device=self._device)
-            transformed_boxes = self._sam_detector.transform.apply_boxes_torch(input_boxes, image.shape[:2])  
-            mask_tensors, iou_predictions, low_res_masks = self._sam_detector.predict_torch(
-                point_coords=None,
-                point_labels=None,
-                boxes=transformed_boxes,
-                multimask_output=False,
+            input_boxes = torch.tensor(
+                boxes[start_index:end_index, :], device=self._device
+            )
+            transformed_boxes = self._sam_detector.transform.apply_boxes_torch(
+                input_boxes, image.shape[:2]
+            )
+            mask_tensors, iou_predictions, low_res_masks = (
+                self._sam_detector.predict_torch(
+                    point_coords=None,
+                    point_labels=None,
+                    boxes=transformed_boxes,
+                    multimask_output=False,
+                )
             )
             for i, box_tensor in enumerate(input_boxes):
                 # confine the mask to the bounding box and move to CPU before converting to numpy arrays
-                masks.append(mask_tensors[i, 0, box_tensor[1]: box_tensor[3], box_tensor[0]: box_tensor[2]].cpu().numpy().astype(np.uint8))
-        
+                masks.append(
+                    mask_tensors[
+                        i,
+                        0,
+                        box_tensor[1] : box_tensor[3],
+                        box_tensor[0] : box_tensor[2],
+                    ]
+                    .cpu()
+                    .numpy()
+                    .astype(np.uint8)
+                )
 
         elap: float = time.time() - check_point
         check_point: float = time.time()
@@ -536,23 +624,28 @@ class Yolov5PlusSamSegmentor:
         if log_time:
             logging.info(f"YOLOv5 + SAM segmentation took {elap:.4f} seconds")
 
-        return {"boxes": [box for box in boxes], "labels": list(labels), "scores": list(scores), "masks": masks}
+        return {
+            "boxes": [box for box in boxes],
+            "labels": list(labels),
+            "scores": list(scores),
+            "masks": masks,
+        }
 
     def set_confidence(self, confidence):
         self._confidence = confidence
 
     def set_nms_threshold(self, threshold):
         self._nms_threshold = threshold
-        
+
     def get_label_map(self):
         return self._label_map
-        
+
     def get_reverse_label_map(self):
         return self._reverse_label_map
-    
+
     def get_metadata(self):
         return self._metadata
-        
+
     def _post_process_yolo(
         self, outputs: np.ndarray, org_image_shape: Tuple[int, int]
     ) -> Tuple[np.array, np.array, np.array]:
@@ -569,7 +662,9 @@ class Yolov5PlusSamSegmentor:
         w: np.array = outputs[:, 2]
         h: np.array = outputs[:, 3]
         # convert the boxes from (cx, cy, w, h) format to (xtl, ytl, w, h) before running NMS
-        boxes: np.ndarray = np.vstack([np.maximum(0, cx - w / 2), np.maximum(cy - h / 2, 0), w, h]).T * np.array(
+        boxes: np.ndarray = np.vstack(
+            [np.maximum(0, cx - w / 2), np.maximum(cy - h / 2, 0), w, h]
+        ).T * np.array(
             [
                 org_image_shape[0] / self._model_input_size[0],
                 org_image_shape[1] / self._model_input_size[1],
@@ -606,12 +701,12 @@ class Yolov5PlusSamSegmentor:
         return boxes, labels, scores
 
     def detect_by_cropping(
-            self,
-            img: Union[Image.Image, np.ndarray],
-            crop_corners: List[List[int]],
-            nms_threshold_for_combining_crop_results: float = 0.15,
-            classnames_to_return: Optional[List[str]] = None,
-            log_time=False,
+        self,
+        img: Union[Image.Image, np.ndarray],
+        crop_corners: List[List[int]],
+        nms_threshold_for_combining_crop_results: float = 0.15,
+        classnames_to_return: Optional[List[str]] = None,
+        log_time=False,
     ) -> Dict[str, List]:
         """
         A function to apply the model on a high resolution image. If the
@@ -702,7 +797,13 @@ class Yolov5PlusSamSegmentor:
         # combine the results, filter them based on the score,
         # and update the coordinates of the bounding boxes
         # for applying NMS later
-        results: Dict = {"scores": [], "boxes": [], "labels": [], "masks": [], "features": []}
+        results: Dict = {
+            "scores": [],
+            "boxes": [],
+            "labels": [],
+            "masks": [],
+            "features": [],
+        }
 
         # a list to keep track of cropped sub-images with at least one object detection
         crop_ids_with_detection: List[int] = []
@@ -746,7 +847,7 @@ class Yolov5PlusSamSegmentor:
                 | (boxes[:, 1] < 4)
                 | (boxes[:, 2] > crop_width - 4)
                 | (boxes[:, 3] > crop_height - 4)
-                ] = self._confidence
+            ] = self._confidence
 
             crop_ids_with_detection.append(crop_id)
             results["scores"].append(scores)
@@ -878,7 +979,9 @@ class Yolov5PlusSamSegmentor:
                         rest_det_score = scores_to_check[max_index]
 
                         # areas of the matching boxes
-                        crop_box_area: float = box_area(crop_boxes[crop_class_idxs[0][i]])
+                        crop_box_area: float = box_area(
+                            crop_boxes[crop_class_idxs[0][i]]
+                        )
                         rest_box_area: float = box_area(
                             rest_boxes[rest_class_idxs[0][high_iou_idxs[max_index]]]
                         )
@@ -888,8 +991,8 @@ class Yolov5PlusSamSegmentor:
                         # the image) of the crops (we reduce the scores for both to the threshold score and they become
                         # equal)
                         if crop_det_score > rest_det_score or (
-                                crop_det_score == rest_det_score
-                                and crop_box_area >= rest_box_area
+                            crop_det_score == rest_det_score
+                            and crop_box_area >= rest_box_area
                         ):
                             # keep this object as it has the highest score among all
                             boxes.append(crop_boxes[crop_class_idxs[0][i]])
@@ -934,7 +1037,8 @@ class Yolov5PlusSamSegmentor:
         }
 
         return out
-    
+
+
 detector = Yolov5PlusSamSegmentor(use_onnx_runtime=False)
 
 
@@ -977,13 +1081,14 @@ CROP_CORNERS: Final[Dict[Tuple[int, int], List[List[int]]]] = {
 # threshold for post-processing cells and remove the ones consisting of multiple smaller cells
 OVER_LAP_THRESHOLD: Final[float] = 0.75
 
+
 def run_yolo_plus_sam(
-    input_image: np.ndarray, 
-    normalize_image: bool = False, 
-    bit_depth: int = 8, 
-    classnames_mapping_dict = None, 
-    post_process_class_names: List[str] = list(detector.get_label_map().values()), 
-    plot_results: bool = False, 
+    input_image: np.ndarray,
+    normalize_image: bool = False,
+    bit_depth: int = 8,
+    classnames_mapping_dict=None,
+    post_process_class_names: List[str] = list(detector.get_label_map().values()),
+    plot_results: bool = False,
 ) -> Tuple[Dict[str, list], float, Optional[np.ndarray]]:
     # make a copy to not modify the input image
     img = input_image.copy()
@@ -994,7 +1099,7 @@ def run_yolo_plus_sam(
         )
         img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-    img = (255 * img.astype(float) / (2 ** bit_depth - 1)).astype(np.uint8)
+    img = (255 * img.astype(float) / (2**bit_depth - 1)).astype(np.uint8)
 
     if normalize_image:
         img = cv2.normalize(img, img, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX)
@@ -1004,23 +1109,24 @@ def run_yolo_plus_sam(
     if (image_width, image_height) not in RESIZE:
         logging.error(
             "The input image size {} is not supported! Returning no cells!".format(
-                image_width, )
+                image_width,
+            )
         )
-        out = {'boxes': np.zeros((0, 4), dtype=int),
-               'labels': np.zeros((0,), dtype=int),
-               'scores': np.zeros((0,), dtype=float),
-               'masks': [],
-               }
+        out = {
+            "boxes": np.zeros((0, 4), dtype=int),
+            "labels": np.zeros((0,), dtype=int),
+            "scores": np.zeros((0,), dtype=float),
+            "masks": [],
+        }
         if plot_results:
             return (out, 0, np.zeros((image_height, image_width), dtype=np.uint8))
         else:
             return (out, 0)
 
-    
     # we keep the aspect ratio in RESIZE dictionary, scale_factor is the same for both dimensions
     scale_factor: float = image_width / RESIZE[(image_width, image_height)][0]
     resized_width, resized_height = RESIZE[(image_width, image_height)]
-   
+
     if scale_factor != 1:
         resized_img: np.ndarray = cv2.resize(
             img, (resized_width, resized_height), interpolation=cv2.INTER_AREA
@@ -1030,36 +1136,48 @@ def run_yolo_plus_sam(
 
     st = time.time()
 
-    
     crop_corners: List[List[int]] = CROP_CORNERS[(image_width, image_height)]
-    out: Dict[str, list] = detector.detect_by_cropping(img=resized_img, crop_corners=crop_corners)
-   
+    out: Dict[str, list] = detector.detect_by_cropping(
+        img=resized_img, crop_corners=crop_corners
+    )
 
     if scale_factor != 1:
         # scale the detections back to original image resolution
-        out['boxes'] = (scale_factor * np.array(out['boxes'])).astype(int)
+        out["boxes"] = (scale_factor * np.array(out["boxes"])).astype(int)
         # convert to a list to be consistent with the rest
-        out['boxes'] = [box for box in out['boxes']]
+        out["boxes"] = [box for box in out["boxes"]]
     else:
-        out['boxes'] = [np.array(box) for box in out['boxes']]   
+        out["boxes"] = [np.array(box) for box in out["boxes"]]
 
-    for idx in range(len(out['boxes'])):
+    for idx in range(len(out["boxes"])):
         if scale_factor != 1:
-            xtl, ytl, xbr, ybr = out['boxes'][idx]
+            xtl, ytl, xbr, ybr = out["boxes"][idx]
             # note that mask here is NOT a probability mask and interpolation does not have to be nearest neighbor
-            out['masks'][idx] = cv2.resize(out['masks'][idx], (xbr - xtl, ybr - ytl), interpolation=cv2.INTER_NEAREST)
+            out["masks"][idx] = cv2.resize(
+                out["masks"][idx],
+                (xbr - xtl, ybr - ytl),
+                interpolation=cv2.INTER_NEAREST,
+            )
 
     if classnames_mapping_dict is not None:
-        classnames_to_exclude: List[str] = [name for name, mapped_name in classnames_mapping_dict.items() if mapped_name == 'bg']
-        class_ids_to_exclude: List [int] = [detector._reverse_label_map[name] for name in classnames_to_exclude]
-        class_ids_mapping_dict = {detector._reverse_label_map[name]: detector._reverse_label_map[mapped_name] 
-                                  for name, mapped_name in classnames_mapping_dict.items() if mapped_name != 'bg'}
-
+        classnames_to_exclude: List[str] = [
+            name
+            for name, mapped_name in classnames_mapping_dict.items()
+            if mapped_name == "bg"
+        ]
+        class_ids_to_exclude: List[int] = [
+            detector._reverse_label_map[name] for name in classnames_to_exclude
+        ]
+        class_ids_mapping_dict = {
+            detector._reverse_label_map[name]: detector._reverse_label_map[mapped_name]
+            for name, mapped_name in classnames_mapping_dict.items()
+            if mapped_name != "bg"
+        }
 
         labels: List[int] = []
         idxs_to_keep: List[int] = []
 
-        for idx, label in enumerate(out['labels']):
+        for idx, label in enumerate(out["labels"]):
             if label in class_ids_to_exclude:
                 continue
             if label in class_ids_mapping_dict:
@@ -1067,12 +1185,18 @@ def run_yolo_plus_sam(
             else:
                 labels.append(label)
             idxs_to_keep.append(idx)
-    
-        out['boxes'] = [box for idx, box in enumerate(out['boxes']) if idx in idxs_to_keep]
-        out['labels'] = labels
-        out['scores'] = [score for idx, score in enumerate(out['scores']) if idx in idxs_to_keep]
-        out['masks'] = [mask for idx, mask in enumerate(out['masks']) if idx in idxs_to_keep]
-    
+
+        out["boxes"] = [
+            box for idx, box in enumerate(out["boxes"]) if idx in idxs_to_keep
+        ]
+        out["labels"] = labels
+        out["scores"] = [
+            score for idx, score in enumerate(out["scores"]) if idx in idxs_to_keep
+        ]
+        out["masks"] = [
+            mask for idx, mask in enumerate(out["masks"]) if idx in idxs_to_keep
+        ]
+
     # post-process the results
     # in the following, "larger" objects that consist of a number of already detected smaller objects of the same type are invalidated
     # this can happen mainly for 'cell', 'nucleus' and 'cell-adhered'/'cytoplasm' classes
@@ -1080,26 +1204,33 @@ def run_yolo_plus_sam(
     post_process_class_idxs: Dict[str, List[int]] = {}
     # list of bounding boxes for each class name to be included in post processing
     post_process_class_boxes: Dict[str, List[np.ndarray]] = {}
-    for i, box in enumerate(out['boxes']):
+    for i, box in enumerate(out["boxes"]):
         for class_name in post_process_class_names:
-            if class_name in detector._reverse_label_map and out['labels'][i] == detector._reverse_label_map[class_name]:
+            if (
+                class_name in detector._reverse_label_map
+                and out["labels"][i] == detector._reverse_label_map[class_name]
+            ):
                 if class_name in post_process_class_idxs:
                     post_process_class_idxs[class_name].append(i)
                     post_process_class_boxes[class_name].append(box)
                 else:
                     post_process_class_idxs[class_name] = [i]
                     post_process_class_boxes[class_name] = [box]
-    
+
     # list of detection indexes to be excluded (this is with respect to all detected objects and not only the class under consideration)
-    obj_idxs_to_remove: List[int] = []                
+    obj_idxs_to_remove: List[int] = []
     for key in post_process_class_boxes:
         # convert to a numpy array
-        post_process_class_boxes[key]: np.ndarray = np.array(post_process_class_boxes[key])
-        
+        post_process_class_boxes[key]: np.ndarray = np.array(
+            post_process_class_boxes[key]
+        )
+
         if len(post_process_class_idxs[key]) == 0:
             continue
-        
-        overlap: np.ndarray = overlap_batch(post_process_class_boxes[key], post_process_class_boxes[key], True)
+
+        overlap: np.ndarray = overlap_batch(
+            post_process_class_boxes[key], post_process_class_boxes[key], True
+        )
         # remove diagonal elements (as each box has a complete overlap with itself)
         overlap = overlap - np.eye(len(post_process_class_boxes[key]))
         # index of larger objects (row indexes) covering some smaller already detected cells (column index)
@@ -1107,37 +1238,55 @@ def run_yolo_plus_sam(
         # these smaller objects are most probably redundant objects
         covering_obj_idxs, covered_obj_idxs = np.where(overlap > OVER_LAP_THRESHOLD)
         # now double-check the coverage using the masks
-        for (i, j) in zip(covering_obj_idxs, covered_obj_idxs):
+        for i, j in zip(covering_obj_idxs, covered_obj_idxs):
             large_obj_index: int = post_process_class_idxs[key][i]
             small_obj_index: int = post_process_class_idxs[key][j]
             # larger box coordinates
-            xl1, yl1, xl2, yl2 = out['boxes'][large_obj_index]
+            xl1, yl1, xl2, yl2 = out["boxes"][large_obj_index]
             # smaller box coordinates
-            xs1, ys1, xs2, ys2 = out['boxes'][small_obj_index]
+            xs1, ys1, xs2, ys2 = out["boxes"][small_obj_index]
             # union of the two boxes
             x1: int = min(xl1, xs1)
             y1: int = min(yl1, ys1)
             x2: int = max(xl2, xs2)
             y2: int = max(yl2, ys2)
             large_obj_mask: np.ndarray = np.zeros((y2 - y1, x2 - x1), np.uint8)
-            large_obj_mask[(yl1 - y1):(yl2 - y1), (xl1 - x1):(xl2 - x1)] = out['masks'][large_obj_index]
+            large_obj_mask[(yl1 - y1) : (yl2 - y1), (xl1 - x1) : (xl2 - x1)] = out[
+                "masks"
+            ][large_obj_index]
             small_obj_mask: np.ndarray = np.zeros((y2 - y1, x2 - x1), np.uint8)
-            small_obj_mask[(ys1 - y1):(ys2 - y1), (xs1 - x1):(xs2 - x1)] = out['masks'][small_obj_index]
-            
-            if np.sum(small_obj_mask * large_obj_mask) > OVER_LAP_THRESHOLD * np.sum(small_obj_mask):
+            small_obj_mask[(ys1 - y1) : (ys2 - y1), (xs1 - x1) : (xs2 - x1)] = out[
+                "masks"
+            ][small_obj_index]
+
+            if np.sum(small_obj_mask * large_obj_mask) > OVER_LAP_THRESHOLD * np.sum(
+                small_obj_mask
+            ):
                 # add row index i to the list of object indexes to be removed
                 if small_obj_index not in obj_idxs_to_remove:
                     obj_idxs_to_remove.append(small_obj_index)
-    
+
     if len(obj_idxs_to_remove) > 0:
-        out['boxes'] = [box for i, box in enumerate(out['boxes']) if i not in obj_idxs_to_remove]
-        out['labels'] = [label for i, label in enumerate(out['labels']) if i not in obj_idxs_to_remove]
-        out['scores'] = [score for i, score in enumerate(out['scores']) if i not in obj_idxs_to_remove]
-        out['masks'] = [mask for i, mask in enumerate(out['masks']) if i not in obj_idxs_to_remove]
-    
+        out["boxes"] = [
+            box for i, box in enumerate(out["boxes"]) if i not in obj_idxs_to_remove
+        ]
+        out["labels"] = [
+            label
+            for i, label in enumerate(out["labels"])
+            if i not in obj_idxs_to_remove
+        ]
+        out["scores"] = [
+            score
+            for i, score in enumerate(out["scores"])
+            if i not in obj_idxs_to_remove
+        ]
+        out["masks"] = [
+            mask for i, mask in enumerate(out["masks"]) if i not in obj_idxs_to_remove
+        ]
+
     et = time.time()
 
     if plot_results:
         return out, et - st, show_detections(img, out, detector.get_label_map())
-    
+
     return out, et - st

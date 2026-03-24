@@ -1,5 +1,5 @@
 from models.AbstractVisionModel import VisionModel
-from utils.model_utils import get_crop_corners 
+from utils.model_utils import get_crop_corners
 
 import numpy as np
 import cv2
@@ -35,39 +35,43 @@ DEFAULT_CROP_CORNERS_10x: Final[Dict[Tuple[int, int], List[List[int]]]] = {
     (4512, 4512): get_crop_corners(
         image_width=DEFAULT_RESIZE_10x[(4512, 4512)][0],
         image_height=DEFAULT_RESIZE_10x[(4512, 4512)][1],
-        overlap_in_x = 40,
-        overlap_in_y = 40,
-        input_size = DEFAULT_MODEL_INPUT_SIZE,
+        overlap_in_x=40,
+        overlap_in_y=40,
+        input_size=DEFAULT_MODEL_INPUT_SIZE,
     ),
 }
 
 
-DEFAULT_RESIZE_4x: Final[Dict[Tuple[int, int], Tuple[int, int]]] = {(4512, 4512): (4512, 4512),}
+DEFAULT_RESIZE_4x: Final[Dict[Tuple[int, int], Tuple[int, int]]] = {
+    (4512, 4512): (4512, 4512),
+}
 
 DEFAULT_CROP_CORNERS_4x: Final[Dict[Tuple[int, int], List[List[int]]]] = {
     (4512, 4512): get_crop_corners(
         image_width=DEFAULT_RESIZE_4x[(4512, 4512)][0],
         image_height=DEFAULT_RESIZE_4x[(4512, 4512)][1],
-        overlap_in_x = 80, # 80
-        overlap_in_y = 80, # 80
-        input_size = DEFAULT_MODEL_INPUT_SIZE,
+        overlap_in_x=80,  # 80
+        overlap_in_y=80,  # 80
+        input_size=DEFAULT_MODEL_INPUT_SIZE,
     )
 }
 
-def load_onnx_model_and_metadata(weights_path: str, use_onnx_runtime: bool, classnames_path: str=None):
+
+def load_onnx_model_and_metadata(
+    weights_path: str, use_onnx_runtime: bool, classnames_path: str = None
+):
     # loading the ONNX model
-    logging.info(
-        f"Loading YOLOv5 ONNX weights from {weights_path}."
-    )
+    logging.info(f"Loading YOLOv5 ONNX weights from {weights_path}.")
     try:
         if use_onnx_runtime:
-            logging.info(
-                "Using ONNX Runtime for running the model."
+            logging.info("Using ONNX Runtime for running the model.")
+
+            net = onnxruntime.InferenceSession(
+                weights_path,
+                providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
             )
 
-            net = onnxruntime.InferenceSession(weights_path, providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
-                
-            if 'CUDAExecutionProvider' not in onnxruntime.get_available_providers():
+            if "CUDAExecutionProvider" not in onnxruntime.get_available_providers():
                 logging.warning(
                     "CUDAExecutionProvider is not available in ONNX Runtime! The model will be run on CPU."
                 )
@@ -92,14 +96,14 @@ def load_onnx_model_and_metadata(weights_path: str, use_onnx_runtime: bool, clas
             f"{weights_path} is incorrect or ONNX Runtime is not installed: {repr(ex)}."
         )
         return None, None
-        
+
     # read class names and other metadata from ONNX file and create the label map
     try:
         if use_onnx_runtime:
             metadata: Dict[str, str] = net.get_modelmeta().custom_metadata_map
             # convert string values to dicts, or integers or strings
             metadata = {k: eval(v) for k, v in metadata.items()}
-            {v: k for k, v in metadata['names'].items()}
+            {v: k for k, v in metadata["names"].items()}
             # metadata will be a dictionary with keys as 'resolution', 'release_date', 'model_type', 'model_name', 'model_extra_info', 'names', 'stride'
             # example: {'resolution': 640,
             #           'release_date': '20240415',
@@ -114,26 +118,28 @@ def load_onnx_model_and_metadata(weights_path: str, use_onnx_runtime: bool, clas
             metadata: Dict[str, str] = {}
             for field in onnx_model.metadata_props:
                 metadata[field.key] = eval(field.value)
-            
+
     except Exception:
         # try reading from a defualt location
-        try: 
+        try:
             # read class names and create the label map
-            with open(classnames_path, 'r') as f:  # if fails to read then blow with error
+            with open(
+                classnames_path, "r"
+            ) as f:  # if fails to read then blow with error
                 class_names: List[str] = [cname.strip() for cname in f.readlines()]
 
             label_map: Dict[int, str] = {i: c for i, c in enumerate(class_names)}
-            metadata = {'names': label_map}
+            metadata = {"names": label_map}
 
         except Exception as ex:
             logging.error(
                 "Failed to initialize YOLOv5 model with CUDA. The model does not include label map in its metadata and a valid path to classnames file "
-                    f"{classnames_path} is not provided: {repr(ex)}."
-                )
+                f"{classnames_path} is not provided: {repr(ex)}."
+            )
             return net, None
 
-    metadata['predict_masks'] = False
-    
+    metadata["predict_masks"] = False
+
     return net, metadata
 
 
@@ -142,36 +148,40 @@ class Yolov5ObjectDetector(VisionModel):
     def __init__(
         self,
         weights_path: str,
-        model_name: str = 'YOLOv5', 
-        label_map: Optional[Dict[int, str]] = None, # to be read from the weights file
-        model_input_size: Optional[Tuple[int, int]] = None, # to be read from the weights file
+        model_name: str = "YOLOv5",
+        label_map: Optional[Dict[int, str]] = None,  # to be read from the weights file
+        model_input_size: Optional[
+            Tuple[int, int]
+        ] = None,  # to be read from the weights file
         confidence: float = DEFAULT_DETECTION_CONFIDENCE,
         # device is not applicable here
         nms_threshold: float = DEFAULT_NMS_THRESHOLD,
-    ): 
+    ):
         self._nms_threshold = nms_threshold
         # this is an ONNX model, which is different than our Hugging Face or Pytorch models which are saved
         # together with the metadata in a .pt, we first read the metadata and then load the model
 
         _, metadata = load_onnx_model_and_metadata(
-            weights_path=weights_path, 
-            use_onnx_runtime=True
+            weights_path=weights_path, use_onnx_runtime=True
         )
-        
+
         if label_map is None:
-            label_map: Dict[int, str] = metadata['names']
+            label_map: Dict[int, str] = metadata["names"]
 
         if model_input_size is None:
-            model_input_size: Tuple[int, int] = (metadata['resolution'], metadata['resolution'])
-        
-        # now initialize the model 
+            model_input_size: Tuple[int, int] = (
+                metadata["resolution"],
+                metadata["resolution"],
+            )
+
+        # now initialize the model
         super().__init__(
             weights_path,
-            model_name, 
+            model_name,
             label_map,
-            model_input_size, 
+            model_input_size,
             confidence,
-            None, # no device as this is not a pytorch implementation, we can use string universally (TODO) 
+            None,  # no device as this is not a pytorch implementation, we can use string universally (TODO)
         )
 
     def load(self):
@@ -183,14 +193,13 @@ class Yolov5ObjectDetector(VisionModel):
                 f"Missing model input size! It was neither included in the weights file nor passed during instantiation! "
                 f"Failed to instantiate {self._model_name} class."
             )
-            return 
+            return
 
         # load the metadata again, existing fields should be consistent
         self._model, self._metadata = load_onnx_model_and_metadata(
-            weights_path=self._weights_path, 
-            use_onnx_runtime=True
+            weights_path=self._weights_path, use_onnx_runtime=True
         )
-        
+
         if self._model is None:
             return
 
@@ -205,36 +214,40 @@ class Yolov5ObjectDetector(VisionModel):
             logging.error(
                 f"{self._model_name} model has not been initialized. Please initialize the class before detect()."
             )
-            
-            out: List[Dict[str, list]] = [{"boxes": [], "scores": [], "labels": []}] * len(input_images_list)
+
+            out: List[Dict[str, list]] = [
+                {"boxes": [], "scores": [], "labels": []}
+            ] * len(input_images_list)
             return out
 
-        # convert to 3-channel images if needed, and store the original image dimensions for 
+        # convert to 3-channel images if needed, and store the original image dimensions for
         # post processing
         images_list: List[np.ndarray] = []
         org_img_dims: List[Tuple[int, int]] = []
-        
+
         for img in input_images_list:
             if isinstance(img, Image.Image):
                 img_array: np.ndarray = np.array(img)
             else:
                 img_array: np.ndarray = img.copy()
-            
+
             img_shape: tuple = img_array.shape
             if len(img_shape) < 3:
                 # the model expects a 3-D input image
                 img_array = cv2.cvtColor(img_array, cv2.COLOR_GRAY2RGB)
-                
+
             org_img_dims.append(img_shape[:2])
 
             # check if the aspect ratio of the input image is almost the same as the aspect ratio of
             # the model input size
             # if not, then the input image will be resized without keeping its aspect ratio when it
             # is passed to the model, and this may lead to inaccurate detection
-            aspect_ratio_diff: float = float(img_shape[1] * self._model_input_size[1]) / float(
-                    img_shape[0] * self._model_input_size[0]
-            ) - 1.0
-           
+            aspect_ratio_diff: float = (
+                float(img_shape[1] * self._model_input_size[1])
+                / float(img_shape[0] * self._model_input_size[0])
+                - 1.0
+            )
+
             if np.abs(aspect_ratio_diff) > INPUT_IMAGE_ASPECT_RATIO_DIFF_DEV_THRESH:
                 logging.warning(
                     f"The input image has a different aspect ratio: {img_shape[1] / float(img_shape[0])} than the model: "
@@ -243,31 +256,32 @@ class Yolov5ObjectDetector(VisionModel):
             images_list.append(img_array)
 
         outputs: List[np.ndarray] = []
-        for img_idx, input_img in enumerate(images_list):    
+        for img_idx, input_img in enumerate(images_list):
             # transpose the input image to C x H x W and add batch dimension
             input_image = np.expand_dims(np.transpose(input_img, (2, 0, 1)), axis=0)
             # construct the input dictionary
-            ort_inputs: dict = {self._model.get_inputs()[0].name: input_image.astype(np.float32) / 255.0}
+            ort_inputs: dict = {
+                self._model.get_inputs()[0].name: input_image.astype(np.float32) / 255.0
+            }
             # run the forward pass to get output
             out: np.array = self._model.run(None, ort_inputs)
-        
+
             # only one output layer, pick the first element in the tuple then remove the batch dimension
             outputs.append(out[0][0])
-        
+
         return self.postprocess(outputs, org_img_dims)
 
-        
     def postprocess(
-        self, 
-        outputs: List[np.ndarray], 
-        org_img_dims: List[Tuple[int, int]]
+        self, outputs: List[np.ndarray], org_img_dims: List[Tuple[int, int]]
     ) -> List[Dict[str, list]]:
         """Post process outputs, discarding unreliable detections & performing NMS"""
 
         results: List[Dict[str, list]] = []
         for predictions, org_img_dim in zip(outputs, org_img_dims):
             # discard unreliable detections before NMS to reduce NMS computations
-            predictions = predictions[np.where(predictions[:, 4] >= min(0.5, self._confidence))[0]]
+            predictions = predictions[
+                np.where(predictions[:, 4] >= min(0.5, self._confidence))[0]
+            ]
             # class IDs
             labels: np.ndarray = np.argmax(predictions[:, 5:], axis=1)
             # scores
@@ -322,7 +336,12 @@ class Yolov5ObjectDetector(VisionModel):
                     )
                 )(labels)
 
-            results.append({"boxes": boxes.tolist(), "labels": labels.tolist(), "scores": scores.tolist()})
-        
-        return results
+            results.append(
+                {
+                    "boxes": boxes.tolist(),
+                    "labels": labels.tolist(),
+                    "scores": scores.tolist(),
+                }
+            )
 
+        return results

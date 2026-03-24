@@ -10,13 +10,17 @@ from typing import Tuple, List, Final, Optional, Dict
 # MODEL_WEIGHTS_PATH: Final[str] = '/home/cellareye/Development/yolov5/runs/train/batch_1_batch_2_batch_3_images_20_epochs_m/weights/batch_1_4_oof_images_20_epochs_m.onnx'
 # MODEL_WEIGHTS_PATH: Final[str] = '/home/cellareye/Development/yolov5/runs/train/sets_1_2_3_8_to_27_10x_bf_10_epochs_m/weights/20240624_sets_1_2_3_8_to_27_10x_bf_10_epochs_m.onnx'
 # MODEL_WEIGHTS_PATH: Final[str] = '/home/cellareye/Development/yolov5/runs/train/sets_1_2_3_6_to_38_10x_bf_10_epochs_m/weights/20241010_sets_1_2_3_6_to_38_10x_bf_10_epochs_m.onnx'
-MODEL_WEIGHTS_PATH: Final[str] = '/home/cellareye/Development/yolov5/runs/train/sets_1_to_5_7_to_12_4x_bf_10_epochs_m/weights/20250528_sets_1_to_5_7_to_12_4x_bf_10_epochs_m.onnx'
+MODEL_WEIGHTS_PATH: Final[str] = (
+    "/home/cellareye/Development/yolov5/runs/train/sets_1_to_5_7_to_12_4x_bf_10_epochs_m/weights/20250528_sets_1_to_5_7_to_12_4x_bf_10_epochs_m.onnx"
+)
 # MODEL_WEIGHTS_PATH: Final[str] = '/home/cellareye/Development/yolov5/runs/train/sets_1_to_5_7_to_10_4x_bf_10_epochs_m/weights/20250412_sets_1_to_5_7_to_10_4x_bf_10_epochs_m.onnx'
 # MODEL_WEIGHTS_PATH: Final[str] = '/home/cellareye/Development/yolov5/runs/train/sets_1_to_5_4x_bf_10_epochs_m/weights/20240611_sets_1_to_5_4x_bf_10_epochs_m.onnx'
 # MODEL_WEIGHTS_PATH: Final[str] = '/home/cellareye/Development/darknet/backup/nk92_cells_beads_10000_d.onnx'
 # MODEL_WEIGHTS_PATH: Final[str] = '/home/cellareye/Development/yolov5/runs/train/fluorescent_images_batch_1_20_epochs/weights/fluorescent_images_batch_1_20_epochs.onnx'
 # MODEL_WEIGHTS_PATH: Final[str] = '/home/cellareye/Development/yolov5/runs/train/nuclei_bf_25_epochs_m/weights/nuclei_bf_25_epochs_m.onnx'
-DEFAULT_CLASS_NAMES_PATH: Final[str] = '/home/cellareye/Development/yolov5/runs/train/batch_1_and_batch_2_images_20_epochs/weights/caging_analysis_cells.names'
+DEFAULT_CLASS_NAMES_PATH: Final[str] = (
+    "/home/cellareye/Development/yolov5/runs/train/batch_1_and_batch_2_images_20_epochs/weights/caging_analysis_cells.names"
+)
 # DEFAULT_CLASS_NAMES_PATH: Final[str] = '/home/cellareye/Development/yolov5/runs/train/fluorescent_images_batch_1_20_epochs/weights/fluorescent_cells.names'
 # CLASS_NAMES_PATH: Final[str] = '/home/cellareye/Development/yolov5/runs/train/nuclei_bf_25_epochs_m/weights/nuclei.names'
 
@@ -164,20 +168,22 @@ def get_crop_corners(
 
     return crop_corners
 
-def load_onnx_model_and_metadata(weights_path: str, use_onnx_runtime: bool, classnames_path: str=None):
+
+def load_onnx_model_and_metadata(
+    weights_path: str, use_onnx_runtime: bool, classnames_path: str = None
+):
     # loading the ONNX model
-    logging.info(
-        f"Loading YOLOv5 ONNX weights from {weights_path}."
-    )
+    logging.info(f"Loading YOLOv5 ONNX weights from {weights_path}.")
     try:
         if use_onnx_runtime:
-            logging.info(
-                "Using ONNX Runtime for running the model."
+            logging.info("Using ONNX Runtime for running the model.")
+
+            net = onnxruntime.InferenceSession(
+                weights_path,
+                providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
             )
 
-            net = onnxruntime.InferenceSession(weights_path, providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
-                
-            if 'CUDAExecutionProvider' not in onnxruntime.get_available_providers():
+            if "CUDAExecutionProvider" not in onnxruntime.get_available_providers():
                 logging.warning(
                     "CUDAExecutionProvider is not available in ONNX Runtime! The model will be run on CPU."
                 )
@@ -202,14 +208,14 @@ def load_onnx_model_and_metadata(weights_path: str, use_onnx_runtime: bool, clas
             f"{weights_path} is incorrect or ONNX Runtime is not installed: {repr(ex)}."
         )
         return None, None
-        
+
     # read class names and other metadata from ONNX file and create the label map
     try:
         if use_onnx_runtime:
             metadata: Dict[str, str] = net.get_modelmeta().custom_metadata_map
             # convert string values to dicts, or integers or strings
             metadata = {k: eval(v) for k, v in metadata.items()}
-            {v: k for k, v in metadata['names'].items()}
+            {v: k for k, v in metadata["names"].items()}
             # metadata will be a dictionary with keys as 'resolution', 'release_date', 'model_type', 'model_name', 'model_extra_info', 'names', 'stride'
             # example: {'resolution': 640,
             #           'release_date': '20240415',
@@ -224,39 +230,40 @@ def load_onnx_model_and_metadata(weights_path: str, use_onnx_runtime: bool, clas
             metadata: Dict[str, str] = {}
             for field in onnx_model.metadata_props:
                 metadata[field.key] = eval(field.value)
-            
+
     except Exception:
         # try reading from a defualt location
-        try: 
+        try:
             # read class names and create the label map
-            with open(classnames_path, 'r') as f:  # if fails to read then blow with error
+            with open(
+                classnames_path, "r"
+            ) as f:  # if fails to read then blow with error
                 class_names: List[str] = [cname.strip() for cname in f.readlines()]
 
             label_map: Dict[int, str] = {i: c for i, c in enumerate(class_names)}
-            metadata = {'names': label_map}
+            metadata = {"names": label_map}
 
         except Exception as ex:
             logging.error(
                 "Failed to initialize YOLOv5 model with CUDA. The model does not include label map in its metadata and a valid path to classnames file "
-                    f"{classnames_path} is not provided: {repr(ex)}."
-                )
+                f"{classnames_path} is not provided: {repr(ex)}."
+            )
             return net, None
-                
 
     logging.info("Class names were successfully loaded")
-    
+
     return net, metadata
 
 
 # YOLOv5 detector class
 class Yolov5ObjectDetector:
     def __init__(
-            self,
-            weights_path: Optional[str] = MODEL_WEIGHTS_PATH,
-            model_input_size: Tuple[int, int] = INPUT_IMAGE_SIZE,
-            confidence: float = DEFAULT_DETECTION_CONFIDENCE,
-            nms_threshold: float = DEFAULT_NMS_THRESHOLD,
-            use_onnx_runtime: bool = False
+        self,
+        weights_path: Optional[str] = MODEL_WEIGHTS_PATH,
+        model_input_size: Tuple[int, int] = INPUT_IMAGE_SIZE,
+        confidence: float = DEFAULT_DETECTION_CONFIDENCE,
+        nms_threshold: float = DEFAULT_NMS_THRESHOLD,
+        use_onnx_runtime: bool = False,
     ):
 
         self._net = None
@@ -270,18 +277,22 @@ class Yolov5ObjectDetector:
             f"Loading the model with confidence {self._confidence} and"
             f" NMS threshold {self._nms_threshold} ..."
         )
-        
-        self._net, self._metadata = load_onnx_model_and_metadata(weights_path=self._weights_path, 
-                                                                 use_onnx_runtime=self._use_onnx_runtime, 
-                                                                 classnames_path=DEFAULT_CLASS_NAMES_PATH)
+
+        self._net, self._metadata = load_onnx_model_and_metadata(
+            weights_path=self._weights_path,
+            use_onnx_runtime=self._use_onnx_runtime,
+            classnames_path=DEFAULT_CLASS_NAMES_PATH,
+        )
         if self._net is None or self._metadata is None:
             return
-        
-        self._label_map: Dict[int, str] = self._metadata['names']
-        self._reverse_label_map: Dict[str, int] = {v: k for k, v in self._label_map.items()}
+
+        self._label_map: Dict[int, str] = self._metadata["names"]
+        self._reverse_label_map: Dict[str, int] = {
+            v: k for k, v in self._label_map.items()
+        }
 
     def detect(
-            self, image: np.ndarray, log_time=False
+        self, image: np.ndarray, log_time=False
     ) -> Tuple[np.array, np.array, np.array]:
         """
         The main function to detect the bounding box and masks for persons in the input image.
@@ -305,7 +316,7 @@ class Yolov5ObjectDetector:
         # if not, then the input image will be resized without keeping its aspect ratio when it
         # is passed to the model, and this may lead to inaccurate detection
         aspect_ratio_diff: float = (image_width * self._model_input_size[1]) / (
-                image_height * self._model_input_size[0]
+            image_height * self._model_input_size[0]
         ) - 1
 
         if np.abs(aspect_ratio_diff) > INPUT_IMAGE_ASPECT_RATIO_DIFF_DEV_THRESH:
@@ -326,7 +337,9 @@ class Yolov5ObjectDetector:
             # transpose the input image to C x H x W and add batch dimension
             input_image = np.expand_dims(np.transpose(input_image, (2, 0, 1)), axis=0)
             # construct the input dictionary
-            ort_inputs: dict = {self._net.get_inputs()[0].name: input_image.astype(np.float32) / 255.0}
+            ort_inputs: dict = {
+                self._net.get_inputs()[0].name: input_image.astype(np.float32) / 255.0
+            }
             # run the forward pass to get output
             outputs: np.array = self._net.run(None, ort_inputs)
         else:
@@ -344,7 +357,7 @@ class Yolov5ObjectDetector:
             outputs: np.ndarray = self._net.forward(
                 self._net.getUnconnectedOutLayersNames()
             )
-        
+
         # only one output layer, pick the first element in the tuple then remove the batch dimension
         outputs = outputs[0][0]
         boxes, labels, scores = self._post_process(outputs, (image_width, image_height))
@@ -360,16 +373,16 @@ class Yolov5ObjectDetector:
 
     def set_nms_threshold(self, threshold):
         self._nms_threshold = threshold
-        
+
     def get_label_map(self):
         return self._label_map
-        
+
     def get_reverse_label_map(self):
         return self._reverse_label_map
-    
+
     def get_metadata(self):
         return self._metadata
-        
+
     def _post_process(
         self, outputs: np.ndarray, org_image_shape: Tuple[int, int]
     ) -> Tuple[np.array, np.array, np.array]:
@@ -430,7 +443,6 @@ class Yolov5ObjectDetector:
         only_report_cells: bool = False,
         log_time=False,
     ) -> Tuple[np.array, np.array, np.array]:
-
         """
         A function to apply the model on a high resolution image. If the
         image is high resolution with many objects, after resizing the image
@@ -538,14 +550,14 @@ class Yolov5ObjectDetector:
             # modify the score for these detected boxes (assign the minimum score of self._confidence)
             # to give them lower priority during NMS when the results in the overlapping parts
             # of cropped images are combined
-            
+
             scores[
                 (boxes[:, 0] < 4)
                 | (boxes[:, 1] < 4)
                 | (boxes[:, 2] > crop_width - 4)
                 | (boxes[:, 3] > crop_height - 4)
             ] = self._confidence
-            
+
             crop_ids_with_detection.append(crop_id)
             results["scores"].append(scores)
             results["boxes"].append(boxes + np.array([x1c, y1c, x1c, y1c], dtype=int))
@@ -577,7 +589,6 @@ class Yolov5ObjectDetector:
         # we also keep objects with IoU > nms_threshold_for_combining_crop_results, if the detection
         # score for the object in the crop is higher than the objects in the other crops
         for idx, crop_id in enumerate(crop_ids_with_detection):
-
             crop_labels: np.array = results["labels"][idx]
             crop_scores: np.array = results["scores"][idx]
             crop_boxes: np.array = results["boxes"][idx]
@@ -621,7 +632,6 @@ class Yolov5ObjectDetector:
             )
 
             for label in set(list(crop_labels) + list(rest_labels)):
-
                 # the indexes of detections of the same label in each crop and rest set
                 crop_class_idxs: np.array = np.where(crop_labels == label)
                 rest_class_idxs: np.array = np.where(rest_labels == label)
@@ -635,7 +645,6 @@ class Yolov5ObjectDetector:
                         [i for i in range(len(crop_class_idxs[0]))], dtype=int
                     )
                 else:
-
                     # compute the IoU matrix, use torchvision implementation for efficiency
                     iou_matrix: np.array = iou_batch(
                         crop_boxes[crop_class_idxs], rest_boxes[rest_class_idxs]
@@ -724,8 +733,8 @@ class Yolov5ObjectDetector:
                 )
             )
         return boxes, labels, scores
-    
-    
+
+
 detector = Yolov5ObjectDetector(use_onnx_runtime=True)
 
 
@@ -748,29 +757,29 @@ CROP_CORNERS: Final[Dict[Tuple[int, int, str], List[List[int]]]] = {
     (4512, 4512, "10x"): get_crop_corners(
         image_width=RESIZE[(4512, 4512, "10x")][0],
         image_height=RESIZE[(4512, 4512, "10x")][1],
-        overlap_in_x = 40,
-        overlap_in_y = 40,
-        yolo_input_size = detector._model_input_size[0],
+        overlap_in_x=40,
+        overlap_in_y=40,
+        yolo_input_size=detector._model_input_size[0],
     ),
     (4512, 4512, "4x"): get_crop_corners(
         image_width=RESIZE[(4512, 4512, "4x")][0],
         image_height=RESIZE[(4512, 4512, "4x")][1],
-        overlap_in_x = 80, # 80
-        overlap_in_y = 80, # 80
-        yolo_input_size = detector._model_input_size[0],
-    ) 
+        overlap_in_x=80,  # 80
+        overlap_in_y=80,  # 80
+        yolo_input_size=detector._model_input_size[0],
+    ),
 }
 
 
 def run_yolo_v5(
-    input_image: np.ndarray, 
-    bit_depth: int = 12, 
+    input_image: np.ndarray,
+    bit_depth: int = 12,
     fl_input_img: bool = False,
-    normalize_image: bool = True, 
-    is_4x: bool=False, 
-    yolo_detector: Yolov5ObjectDetector=detector
+    normalize_image: bool = True,
+    is_4x: bool = False,
+    yolo_detector: Yolov5ObjectDetector = detector,
 ) -> Tuple[np.array, np.array, np.array, float]:
-    
+
     # make a copy to not modify the input image
     img = input_image.copy()
 
@@ -780,42 +789,39 @@ def run_yolo_v5(
         )
         img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-
-    
     if fl_input_img:
         img = cv2.medianBlur(src=img, ksize=3)
-    
-    img = (255 * img.astype(float) / (2 ** bit_depth - 1)).astype(np.uint8)
+
+    img = (255 * img.astype(float) / (2**bit_depth - 1)).astype(np.uint8)
     if normalize_image:
         img = cv2.normalize(img, img, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX)
 
     image_height, image_width = img.shape[:2]
-    
+
     if is_4x:
         resize_dict_key: Tuple[int, int, str] = (image_width, image_height, "4x")
     else:
         resize_dict_key: Tuple[int, int, str] = (image_width, image_height, "10x")
-    
+
     if resize_dict_key not in RESIZE:
         logging.error(
             f"The input image size {(image_width, image_height)} is not supported for {'4x' if is_4x else '10x'}! Returning no cells!"
-            )
+        )
         return (
-                np.zeros((0, 4), dtype=int),
-                np.zeros((0,), dtype=int),
-                np.zeros((0,), dtype=float),
-                0
-            )
+            np.zeros((0, 4), dtype=int),
+            np.zeros((0,), dtype=int),
+            np.zeros((0,), dtype=float),
+            0,
+        )
 
     # we keep the aspect ratio in RESIZE dictionary, scale_factor is the same for both dimensions
-    
+
     scale_factor: float = image_width / RESIZE[resize_dict_key][0]
     resized_img: np.ndarray = cv2.resize(
         img, RESIZE[resize_dict_key], interpolation=cv2.INTER_AREA
     )
 
     crop_corners: List[List[int]] = CROP_CORNERS[resize_dict_key]
-
 
     # only declarations
     boxes: np.ndarray = np.zeros((0, 4), dtype=int)
@@ -824,9 +830,7 @@ def run_yolo_v5(
 
     st = time.time()
 
-    boxes, labels, scores = yolo_detector.detect_by_cropping(
-        resized_img, crop_corners
-    )
+    boxes, labels, scores = yolo_detector.detect_by_cropping(resized_img, crop_corners)
 
     # scale the detections back to original image resolution
     boxes = (scale_factor * boxes).astype(int)

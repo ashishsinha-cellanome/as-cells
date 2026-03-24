@@ -14,10 +14,18 @@ from .cv_utils import iou_batch, iou_mask_pair
 # a mapping between the class names and class IDs
 # this dictionary should have identical string keys as the class names used in annotations
 # the values (class IDs) should be consistent with results returned by the trained model
-DEFAULT_CLASS_NAMES_TO_IDS_MAP: Final[Dict[str, int]] = {'Cell': 1, 'dying/dead cells': 2, 'Bead': 3, 'Cluster': 4} 
+DEFAULT_CLASS_NAMES_TO_IDS_MAP: Final[Dict[str, int]] = {
+    "Cell": 1,
+    "dying/dead cells": 2,
+    "Bead": 3,
+    "Cluster": 4,
+}
 
 # optical characteristics of the images (used to map the minimum diameter of objects in um to pixels)
-OPTICAL_CHARACTERISTICS: Final[Dict[Tuple, Dict[str, float]]] = {(2000, 1600): {'mag': 10.0, 'pixel_size': 4.54}, (4512, 4512): {'mag': 9.0, 'pixel_size': 2.74}}
+OPTICAL_CHARACTERISTICS: Final[Dict[Tuple, Dict[str, float]]] = {
+    (2000, 1600): {"mag": 10.0, "pixel_size": 4.54},
+    (4512, 4512): {"mag": 9.0, "pixel_size": 2.74},
+}
 
 # an upper limit on the number of annotations to cache
 MAX_ANNOTATION_CACHE_LENGTH: Final[int] = 5
@@ -25,10 +33,11 @@ MAX_ANNOTATION_CACHE_LENGTH: Final[int] = 5
 # the folders for test images and annotations
 # they will be considered under the dataset folder specified by the class
 # the images and annotations will share the same name
-TEST_ANNOTATIONS_FOLDER = 'test_annotations'
-TEST_IMAGES_FOLDER = 'test_images'
+TEST_ANNOTATIONS_FOLDER = "test_annotations"
+TEST_IMAGES_FOLDER = "test_images"
 
 MAX_NUM_INTESITY_OUTLIER_PIXELS: Final[int] = 16
+
 
 def parse_json_annotations(
     json_filename: str,
@@ -76,41 +85,51 @@ def parse_json_annotations(
 
     #  drop the path from the json_filename to get the filename
     filename_wo_path: str = os.path.basename(json_filename)
-    
+
     try:
-        with open(json_filename, 'r') as annotations:
+        with open(json_filename, "r") as annotations:
             json_annotations = json.load(annotations)
     except FileNotFoundError:
         print(f"[ERROR]: Annotation file {json_filename} was not found!")
-        return {'name': 'UNKNOWN', 'image': None, 
-                'annotations': pd.DataFrame(columns=['xtl', 'ytl', 'xbr', 'ybr', 'label']), 
-                'masks': np.array((0, 0, 0), np.uint8)}
+        return {
+            "name": "UNKNOWN",
+            "image": None,
+            "annotations": pd.DataFrame(columns=["xtl", "ytl", "xbr", "ybr", "label"]),
+            "masks": np.array((0, 0, 0), np.uint8),
+        }
     except Exception as ex:
-        print(f"[EXCEPTION]: Unable to open annotation file {json_filename} failed on {repr(ex)}")
-        return {'name': 'UNKNOWN', 'image': None, 
-                'annotations': pd.DataFrame(columns=['xtl', 'ytl', 'xbr', 'ybr', 'label']), 
-                'masks': np.array((0, 0, 0), np.uint8)}
-    
-    image_info: dict = json_annotations.get('image')
+        print(
+            f"[EXCEPTION]: Unable to open annotation file {json_filename} failed on {repr(ex)}"
+        )
+        return {
+            "name": "UNKNOWN",
+            "image": None,
+            "annotations": pd.DataFrame(columns=["xtl", "ytl", "xbr", "ybr", "label"]),
+            "masks": np.array((0, 0, 0), np.uint8),
+        }
+
+    image_info: dict = json_annotations.get("image")
     if image_info is None:
         # Darwin 2.0 (JSON) annotations format
-        return parse_json_annotations_2p0(json_filename,
-                                          labels_of_interest,
-                                          download_image,
-                                          percentage_to_expand_bbox_boundaries,
-                                          min_object_diameter,
-                                          optical_characteristics,
-                                          return_masks_in_coco_rle_format)
-                               
-    image_width: int = image_info.get('width')
-    image_height: int = image_info.get('height')
-    image_name: str = image_info.get('original_filename')    
+        return parse_json_annotations_2p0(
+            json_filename,
+            labels_of_interest,
+            download_image,
+            percentage_to_expand_bbox_boundaries,
+            min_object_diameter,
+            optical_characteristics,
+            return_masks_in_coco_rle_format,
+        )
+
+    image_width: int = image_info.get("width")
+    image_height: int = image_info.get("height")
+    image_name: str = image_info.get("original_filename")
     if image_name is None:
-        image_name = image_info.get('filename')    
-    
+        image_name = image_info.get("filename")
+
     img = None
     if download_image:
-        img_url = image_info.get('url')
+        img_url = image_info.get("url")
         try:
             img = Image.open(requests.get(img_url, stream=True).raw)
             # convert to an array in RGB format
@@ -119,48 +138,61 @@ def parse_json_annotations(
                 image_height = img.shape[0]
             if image_width is None:
                 image_width = img.shape[1]
-            
+
             if image_height != img.shape[0] or image_width != img.shape[1]:
-                # image shapes reported in the 
-                print(f"[ERROR]: Image dimensions: {img.shape[:2]} are not consistent with json " + 
-                      f"file: {(image_height, image_width)}! Skipping the file")
-                return {'name': 'UNKNOWN', 'image': None, 
-                        'annotations': pd.DataFrame(columns=['xtl', 'ytl', 'xbr', 'ybr', 'label']), 
-                        'masks': np.array((0, 0, 0), np.uint8)}
+                # image shapes reported in the
+                print(
+                    f"[ERROR]: Image dimensions: {img.shape[:2]} are not consistent with json "
+                    + f"file: {(image_height, image_width)}! Skipping the file"
+                )
+                return {
+                    "name": "UNKNOWN",
+                    "image": None,
+                    "annotations": pd.DataFrame(
+                        columns=["xtl", "ytl", "xbr", "ybr", "label"]
+                    ),
+                    "masks": np.array((0, 0, 0), np.uint8),
+                }
         except Exception as ex:
             print(f"[EXCEPTION]: Downloading image {image_name} failed on {repr(ex)}")
 
     # filter small objects from annotations
     if (image_width, image_height) in optical_characteristics:
-        mag: float = optical_characteristics[(image_width, image_height)]['mag']
-        pixel_size: float = optical_characteristics[(image_width, image_height)]['pixel_size']
+        mag: float = optical_characteristics[(image_width, image_height)]["mag"]
+        pixel_size: float = optical_characteristics[(image_width, image_height)][
+            "pixel_size"
+        ]
     else:
-        print(f"[WARNING]: The image resolution for {json_filename} is not supported! Not possible to filter small objects")
+        print(
+            f"[WARNING]: The image resolution for {json_filename} is not supported! Not possible to filter small objects"
+        )
         mag: float = 0
         pixel_size: float = 1.0
-    
+
     min_diameter_in_pixels: int = int(min_object_diameter * mag / pixel_size)
-    
+
     # number of objects
-    num_objects: int = len(json_annotations.get('annotations'))
-        
+    num_objects: int = len(json_annotations.get("annotations"))
+
     # print(f"[INFO]: {filename_wo_path} includes {num_objects} annotated objects")
-    
+
     # create a pandas DataFrame for ease of processing
     # the i-th row includes the bounding box coordinates (top-left and bottom-right)
     # and the label for the i-th object
-    annotations_df = pd.DataFrame(columns=['xtl', 'ytl', 'xbr', 'ybr', 'label'])
+    annotations_df = pd.DataFrame(columns=["xtl", "ytl", "xbr", "ybr", "label"])
     # the masks array, masks[i] is a image_height x image_width np.uint8 array for the i-th
     # object with object mask values set to 1
     masks: List[np.ndarray] = []
-    
+
     obj_id = 0
     complex_polygon_found = False
-    for idx, annots in enumerate(json_annotations.get('annotations')):
+    for idx, annots in enumerate(json_annotations.get("annotations")):
         # the label for the annotated object
-        label: str = annots.get('name')
+        label: str = annots.get("name")
         if label is None:
-            print(f"[ERROR]: No label was provided for {idx}th object in {filename_wo_path}")
+            print(
+                f"[ERROR]: No label was provided for {idx}th object in {filename_wo_path}"
+            )
             continue
         # skip labels not included in the labels_of_interest list
         if labels_of_interest is not None and label not in labels_of_interest:
@@ -168,80 +200,105 @@ def parse_json_annotations(
         # the bounding box for the object
         # we are not using these reported bounding boxes for now because of the issue
         # with complex_polygon
-        bbox: dict = annots.get('bounding_box')
-        if bbox is None or 'x' not in bbox or 'y' not in bbox or 'w' not in bbox or 'h' not in bbox:
-            print(f"[ERROR]: No bounding box was provided for {idx}th object in {filename_wo_path}")
-            continue   
-            
-        polygon: dict = annots.get('polygon')
+        bbox: dict = annots.get("bounding_box")
+        if (
+            bbox is None
+            or "x" not in bbox
+            or "y" not in bbox
+            or "w" not in bbox
+            or "h" not in bbox
+        ):
+            print(
+                f"[ERROR]: No bounding box was provided for {idx}th object in {filename_wo_path}"
+            )
+            continue
+
+        polygon: dict = annots.get("polygon")
         if polygon is None:
             # the polygon is reported as a union of polygons
-            # it is not clear what his is happning, but for some cases, 
+            # it is not clear what his is happning, but for some cases,
             # these are simply multiple objects (e.g., cells) reported as one object
             # with one bounding box (covering all polygons), one label and multiple polygons
             complex_polygon_found = True
-            polygon = annots.get('complex_polygon')
+            polygon = annots.get("complex_polygon")
             # in this case, polygon.get('path') returns a list of polygons
             # each polygon is a list of dictionaries with keys as 'x' and 'y'
             # the coordinates of the polygon vertices
-            polygon_points_list: list = polygon.get('path')
+            polygon_points_list: list = polygon.get("path")
         else:
-            # for a simple polygon, we also create a list of polygons 
+            # for a simple polygon, we also create a list of polygons
             # to process them identically below
-            polygon_points_list = [polygon.get('path')]
-            
+            polygon_points_list = [polygon.get("path")]
+
         if polygon_points_list is None or polygon_points_list[0] is None:
-            print(f"[ERROR]: No polygon was provided for {idx}th object in {filename_wo_path}")
+            print(
+                f"[ERROR]: No polygon was provided for {idx}th object in {filename_wo_path}"
+            )
             continue
-        
+
         for poly in polygon_points_list:
             # pandas is just used for simplicity
             polygon_points: np.ndarray = pd.DataFrame(poly).values.astype(np.int32)
-            
+
             # the bounding box around the polygon points
             # we draw the mask (polygon) within this confined box to save processing
             xmin: int = max(0, np.min(polygon_points[:, 0]))
             xmax: int = min(image_width, np.max(polygon_points[:, 0]))
             ymin: int = max(0, np.min(polygon_points[:, 1]))
             ymax: int = min(image_height, np.max(polygon_points[:, 1]))
-            
+
             # filter the small objects here before modifying the bounding boxes
-            if xmin >= xmax or ymin >= ymax or max(xmax - xmin, ymax - ymin) < min_diameter_in_pixels:
+            if (
+                xmin >= xmax
+                or ymin >= ymax
+                or max(xmax - xmin, ymax - ymin) < min_diameter_in_pixels
+            ):
                 continue
-            
+
             # expand the box boundaries by a few pixels as the masks may not be covering the boundaries
             delta_x: int = int(percentage_to_expand_bbox_boundaries * (xmax - xmin) / 2)
             delta_y: int = int(percentage_to_expand_bbox_boundaries * (ymax - ymin) / 2)
-            
+
             delta_x = max(1, delta_x)
             delta_y = max(1, delta_y)
-            
+
             xmin = max(0, xmin - delta_x)
             ymin = max(0, ymin - delta_y)
             xmax = min(image_width, xmax + delta_x)
             ymax = min(image_height, ymax + delta_y)
-            
+
             # draw the polygon mask within the bounding box
             # CV2 contours format
             polygon_points = np.expand_dims(polygon_points, axis=1)
             mask: np.ndarray = np.zeros((ymax - ymin, xmax - xmin), np.uint8)
             # create the mask for the object (the mask value is set to 1 for the object)
             cv2.drawContours(mask, [polygon_points - np.array([xmin, ymin])], 0, 1, -1)
-            
+
             if return_masks_in_coco_rle_format:
-                encoded_mask: dict = coco_mask_util.encode(np.asarray(mask, order="F"))    
+                encoded_mask: dict = coco_mask_util.encode(np.asarray(mask, order="F"))
                 masks.append(encoded_mask)
             else:
                 masks.append(mask)
-            annotations_df = pd.concat([annotations_df, pd.DataFrame(data = 
-                                                                    [{'xtl': xmin, 
-                                                                      'ytl': ymin, 
-                                                                      'xbr': xmax, 
-                                                                      'ybr': ymax, 
-                                                                      'label': label}], index=[len(annotations_df)])])
+            annotations_df = pd.concat(
+                [
+                    annotations_df,
+                    pd.DataFrame(
+                        data=[
+                            {
+                                "xtl": xmin,
+                                "ytl": ymin,
+                                "xbr": xmax,
+                                "ybr": ymax,
+                                "label": label,
+                            }
+                        ],
+                        index=[len(annotations_df)],
+                    ),
+                ]
+            )
 
             obj_id += 1
-    
+
     if complex_polygon_found:
         pass
         # print(f"[WARNING]: Check the annotations for {filename_wo_path} as complex polygon found")
@@ -252,20 +309,25 @@ def parse_json_annotations(
     annotations_df = annotations_df.drop_duplicates()
     masks = [masks[i] for i in annotations_df.index]
     annotations_df.reset_index(inplace=True, drop=True)
-         
-    return {'name': image_name, 'image': img, 'annotations': annotations_df, 'masks': masks}
+
+    return {
+        "name": image_name,
+        "image": img,
+        "annotations": annotations_df,
+        "masks": masks,
+    }
 
 
 def parse_json_annotations_2p0(
-        json_filename: str,
-        labels_of_interest: Union[List[str], None] = None,
-        download_image: bool = False,
-        percentage_to_expand_bbox_boundaries: float = 0.0,
-        min_object_diameter: float = 0.0,
-        optical_characteristics: Dict[
-            Tuple[int, int], Dict[str, float]
-        ] = OPTICAL_CHARACTERISTICS,
-        return_masks_in_coco_rle_format: bool = True,
+    json_filename: str,
+    labels_of_interest: Union[List[str], None] = None,
+    download_image: bool = False,
+    percentage_to_expand_bbox_boundaries: float = 0.0,
+    min_object_diameter: float = 0.0,
+    optical_characteristics: Dict[
+        Tuple[int, int], Dict[str, float]
+    ] = OPTICAL_CHARACTERISTICS,
+    return_masks_in_coco_rle_format: bool = True,
 ):
     """
     A function to parse the JSON annotation files and extract both the bounding boxes and
@@ -299,83 +361,104 @@ def parse_json_annotations_2p0(
                 for masks (a dictionary with keys as 'size, 'count' and values as 2-element list and bytes
                 (encoded mask)).
     """
-    
+
     #  drop the path from the json_filename to get the filename
     filename_wo_path: str = os.path.basename(json_filename)
-    
+
     try:
-        with open(json_filename, 'r') as annotations:
+        with open(json_filename, "r") as annotations:
             json_annotations = json.load(annotations)
     except FileNotFoundError:
         print(f"[ERROR]: Annotation file {json_filename} was not found!")
-        return {'name': 'UNKNOWN', 'image': None, 
-                'annotations': pd.DataFrame(columns=['xtl', 'ytl', 'xbr', 'ybr', 'label']), 
-                'masks': np.array((0, 0, 0), np.uint8)}
+        return {
+            "name": "UNKNOWN",
+            "image": None,
+            "annotations": pd.DataFrame(columns=["xtl", "ytl", "xbr", "ybr", "label"]),
+            "masks": np.array((0, 0, 0), np.uint8),
+        }
     except Exception as ex:
-        print(f"[EXCEPTION]: Unable to open annotation file {json_filename} failed on {repr(ex)}")
-        return {'name': 'UNKNOWN', 'image': None, 
-                'annotations': pd.DataFrame(columns=['xtl', 'ytl', 'xbr', 'ybr', 'label']), 
-                'masks': np.array((0, 0, 0), np.uint8)}
-    
-    image_info: dict = json_annotations.get('item')
-    image_name: str = image_info.get('name') 
-    details = image_info.get('slots')[0]
-    image_width: int = details.get('width')
-    image_height: int = details.get('height')    
-    
+        print(
+            f"[EXCEPTION]: Unable to open annotation file {json_filename} failed on {repr(ex)}"
+        )
+        return {
+            "name": "UNKNOWN",
+            "image": None,
+            "annotations": pd.DataFrame(columns=["xtl", "ytl", "xbr", "ybr", "label"]),
+            "masks": np.array((0, 0, 0), np.uint8),
+        }
+
+    image_info: dict = json_annotations.get("item")
+    image_name: str = image_info.get("name")
+    details = image_info.get("slots")[0]
+    image_width: int = details.get("width")
+    image_height: int = details.get("height")
+
     img = None
     if download_image:
-        img_url = details.get('source_files')[0].get('url')
+        img_url = details.get("source_files")[0].get("url")
         try:
-            img = Image.open(requests.get(img_url, stream = True).raw)
+            img = Image.open(requests.get(img_url, stream=True).raw)
             # convert to an array in RGB format
             img = np.array(img)
             if image_height is None:
                 image_height = img.shape[0]
             if image_width is None:
                 image_width = img.shape[1]
-            
+
             if image_height != img.shape[0] or image_width != img.shape[1]:
-                # image shapes reported in the 
-                print(f"[ERROR]: Image dimensions: {img.shape[:2]} are not consistent with json " + 
-                      f"file: {(image_height, image_width)}! Skipping the file")
-                return {'name': 'UNKNOWN', 'image': None, 
-                        'annotations': pd.DataFrame(columns=['xtl', 'ytl', 'xbr', 'ybr', 'label']), 
-                        'masks': np.array((0, 0, 0), np.uint8)}
+                # image shapes reported in the
+                print(
+                    f"[ERROR]: Image dimensions: {img.shape[:2]} are not consistent with json "
+                    + f"file: {(image_height, image_width)}! Skipping the file"
+                )
+                return {
+                    "name": "UNKNOWN",
+                    "image": None,
+                    "annotations": pd.DataFrame(
+                        columns=["xtl", "ytl", "xbr", "ybr", "label"]
+                    ),
+                    "masks": np.array((0, 0, 0), np.uint8),
+                }
         except Exception as ex:
             print(f"[EXCEPTION]: Downloading image {image_name} failed on {repr(ex)}")
 
     # filter small objects from annotations
     if (image_width, image_height) in optical_characteristics:
-        mag: float = optical_characteristics[(image_width, image_height)]['mag']
-        pixel_size: float = optical_characteristics[(image_width, image_height)]['pixel_size']
+        mag: float = optical_characteristics[(image_width, image_height)]["mag"]
+        pixel_size: float = optical_characteristics[(image_width, image_height)][
+            "pixel_size"
+        ]
     else:
-        print(f"[WARNING]: The image resolution for {json_filename} is not supported! Not possible to filter small objects")
+        print(
+            f"[WARNING]: The image resolution for {json_filename} is not supported! Not possible to filter small objects"
+        )
         mag: float = 0
         pixel_size: float = 1.0
-    
+
     min_diameter_in_pixels: int = int(min_object_diameter * mag / pixel_size)
-    
+
     # number of objects
-    num_objects: int = len(json_annotations.get('annotations'))
-        
+    num_objects: int = len(json_annotations.get("annotations"))
+
     # print(f"[INFO]: {filename_wo_path} includes {num_objects} annotated objects")
-    
+
     # create a pandas DataFrame for ease of processing
     # the i-th row includes the bounding box coordinates (top-left and bottom-right)
     # and the label for the i-th object
-    annotations_df = pd.DataFrame(columns=['xtl', 'ytl', 'xbr', 'ybr', 'label'])
+    annotations_df = pd.DataFrame(columns=["xtl", "ytl", "xbr", "ybr", "label"])
     # the masks array, masks[i] is a image_height x image_width np.uint8 array for the i-th
     # object with object mask values set to 1
     masks: List[np.ndarray] = []
-    
+
     obj_id = 0
-    
-    for idx, annots in enumerate(json_annotations.get('annotations')):
+
+    for idx, annots in enumerate(json_annotations.get("annotations")):
         # the label for the annotated object
-        label: str = annots.get('name')
+        label: str = annots.get("name")
         if label is None:
-            print(f"[ERROR]: No label was provided for {idx}th object in {filename_wo_path}")
+            print(
+                f"[ERROR]: No label was provided for {idx}th object in {filename_wo_path}"
+            )
             continue
         # skip labels not included in the labels_of_interest list
         if labels_of_interest is not None and label not in labels_of_interest:
@@ -383,221 +466,305 @@ def parse_json_annotations_2p0(
         # the bounding box for the object
         # we are not using these reported bounding boxes for now because of the issue
         # with complex_polygon
-        bbox: dict = annots.get('bounding_box')
-        if bbox is None or 'x' not in bbox or 'y' not in bbox or 'w' not in bbox or 'h' not in bbox:
-            print(f"[ERROR]: No bounding box was provided for {idx}th object in {filename_wo_path}")
-            continue   
-            
-        polygon: dict = annots.get('polygon')
+        bbox: dict = annots.get("bounding_box")
+        if (
+            bbox is None
+            or "x" not in bbox
+            or "y" not in bbox
+            or "w" not in bbox
+            or "h" not in bbox
+        ):
+            print(
+                f"[ERROR]: No bounding box was provided for {idx}th object in {filename_wo_path}"
+            )
+            continue
+
+        polygon: dict = annots.get("polygon")
         if polygon is None:
-            print(f"[ERROR]: No polygon was provided for {idx}th object in {filename_wo_path}")
+            print(
+                f"[ERROR]: No polygon was provided for {idx}th object in {filename_wo_path}"
+            )
             continue
-        
-        # for a simple polygon, we also create a list of polygons 
+
+        # for a simple polygon, we also create a list of polygons
         # to process them identically below
-        polygon_points_list = polygon.get('paths')
-            
+        polygon_points_list = polygon.get("paths")
+
         if polygon_points_list is None or polygon_points_list[0] is None:
-            print(f"[ERROR]: No polygon was provided for {idx}th object in {filename_wo_path}")
+            print(
+                f"[ERROR]: No polygon was provided for {idx}th object in {filename_wo_path}"
+            )
             continue
-        
+
         # in v2.0, an object can be represented with multiple polygons if it has "holes" in it
         # in this case, the largest polygon (in terms of area) specifies the object's mask; the masks specified
         # by the rest of polygons should be excluded from this main mask
         # also, it seems there is a bug in Darwin v2.0 way of generating annotations that would combine multiple
         # annotated objects into one polygon (we had seen this issue in v1.0 as well)
-        # so in the following, we try to differentiate these two scenarios 
+        # so in the following, we try to differentiate these two scenarios
         max_area: int = 0
         main_index: int = -1
         coords: List[List[int]] = []
-        
+
         for i, poly in enumerate(polygon_points_list):
             # pandas is just used for simplicity
             polygon_points: np.ndarray = pd.DataFrame(poly).values.astype(np.int32)
-            
+
             # the bounding box around the polygon points
             # we draw the mask (polygon) within this confined box to save processing
             xmin: int = max(0, np.min(polygon_points[:, 0]))
             xmax: int = min(image_width, np.max(polygon_points[:, 0]))
             ymin: int = max(0, np.min(polygon_points[:, 1]))
             ymax: int = min(image_height, np.max(polygon_points[:, 1]))
-            
+
             coords.append([xmin, ymin, xmax, ymax])
-            
+
             area: int = (xmax - xmin) * (ymax - ymin)
-            
+
             if area > max_area:
                 max_area = area
                 main_index = i
-       
+
         has_holes: bool = True
         # check if the bounding boxes of all other polygons lines inside the bounding box of the main polygon (the largest area)
-        # if that is the case, the polygon has "holes", otherwise, they should be separate objects that have been incorrectly 
+        # if that is the case, the polygon has "holes", otherwise, they should be separate objects that have been incorrectly
         # combined
         for i, (x1, y1, x2, y2) in enumerate(coords):
             # allow 1 pixel offset
-            if x1 + 1 < coords[main_index][0] or y1 + 1 < coords[main_index][1] or x2 - 1 > coords[main_index][2] or y2 - 1 > coords[main_index][3]:
+            if (
+                x1 + 1 < coords[main_index][0]
+                or y1 + 1 < coords[main_index][1]
+                or x2 - 1 > coords[main_index][2]
+                or y2 - 1 > coords[main_index][3]
+            ):
                 has_holes = False
-                break   
-       
-        if has_holes:   
+                break
+
+        if has_holes:
             main_mask_xmin: int = coords[main_index][0]
             main_mask_ymin: int = coords[main_index][1]
             main_mask_xmax: int = coords[main_index][2]
             main_mask_ymax: int = coords[main_index][3]
-                
+
             # filter the small objects here before modifying the bounding boxes
-            if main_mask_xmin >= main_mask_xmax or main_mask_ymin >= main_mask_ymax or max(main_mask_xmax - main_mask_xmin, main_mask_ymax - main_mask_ymin) < min_diameter_in_pixels:
+            if (
+                main_mask_xmin >= main_mask_xmax
+                or main_mask_ymin >= main_mask_ymax
+                or max(main_mask_xmax - main_mask_xmin, main_mask_ymax - main_mask_ymin)
+                < min_diameter_in_pixels
+            ):
                 continue
-             
+
             # expand the box boundaries by a few pixels as the masks may not be covering the boundaries
-            delta_x: int = int(percentage_to_expand_bbox_boundaries * (main_mask_xmax - main_mask_xmin) / 2)
-            delta_y: int = int(percentage_to_expand_bbox_boundaries * (main_mask_ymax - main_mask_ymin) / 2)
-            
+            delta_x: int = int(
+                percentage_to_expand_bbox_boundaries
+                * (main_mask_xmax - main_mask_xmin)
+                / 2
+            )
+            delta_y: int = int(
+                percentage_to_expand_bbox_boundaries
+                * (main_mask_ymax - main_mask_ymin)
+                / 2
+            )
+
             delta_x = max(1, delta_x)
             delta_y = max(1, delta_y)
-            
+
             xmin = max(0, main_mask_xmin - delta_x)
             ymin = max(0, main_mask_ymin - delta_y)
             xmax = min(image_width, main_mask_xmax + delta_x)
             ymax = min(image_height, main_mask_ymax + delta_y)
-        
+
             # the object's mask
             mask: np.ndarray = np.zeros((ymax - ymin, xmax - xmin), np.uint8)
             # plot the main mask
-            polygon_points: np.ndarray = pd.DataFrame(polygon_points_list[main_index]).values.astype(np.int32)
+            polygon_points: np.ndarray = pd.DataFrame(
+                polygon_points_list[main_index]
+            ).values.astype(np.int32)
             polygon_points = np.expand_dims(polygon_points, axis=1)
             cv2.drawContours(mask, [polygon_points - np.array([xmin, ymin])], 0, 1, -1)
-            
+
             # the rest of the polygons are the "holes" in the object, remove them from the main mask
             for i, poly in enumerate(polygon_points_list):
                 if i == main_index:
                     continue
                 # pandas is just used for simplicity
-                polygon_points: np.ndarray = pd.DataFrame(poly).values.astype(np.int32)    
-       
+                polygon_points: np.ndarray = pd.DataFrame(poly).values.astype(np.int32)
+
                 # draw the polygon mask within the bounding box
                 # CV2 contours format
                 polygon_points = np.expand_dims(polygon_points, axis=1)
-            
+
                 hole_mask: np.ndarray = np.zeros((ymax - ymin, xmax - xmin), np.uint8)
                 # create the mask for the object (the mask value is set to 1 for the object)
-                cv2.drawContours(hole_mask, [polygon_points - np.array([xmin, ymin])], 0, 1, -1)
+                cv2.drawContours(
+                    hole_mask, [polygon_points - np.array([xmin, ymin])], 0, 1, -1
+                )
                 # make sure the "hole" is a subset of the main mask before subtraction (should not be needed)
                 hole_mask = cv2.bitwise_and(mask, hole_mask)
                 mask = mask - hole_mask
-            
+
             if return_masks_in_coco_rle_format:
-                encoded_mask: dict = coco_mask_util.encode(np.asarray(mask, order="F"))    
+                encoded_mask: dict = coco_mask_util.encode(np.asarray(mask, order="F"))
                 masks.append(encoded_mask)
             else:
                 masks.append(mask)
-            annotations_df = pd.concat([annotations_df, pd.DataFrame(data = 
-                                                                    [{'xtl': xmin, 
-                                                                      'ytl': ymin, 
-                                                                      'xbr': xmax, 
-                                                                      'ybr': ymax, 
-                                                                      'label': label}], index=[len(annotations_df)])])
+            annotations_df = pd.concat(
+                [
+                    annotations_df,
+                    pd.DataFrame(
+                        data=[
+                            {
+                                "xtl": xmin,
+                                "ytl": ymin,
+                                "xbr": xmax,
+                                "ybr": ymax,
+                                "label": label,
+                            }
+                        ],
+                        index=[len(annotations_df)],
+                    ),
+                ]
+            )
 
             obj_id += 1
-        
+
         else:
             # addressing the bug in Darwin v2.0, multuple objects have been combined in the polygon
             # print(f"[WARNNING]: Multiple objects are combined in the {idx}th polygon in {filename_wo_path}! Darwin v2.0 bug. Addressing the issue")
             for i, poly in enumerate(polygon_points_list):
-                
                 main_mask_xmin: int = coords[i][0]
                 main_mask_ymin: int = coords[i][1]
                 main_mask_xmax: int = coords[i][2]
                 main_mask_ymax: int = coords[i][3]
-                
+
                 # filter the small objects here before modifying the bounding boxes
-                if main_mask_xmin >= main_mask_xmax or main_mask_ymin >= main_mask_ymax or max(main_mask_xmax - main_mask_xmin, main_mask_ymax - main_mask_ymin) < min_diameter_in_pixels:
+                if (
+                    main_mask_xmin >= main_mask_xmax
+                    or main_mask_ymin >= main_mask_ymax
+                    or max(
+                        main_mask_xmax - main_mask_xmin, main_mask_ymax - main_mask_ymin
+                    )
+                    < min_diameter_in_pixels
+                ):
                     continue
-             
+
                 # expand the box boundaries by a few pixels as the masks may not be covering the boundaries
-                delta_x: int = int(percentage_to_expand_bbox_boundaries * (main_mask_xmax - main_mask_xmin) / 2)
-                delta_y: int = int(percentage_to_expand_bbox_boundaries * (main_mask_ymax - main_mask_ymin) / 2)
-            
+                delta_x: int = int(
+                    percentage_to_expand_bbox_boundaries
+                    * (main_mask_xmax - main_mask_xmin)
+                    / 2
+                )
+                delta_y: int = int(
+                    percentage_to_expand_bbox_boundaries
+                    * (main_mask_ymax - main_mask_ymin)
+                    / 2
+                )
+
                 delta_x = max(1, delta_x)
                 delta_y = max(1, delta_y)
-            
+
                 xmin = max(0, main_mask_xmin - delta_x)
                 ymin = max(0, main_mask_ymin - delta_y)
                 xmax = min(image_width, main_mask_xmax + delta_x)
                 ymax = min(image_height, main_mask_ymax + delta_y)
-        
+
                 # the object's mask
                 mask: np.ndarray = np.zeros((ymax - ymin, xmax - xmin), np.uint8)
                 # plot the mask
                 polygon_points: np.ndarray = pd.DataFrame(poly).values.astype(np.int32)
                 polygon_points = np.expand_dims(polygon_points, axis=1)
-                cv2.drawContours(mask, [polygon_points - np.array([xmin, ymin])], 0, 1, -1)
-         
-            
+                cv2.drawContours(
+                    mask, [polygon_points - np.array([xmin, ymin])], 0, 1, -1
+                )
+
                 if return_masks_in_coco_rle_format:
-                    encoded_mask: dict = coco_mask_util.encode(np.asarray(mask, order="F"))    
+                    encoded_mask: dict = coco_mask_util.encode(
+                        np.asarray(mask, order="F")
+                    )
                     masks.append(encoded_mask)
                 else:
                     masks.append(mask)
-                annotations_df = pd.concat([annotations_df, pd.DataFrame(data = 
-                                                                    [{'xtl': xmin, 
-                                                                      'ytl': ymin, 
-                                                                      'xbr': xmax, 
-                                                                      'ybr': ymax, 
-                                                                      'label': label}], index=[len(annotations_df)])])
+                annotations_df = pd.concat(
+                    [
+                        annotations_df,
+                        pd.DataFrame(
+                            data=[
+                                {
+                                    "xtl": xmin,
+                                    "ytl": ymin,
+                                    "xbr": xmax,
+                                    "ybr": ymax,
+                                    "label": label,
+                                }
+                            ],
+                            index=[len(annotations_df)],
+                        ),
+                    ]
+                )
                 obj_id += 1
-        
+
     # remove duplicate objects (bounding boxes)
     # make sure the indexes are 0 1, ...
     annotations_df.reset_index(inplace=True, drop=True)
     annotations_df = annotations_df.drop_duplicates()
     masks = [masks[i] for i in annotations_df.index]
     annotations_df.reset_index(inplace=True, drop=True)
-         
-    return {'name': image_name, 'image': img, 'annotations': annotations_df, 'masks': masks}
+
+    return {
+        "name": image_name,
+        "image": img,
+        "annotations": annotations_df,
+        "masks": masks,
+    }
 
 
-
-def create_overlaid_img(bf_image: np.ndarray, fl_images_dict: Dict[str, np.ndarray], normalize_fl_image_hist: bool = True) -> np.ndarray:
+def create_overlaid_img(
+    bf_image: np.ndarray,
+    fl_images_dict: Dict[str, np.ndarray],
+    normalize_fl_image_hist: bool = True,
+) -> np.ndarray:
     """
     Overlay the brightfield image for an FoV with the FL channel images.
 
     Args:
-        bf_image (np.ndarray): Numpy array of the brightfield image for the FoV. 
+        bf_image (np.ndarray): Numpy array of the brightfield image for the FoV.
         fl_images_dict (Dict[str, np.ndarray]): A dictionary with keys as 'red', 'green' and 'blue'
-            (the colors to map the corresponding FL image) and values as the numpy array for the FL images. 
+            (the colors to map the corresponding FL image) and values as the numpy array for the FL images.
             All the images should be of the same size and should only include 1 channel. This dictionary
-            may include only a subset of colors. 
-        normalize_fl_image_hist (bool, optional): Apply histogram normalization on the FL images before overlaying. 
+            may include only a subset of colors.
+        normalize_fl_image_hist (bool, optional): Apply histogram normalization on the FL images before overlaying.
     Returns:
-        numpy array of the overlaid images. 
+        numpy array of the overlaid images.
     """
     overlaid_image: np.ndarray = None
     # colors in RGB format, this order is what we ultimately use for training
     colors: Dict[str, np.array] = {
         "red": np.array([1.0, 0, 0]),
         "green": np.array([0, 1.0, 0]),
-        "blue": np.array([0, 0, 1.0])
-        
+        "blue": np.array([0, 0, 1.0]),
     }
 
     for k, v in fl_images_dict.items():
         # copy to make sure we are not modifying the input image arrays
         fl_image: np.ndarray = v.copy()
         if len(fl_image.shape) > 2 and fl_image.shape[2] > 1:
-            print(f"[WARN] create_overlaid_img expects a 2D image, but a 3D image was passed for FL channel in '{k}'! "
-                  f"RGB image will be converted to gray scale before overlaying")
+            print(
+                f"[WARN] create_overlaid_img expects a 2D image, but a 3D image was passed for FL channel in '{k}'! "
+                f"RGB image will be converted to gray scale before overlaying"
+            )
             fl_image = cv2.cvtColor(fl_image, cv2.COLOR_BGR2GRAY)
-    
+
         if normalize_fl_image_hist:
             # create a CLAHE object
             clahe = cv2.createCLAHE(clipLimit=1.0, tileGridSize=(128, 128))
             fl_image = clahe.apply(fl_image)
 
         # convert back to a 3D and map to the channel
-        fl_image = (cv2.cvtColor(fl_image, cv2.COLOR_GRAY2RGB) * colors[k]).astype(np.uint8)
-            
+        fl_image = (cv2.cvtColor(fl_image, cv2.COLOR_GRAY2RGB) * colors[k]).astype(
+            np.uint8
+        )
+
         if overlaid_image is None:
             overlaid_image = fl_image
         else:
@@ -606,18 +773,22 @@ def create_overlaid_img(bf_image: np.ndarray, fl_images_dict: Dict[str, np.ndarr
 
     if bf_image is None:
         return overlaid_image
-    
+
     if len(bf_image.shape) > 2 and bf_image.shape[2] > 1:
-        print("[WARN] create_overlaid_img expects a 2D image, but a 3D image was passed for the brightfield channel! ") 
+        print(
+            "[WARN] create_overlaid_img expects a 2D image, but a 3D image was passed for the brightfield channel! "
+        )
         print("RGB image will be converted to gray scale before overlaying")
         bf_image = cv2.cvtColor(bf_image, cv2.COLOR_BGR2GRAY)
 
     bf_image = cv2.cvtColor(bf_image, cv2.COLOR_GRAY2RGB)
-    
+
     if overlaid_image is None:
         overlaid_image = bf_image
     else:
-        overlaid_image = np.clip(0.6 * bf_image + 0.4 * overlaid_image, 0, 255).astype(np.uint8)
+        overlaid_image = np.clip(0.6 * bf_image + 0.4 * overlaid_image, 0, 255).astype(
+            np.uint8
+        )
     return overlaid_image
 
 
@@ -626,9 +797,7 @@ def normalize_min_max_ignore_extremes(image: np.ndarray, scale: int):
     # for efficiency (running faster), this comes at a price of lowering the resolution
     img = (255.0 * image.astype(float) / scale).astype(np.uint8)
     count, intensities = np.histogram(img, bins=255, range=(0, 255))
-    idxs_to_keep: np.ndarray = np.where(
-        count >= MAX_NUM_INTESITY_OUTLIER_PIXELS
-    )[0]
+    idxs_to_keep: np.ndarray = np.where(count >= MAX_NUM_INTESITY_OUTLIER_PIXELS)[0]
     if len(idxs_to_keep) > 0:
         # intensity values are with respect to the original image without converting the bit-depth
         min_intensity: float = intensities[idxs_to_keep.min()] * scale / 255.0
@@ -637,33 +806,40 @@ def normalize_min_max_ignore_extremes(image: np.ndarray, scale: int):
         # revert back to 'min-max'
         min_intensity: float = float(image.min())
         max_intensity: float = float(image.max())
-    
+
     if min_intensity < max_intensity:
         img = np.clip(image.astype(float), min_intensity, max_intensity)
-        img = (255 * (img - min_intensity) / (max_intensity - min_intensity)).astype(np.uint8)
-    # else, return the image above after changing the bit-depth without any normalization; should only happen with 
+        img = (255 * (img - min_intensity) / (max_intensity - min_intensity)).astype(
+            np.uint8
+        )
+    # else, return the image above after changing the bit-depth without any normalization; should only happen with
     # images with constant intensity after bit-depth conversion
-    
+
     return img
+
 
 # a dataset classe to "parse" the masks and extract the bounding boxes from annotations
 class CellMaskDataset:
-    def __init__(self,
-                 images_path: str,
-                 annotations_path: str,
-                 annotations: Union[List[str], Dict[str, str], Dict[str, List[str]]],
-                 overlay_fl_images_per_annotation: Dict[str, Dict[str, str]] = None,
-                 max_images_to_consider_for_each_annotation: int = -1,
-                 labels_of_interest: Union[List[str], None] = None,
-                 percentage_to_expand_bbox_boundaries: float = 0.2,
-                 color_depth: int = 14,
-                 min_object_diameter: float = 0.0,
-                 optical_characteristics: Dict[Tuple[int, int], Dict[str, float]] = OPTICAL_CHARACTERISTICS,
-                 scale_factor_dict: Dict[Tuple[int, int], float] = {},
-                 max_larger_side: int = 2000,
-                 max_smaller_side: int = 1600,
-                 normalize: bool = False,
-                 class_names_to_ids_map: dict = DEFAULT_CLASS_NAMES_TO_IDS_MAP) -> None:
+    def __init__(
+        self,
+        images_path: str,
+        annotations_path: str,
+        annotations: Union[List[str], Dict[str, str], Dict[str, List[str]]],
+        overlay_fl_images_per_annotation: Dict[str, Dict[str, str]] = None,
+        max_images_to_consider_for_each_annotation: int = -1,
+        labels_of_interest: Union[List[str], None] = None,
+        percentage_to_expand_bbox_boundaries: float = 0.2,
+        color_depth: int = 14,
+        min_object_diameter: float = 0.0,
+        optical_characteristics: Dict[
+            Tuple[int, int], Dict[str, float]
+        ] = OPTICAL_CHARACTERISTICS,
+        scale_factor_dict: Dict[Tuple[int, int], float] = {},
+        max_larger_side: int = 2000,
+        max_smaller_side: int = 1600,
+        normalize: bool = False,
+        class_names_to_ids_map: dict = DEFAULT_CLASS_NAMES_TO_IDS_MAP,
+    ) -> None:
         """_summary_
 
         Args:
@@ -696,23 +872,23 @@ class CellMaskDataset:
                     the images 'images_path/extra_img_path_1/img_name_1.jpg',
                     'images_path/extra_img_path_2/img_name_2.jpg' , ... . Note that the file extensions for both
                     annotations and images should be provided.
-            overlay_fl_images_per_annotation (Dict[str, Dict[str, str]]): An optional dictionary to specify fluorescent 
+            overlay_fl_images_per_annotation (Dict[str, Dict[str, str]]): An optional dictionary to specify fluorescent
                 images (potentially multiple images captured on different FL channels) to be overlaid on the brightfield image for
-                each FoV. The key values are the annotation filenames WITH the extension and any extra path, in the same format 
-                as in option 2 and 3 for the input argument annotations as defined above (can be a subset of them as well), and 
-                values as dictionaries with keys as 'red', 'green' and 'blue' (or a subset of them), and the values as the 
-                fluorescent image file WITH the extension and additional path. Creating overlaid images is only availble with 
+                each FoV. The key values are the annotation filenames WITH the extension and any extra path, in the same format
+                as in option 2 and 3 for the input argument annotations as defined above (can be a subset of them as well), and
+                values as dictionaries with keys as 'red', 'green' and 'blue' (or a subset of them), and the values as the
+                fluorescent image file WITH the extension and additional path. Creating overlaid images is only availble with
                 annotations above provided in 2 and 3 formats. If a mapping for an annotation file (a FoV) is completely missing
-                (annotation file is not included in the passed dictionary), only BF images will be considered for the FoV. If 
-                the FL image is missing for a channel ('red', 'green', 'blue'), the channel will not be used in generating the 
-                overlaid image. 
+                (annotation file is not included in the passed dictionary), only BF images will be considered for the FoV. If
+                the FL image is missing for a channel ('red', 'green', 'blue'), the channel will not be used in generating the
+                overlaid image.
             max_images_to_consider_for_each_annotation (int): This input is only applicable in case each annotation file
                 is applicable to multiple images (scenario 3 above). Otherwise, it does not have any effect. In case
                 it is set to special value -1 (or any value < 0), all possible combinations of the annotations and the
                 corresponding images will be considered and returned in the dataset class. Otherwise, the specified
                 number of images are randomly selected to be is used with the annotation and are returned. Special value of 0
                 when overlay_fl_images_per_annotation is passed (overlaid images should be created), indicates that the overlaid
-                image should only use FL channel images (no BF image) with equal weights for each FL channel in the overlaid image. 
+                image should only use FL channel images (no BF image) with equal weights for each FL channel in the overlaid image.
             labels_of_interest (Union[List[str], None], optional): _description_. Defaults to None.
             percentage_to_expand_bbox_boundaries (float, optional): _description_. Defaults to 0.2.
             color_depth (int, optional): _description_. Defaults to 14.
@@ -735,7 +911,9 @@ class CellMaskDataset:
         self.only_consider_fl_images_for_overlay: bool = False
         if isinstance(annotations, list):
             for annotation_file in annotations:
-                annotation_path: str = os.path.join(self.annotations_base_path, f"{annotation_file}.json")
+                annotation_path: str = os.path.join(
+                    self.annotations_base_path, f"{annotation_file}.json"
+                )
                 image_path: str = self.get_image_path(annotation_file)
                 if os.path.exists(annotation_path):
                     # image_path will be None if the image does not exist, leave it as None for now
@@ -746,22 +924,36 @@ class CellMaskDataset:
                     self.annotations_images_map.append((annotation_path, image_path))
         elif isinstance(annotations, dict):
             for annotation_file, value in annotations.items():
-                annotation_path: str = os.path.join(self.annotations_base_path, annotation_file)
+                annotation_path: str = os.path.join(
+                    self.annotations_base_path, annotation_file
+                )
                 if isinstance(value, list):
                     # value is a list of strings specifying the image names (with the extension) corresponding to the
                     # annotation file
-                    image_paths: List[str] = [os.path.join(self.images_base_path, image_name) for image_name in value]
-                    if 0 < max_images_to_consider_for_each_annotation < len(image_paths):
+                    image_paths: List[str] = [
+                        os.path.join(self.images_base_path, image_name)
+                        for image_name in value
+                    ]
+                    if (
+                        0
+                        < max_images_to_consider_for_each_annotation
+                        < len(image_paths)
+                    ):
                         # TODO: do we want to set a fixed seed to the randomization here to be able to
                         #  reproduce the same everytime?
                         # random.seed(7)
                         random.shuffle(image_paths)
-                        image_paths = image_paths[:max_images_to_consider_for_each_annotation]
-                    elif max_images_to_consider_for_each_annotation == 0 and overlay_fl_images_per_annotation is not None:
+                        image_paths = image_paths[
+                            :max_images_to_consider_for_each_annotation
+                        ]
+                    elif (
+                        max_images_to_consider_for_each_annotation == 0
+                        and overlay_fl_images_per_annotation is not None
+                    ):
                         # keep only one (to have self.annotations_images_map pointing to an existing image)
-                        # note that this one will also be ignores 
+                        # note that this one will also be ignores
                         # NOTE: currently this single BF image is read and processes (e.g., normalized) and is only
-                        # ignore when the overlaid image is generated, it is better to avoid reading and processing this image 
+                        # ignore when the overlaid image is generated, it is better to avoid reading and processing this image
                         # all together, but requires more code changes in this already convoluted function
                         image_paths = image_paths[:1]
                         #  FL channel images are provided, and max_images_to_consider_for_each_annotation is set to zero indicating that
@@ -769,47 +961,67 @@ class CellMaskDataset:
                         self.only_consider_fl_images_for_overlay: bool = True
                 else:
                     # value is a string specifying the image name (with the extension)
-                    image_paths: List[str] = [os.path.join(self.images_base_path, value)]
+                    image_paths: List[str] = [
+                        os.path.join(self.images_base_path, value)
+                    ]
 
                 for image_path in image_paths:
                     if os.path.exists(annotation_path) and os.path.exists(image_path):
-                        self.annotations_images_map.append((annotation_path, image_path))
+                        self.annotations_images_map.append(
+                            (annotation_path, image_path)
+                        )
                     else:
-                        print(f"No annotation file or image could be found for {annotation_path}:{image_path}! "
-                              f"This should never happen! Check the passed 'annotations' for a correct mapping between "
-                              f"the annotation files and images. Skipping ...")
-            
+                        print(
+                            f"No annotation file or image could be found for {annotation_path}:{image_path}! "
+                            f"This should never happen! Check the passed 'annotations' for a correct mapping between "
+                            f"the annotation files and images. Skipping ..."
+                        )
+
         # the list of images (with paths) per annotation files (the same content as self.annotations_images_map but
         # formatted in a dictionary, it is used for caching and checking if all the images per annotation are covered
         # to clear the cache
         self.list_of_images_per_annotation: Dict[str, List[str]] = {}
-        for (annotation_path, image_path) in self.annotations_images_map:
+        for annotation_path, image_path in self.annotations_images_map:
             if annotation_path in self.list_of_images_per_annotation:
                 self.list_of_images_per_annotation[annotation_path].append(image_path)
             else:
                 self.list_of_images_per_annotation[annotation_path] = [image_path]
 
         # check if the FL channel images should be overlaid on the BF image
-        if overlay_fl_images_per_annotation is not None and isinstance(annotations, dict):
+        if overlay_fl_images_per_annotation is not None and isinstance(
+            annotations, dict
+        ):
             self.overlay_fl_images_per_annotation: Dict[str, Dict[str, str]] = {}
             for annotation_file in overlay_fl_images_per_annotation:
-                annotation_path: str = os.path.join(self.annotations_base_path, annotation_file)
+                annotation_path: str = os.path.join(
+                    self.annotations_base_path, annotation_file
+                )
                 if annotation_path not in self.list_of_images_per_annotation:
-                    print(f"[WARN] Unknown annotation file '{annotation_path}' passed in overlay_fl_images_per_annotation! "
-                          f"All the passed FL images for this FoV will be ignored.")
+                    print(
+                        f"[WARN] Unknown annotation file '{annotation_path}' passed in overlay_fl_images_per_annotation! "
+                        f"All the passed FL images for this FoV will be ignored."
+                    )
                 else:
                     self.overlay_fl_images_per_annotation[annotation_path] = {}
-                for channel_identifier in overlay_fl_images_per_annotation[annotation_file]:
-                    if channel_identifier.lower() not in ['red', 'green', 'blue']:
+                for channel_identifier in overlay_fl_images_per_annotation[
+                    annotation_file
+                ]:
+                    if channel_identifier.lower() not in ["red", "green", "blue"]:
                         print(
                             f"[WARN] Unknwon channel identifier '{channel_identifier}' passed in overlay_fl_images_per_annotation for "
                             f"annotation file '{annotation_path}'! The  FL images for the channel will be ignored. "
                             f"Allowed identifiers are 'red', 'green', and 'blue'."
                         )
                     else:
-                        self.overlay_fl_images_per_annotation[annotation_path][channel_identifier.lower()] = \
-                        os.path.join(self.images_base_path, overlay_fl_images_per_annotation[annotation_file][channel_identifier])
-        
+                        self.overlay_fl_images_per_annotation[annotation_path][
+                            channel_identifier.lower()
+                        ] = os.path.join(
+                            self.images_base_path,
+                            overlay_fl_images_per_annotation[annotation_file][
+                                channel_identifier
+                            ],
+                        )
+
         self.labels_of_interest = labels_of_interest
         # in order to reduce the memory required for the masks (for instance segmentation models)
         # the image and the annotations can be downsized by the passed scale_factor_dict
@@ -825,7 +1037,7 @@ class CellMaskDataset:
         # conversion to get values in [0, 1]
         # this is 2 ^ color_depth - 1, where color_depth is the number of bits
         # use to represent the intensities for each channel
-        self.channel_scale = 2 ** color_depth - 1
+        self.channel_scale = 2**color_depth - 1
         self.normalize = normalize
         self.class_names_to_ids_map = class_names_to_ids_map
         self.percentage_to_expand_bbox_boundaries = percentage_to_expand_bbox_boundaries
@@ -843,8 +1055,9 @@ class CellMaskDataset:
         # dictionary with keys as the annotations files paths, and values as the list of images already
         # called, it is used to remove the parsed annotation from the cache (to save memory) once all the
         # images for a given annotation have been called
-        self.list_of_images_covered_per_annotation: Dict[str, List[str]] = \
-            {key: [] for key in self.list_of_images_per_annotation}
+        self.list_of_images_covered_per_annotation: Dict[str, List[str]] = {
+            key: [] for key in self.list_of_images_per_annotation
+        }
         # in case some annotations (with more than one corresponding images) are blocked from being cached (because
         # the cache is already full at the time of call), we add them to this list to block them from being cached
         # later (when called for another image) when some room becomes available in the cache
@@ -858,18 +1071,26 @@ class CellMaskDataset:
         img_path: str = self.annotations_images_map[idx][1]
         # by default, no images to create an overlaid image
         overlay_imgs: Dict[str, np.ndarray] = None
-        
+
         if img_path is not None:
             # read the image, do not change the format
             # depending on the set color_depth, the values will be in [0, 2^color_depth - 1]
-            img = cv2.imread(img_path, cv2.IMREAD_UNCHANGED) # all are gray scale images, so no difference in using cv2.imread or Image.open
+            img = cv2.imread(
+                img_path, cv2.IMREAD_UNCHANGED
+            )  # all are gray scale images, so no difference in using cv2.imread or Image.open
             # img = np.array(Image.open(img_path))
             download_image: bool = False
             # check for the overlays
-            if self.overlay_fl_images_per_annotation is not None and annotation_path in self.overlay_fl_images_per_annotation:
+            if (
+                self.overlay_fl_images_per_annotation is not None
+                and annotation_path in self.overlay_fl_images_per_annotation
+            ):
                 overlay_imgs: Dict[str, np.ndarray] = {
-                    k.lower(): cv2.imread(v, cv2.IMREAD_UNCHANGED) for k, v in self.overlay_fl_images_per_annotation[annotation_path].items() 
-                    if k.lower() in ['red', 'green', 'blue']
+                    k.lower(): cv2.imread(v, cv2.IMREAD_UNCHANGED)
+                    for k, v in self.overlay_fl_images_per_annotation[
+                        annotation_path
+                    ].items()
+                    if k.lower() in ["red", "green", "blue"]
                 }
                 # remove invalid paths
                 overlay_imgs = {k: v for k, v in overlay_imgs.items() if v is not None}
@@ -877,37 +1098,51 @@ class CellMaskDataset:
         else:
             # download the image as well, this can only happen when the annotation and the images use the same name
             annots_name: str = os.path.basename(annotation_path)
-            image_name_without_ext: str = '.'.join(annots_name.strip().split('.')[:-1])
-            print(f"An image with the same name as the annotation file {os.path.basename(annots_name)} was not "
-                  f"found! Downloading the image from the URL in the annotations. This is not considered normal!")
+            image_name_without_ext: str = ".".join(annots_name.strip().split(".")[:-1])
+            print(
+                f"An image with the same name as the annotation file {os.path.basename(annots_name)} was not "
+                f"found! Downloading the image from the URL in the annotations. This is not considered normal!"
+            )
             download_image: bool = True
 
         if annotation_path in self.cached_annotations:
             # make a (deep) copy
             # we are not caching the images (hence None below fpr key 'image')
-            annotations: dict = {'name': self.cached_annotations[annotation_path]['name'],
-                                 'image': None, # N/A, see parse_json_annotations with download_image = True
-                                 'annotations': self.cached_annotations[annotation_path]['annotations'].copy(),
-                                 'masks': [m.copy() for m in self.cached_annotations[annotation_path]['masks']]}
+            annotations: dict = {
+                "name": self.cached_annotations[annotation_path]["name"],
+                "image": None,  # N/A, see parse_json_annotations with download_image = True
+                "annotations": self.cached_annotations[annotation_path][
+                    "annotations"
+                ].copy(),
+                "masks": [
+                    m.copy() for m in self.cached_annotations[annotation_path]["masks"]
+                ],
+            }
         else:
             # parse the annotations file, this is the first time an image/annotation pair is called
-            annotations = parse_json_annotations(json_filename=annotation_path,
-                                                 labels_of_interest=self.labels_of_interest,
-                                                 download_image=download_image,
-                                                 percentage_to_expand_bbox_boundaries=self.percentage_to_expand_bbox_boundaries,
-                                                 min_object_diameter=self.min_object_diameter,
-                                                 optical_characteristics=self.optical_characteristics,
-                                                 return_masks_in_coco_rle_format=False)
+            annotations = parse_json_annotations(
+                json_filename=annotation_path,
+                labels_of_interest=self.labels_of_interest,
+                download_image=download_image,
+                percentage_to_expand_bbox_boundaries=self.percentage_to_expand_bbox_boundaries,
+                min_object_diameter=self.min_object_diameter,
+                optical_characteristics=self.optical_characteristics,
+                return_masks_in_coco_rle_format=False,
+            )
 
             # cache a copy, only if the annotation has multiple images and has not been blocked before
             # make sure we are not growing the cache more than the limit (a safety check)
-            if (len(self.list_of_images_per_annotation[annotation_path]) > 1 and
-                    annotation_path not in self.blocked_annotations_from_caching):
+            if (
+                len(self.list_of_images_per_annotation[annotation_path]) > 1
+                and annotation_path not in self.blocked_annotations_from_caching
+            ):
                 if len(self.cached_annotations) < MAX_ANNOTATION_CACHE_LENGTH:
-                    self.cached_annotations[annotation_path]: dict = {'name': annotations['name'],
-                                                                      'image': None,  # N/A
-                                                                      'annotations': annotations['annotations'].copy(),
-                                                                      'masks': [m.copy() for m in annotations['masks']]}
+                    self.cached_annotations[annotation_path]: dict = {
+                        "name": annotations["name"],
+                        "image": None,  # N/A
+                        "annotations": annotations["annotations"].copy(),
+                        "masks": [m.copy() for m in annotations["masks"]],
+                    }
                 else:
                     self.blocked_annotations_from_caching.append(annotation_path)
 
@@ -917,9 +1152,11 @@ class CellMaskDataset:
             # we save the image to the images_path and update the path in self.annotations_images_map,
             # so the next time the dataset is called with the same idx, we load the image
             # from disk and will not download it
-            img: np.ndarray = annotations['image']
-            img_path: str = os.path.join(self.images_base_path, image_name_without_ext + '.jpg')
-            # save the image using PIL.Image as parse_json_annotations reads it with Image.open 
+            img: np.ndarray = annotations["image"]
+            img_path: str = os.path.join(
+                self.images_base_path, image_name_without_ext + ".jpg"
+            )
+            # save the image using PIL.Image as parse_json_annotations reads it with Image.open
             Image.fromarray(img).save(img_path)
             # update the map so next time we do not download and read from the file
             self.annotations_images_map[idx] = (annotation_path, img_path)
@@ -928,8 +1165,11 @@ class CellMaskDataset:
             self.list_of_images_per_annotation[annotation_path] = [img_path]
 
         # check if done with the images, img_path cannot be None if we are here
-        if (annotation_path in self.cached_annotations and
-                img_path not in self.list_of_images_covered_per_annotation[annotation_path]):
+        if (
+            annotation_path in self.cached_annotations
+            and img_path
+            not in self.list_of_images_covered_per_annotation[annotation_path]
+        ):
             # the first condition ensure we are caching this annotation, otherwise, no reason to track
             # we may not if the number of already cached annotations is more than the limit, or each annotation
             # is applicable to only one image
@@ -945,45 +1185,63 @@ class CellMaskDataset:
         # Note that class_names_to_ids_map should include all the class names used in the annotations
         # as the keys
         if self.class_names_to_ids_map is not None:
-            annotations['annotations']['label'] = annotations['annotations']['label'].map(self.class_names_to_ids_map)
+            annotations["annotations"]["label"] = annotations["annotations"][
+                "label"
+            ].map(self.class_names_to_ids_map)
 
         # convert the returned np.unit32 image to float with values between 0, 1
         if self.normalize:
             # if this flag is set, normalize the image such the minimum intensity
             # is mapped to zero, and the maximum is mapped to one
             # convert the image to a numpy array
-            img = cv2.normalize(img, img, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX).astype(np.uint8)
+            img = cv2.normalize(
+                img, img, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX
+            ).astype(np.uint8)
             if overlay_imgs is not None:
                 # normalize the FL channels, we use min-max-ignore-extremes
                 for k in overlay_imgs:
                     if self.only_consider_fl_images_for_overlay:
                         # we use this option for z-stack overlaid images of all BF images with different z (pretending they
                         # are FL channels), so use the same min-max normalization as for BF images
-                        overlay_imgs[k] = cv2.normalize(overlay_imgs[k], 
-                                                        overlay_imgs[k], 
-                                                        alpha=0, beta=255, 
-                                                        norm_type=cv2.NORM_MINMAX).astype(np.uint8)
+                        overlay_imgs[k] = cv2.normalize(
+                            overlay_imgs[k],
+                            overlay_imgs[k],
+                            alpha=0,
+                            beta=255,
+                            norm_type=cv2.NORM_MINMAX,
+                        ).astype(np.uint8)
                     else:
-                        overlay_imgs[k] = normalize_min_max_ignore_extremes(overlay_imgs[k], self.channel_scale)
-                        
-                        
+                        overlay_imgs[k] = normalize_min_max_ignore_extremes(
+                            overlay_imgs[k], self.channel_scale
+                        )
+
         else:
             # the intensity of the images is color_depth bits, so we need to divide by 2^color_depth - 1
             img = (255 * img.astype(float) / self.channel_scale).astype(np.uint8)
             if overlay_imgs is not None:
                 # scale the FL channel intensities as well
                 for k in overlay_imgs:
-                    overlay_imgs[k] = (255 * overlay_imgs[k].astype(float) / self.channel_scale).astype(np.uint8)
+                    overlay_imgs[k] = (
+                        255 * overlay_imgs[k].astype(float) / self.channel_scale
+                    ).astype(np.uint8)
 
         if overlay_imgs is not None:
             if self.only_consider_fl_images_for_overlay:
                 # we use this option for z-stack overlaid images of all BF images with different z (pretending they
                 # are FL channels), so skip histogram equalization
-                img = create_overlaid_img(bf_image=None, fl_images_dict=overlay_imgs, normalize_fl_image_hist=False) 
+                img = create_overlaid_img(
+                    bf_image=None,
+                    fl_images_dict=overlay_imgs,
+                    normalize_fl_image_hist=False,
+                )
             else:
                 # create an overlaid image
-                img = create_overlaid_img(bf_image=img, fl_images_dict=overlay_imgs, normalize_fl_image_hist=True) 
-        
+                img = create_overlaid_img(
+                    bf_image=img,
+                    fl_images_dict=overlay_imgs,
+                    normalize_fl_image_hist=True,
+                )
+
         image_height, image_width = img.shape[:2]
         # scale factor
         if (image_width, image_height) in self.scale_factor_dict:
@@ -991,42 +1249,71 @@ class CellMaskDataset:
         else:
             scale_factor: float = 1.0
 
-        larger_side: int = max(int(image_width / scale_factor), int(image_height / scale_factor))
-        smaller_side: int = min(int(image_width / scale_factor), int(image_height / scale_factor))
+        larger_side: int = max(
+            int(image_width / scale_factor), int(image_height / scale_factor)
+        )
+        smaller_side: int = min(
+            int(image_width / scale_factor), int(image_height / scale_factor)
+        )
 
         if larger_side > self.max_larger_side or smaller_side > self.max_smaller_side:
-            scale_factor *= max(float(larger_side) / self.max_larger_side, float(smaller_side) / self.max_smaller_side)
+            scale_factor *= max(
+                float(larger_side) / self.max_larger_side,
+                float(smaller_side) / self.max_smaller_side,
+            )
 
         if scale_factor != 1:
             # for decimating an image, cv2.INTER_AREA is the preferred method (scale_factor is always > 1)
-            img = cv2.resize(img, (int(image_width / scale_factor), int(image_height / scale_factor)),
-                             interpolation=cv2.INTER_AREA)
+            img = cv2.resize(
+                img,
+                (int(image_width / scale_factor), int(image_height / scale_factor)),
+                interpolation=cv2.INTER_AREA,
+            )
             # update all the masks and annotations
-            annotations['annotations'][['xtl', 'ytl', 'xbr', 'ybr']] = annotations['annotations'][
-                ['xtl', 'ytl', 'xbr', 'ybr']].div(scale_factor).astype(int)
+            annotations["annotations"][["xtl", "ytl", "xbr", "ybr"]] = (
+                annotations["annotations"][["xtl", "ytl", "xbr", "ybr"]]
+                .div(scale_factor)
+                .astype(int)
+            )
 
             # make sure no box width/height becomes zero after the resize
             # only keep boxes with positive width and height
-            annotations['annotations'] = annotations['annotations'][
-                (annotations['annotations']['ybr'] - annotations['annotations']['ytl'] > 0) &
-                (annotations['annotations']['xbr'] - annotations['annotations']['xtl'] > 0)]
+            annotations["annotations"] = annotations["annotations"][
+                (
+                    annotations["annotations"]["ybr"]
+                    - annotations["annotations"]["ytl"]
+                    > 0
+                )
+                & (
+                    annotations["annotations"]["xbr"]
+                    - annotations["annotations"]["xtl"]
+                    > 0
+                )
+            ]
 
             # keep the corresponding masks after resizing
-            annotations['masks'] = [annotations['masks'][i] for i in annotations['annotations'].index]
+            annotations["masks"] = [
+                annotations["masks"][i] for i in annotations["annotations"].index
+            ]
             # reset the index
-            annotations['annotations'].reset_index(inplace=True, drop=True)
+            annotations["annotations"].reset_index(inplace=True, drop=True)
 
             # now resize the masks (note that they are defined within the bounding boxes)
-            for idx in range(len(annotations['masks'])):
-                box_xtl, box_ytl, box_xbr, box_ybr = annotations['annotations'].loc[
-                    idx, ['xtl', 'ytl', 'xbr', 'ybr']].values
-                annotations['masks'][idx] = cv2.resize(annotations['masks'][idx],
-                                                       (box_xbr - box_xtl, box_ybr - box_ytl),
-                                                       interpolation=cv2.INTER_NEAREST)
+            for idx in range(len(annotations["masks"])):
+                box_xtl, box_ytl, box_xbr, box_ybr = (
+                    annotations["annotations"]
+                    .loc[idx, ["xtl", "ytl", "xbr", "ybr"]]
+                    .values
+                )
+                annotations["masks"][idx] = cv2.resize(
+                    annotations["masks"][idx],
+                    (box_xbr - box_xtl, box_ybr - box_ytl),
+                    interpolation=cv2.INTER_NEAREST,
+                )
 
-        annotations['image'] = img
+        annotations["image"] = img
         # update the name of the image
-        annotations['name']: str = os.path.basename(img_path)
+        annotations["name"]: str = os.path.basename(img_path)
 
         return annotations
 
@@ -1047,29 +1334,39 @@ class CellMaskDataset:
         return None
 
     def covered_all_images_per_annotation(self, annotation_key: str):
-        uncovered_list: List[str] = [img_path for img_path in self.list_of_images_per_annotation[annotation_key] if
-                                     img_path not in self.list_of_images_covered_per_annotation[annotation_key]]
+        uncovered_list: List[str] = [
+            img_path
+            for img_path in self.list_of_images_per_annotation[annotation_key]
+            if img_path
+            not in self.list_of_images_covered_per_annotation[annotation_key]
+        ]
         if len(uncovered_list) == 0:
             return True
         return False
 
+
 def get_name(filename_with_ext: str):
     return ".".join(filename_with_ext.strip().split(".")[:-1])
 
+
 # a class to return test images/annotations for a list of folders containing test images/annotations
 class TestDataSet:
-    def __init__(self,
-                 dataset_paths: List[str],
-                 scale_factor_dict: Dict[Tuple[int, int], float],
-                 max_larger_side: int,
-                 max_smaller_side: int,
-                 class_names_to_ids_map: dict, 
-                 labels_of_interest: Union[List[str], None] = None,
-                 percentage_to_expand_bbox_boundaries: float = 0.0,
-                 min_object_diameter: float = 6.0,
-                 optical_characteristics: Dict[Tuple[int, int], Dict[str, float]] = OPTICAL_CHARACTERISTICS, 
-                 test_annotations_folder: str = TEST_ANNOTATIONS_FOLDER,
-                 test_images_folder: str = TEST_IMAGES_FOLDER) -> None:
+    def __init__(
+        self,
+        dataset_paths: List[str],
+        scale_factor_dict: Dict[Tuple[int, int], float],
+        max_larger_side: int,
+        max_smaller_side: int,
+        class_names_to_ids_map: dict,
+        labels_of_interest: Union[List[str], None] = None,
+        percentage_to_expand_bbox_boundaries: float = 0.0,
+        min_object_diameter: float = 6.0,
+        optical_characteristics: Dict[
+            Tuple[int, int], Dict[str, float]
+        ] = OPTICAL_CHARACTERISTICS,
+        test_annotations_folder: str = TEST_ANNOTATIONS_FOLDER,
+        test_images_folder: str = TEST_IMAGES_FOLDER,
+    ) -> None:
         """
         Args:
             dataset_paths (List[str]): List of dataset paths to be used for testing.
@@ -1088,23 +1385,42 @@ class TestDataSet:
         self.annotations_path: List[str] = []
         self.dataset_paths: List[str] = dataset_paths
         for test_folder in dataset_paths:
-            
-            annotations_files = os.listdir(os.path.join(test_folder, test_annotations_folder))
-            image_files =  os.listdir(os.path.join(test_folder, test_images_folder))
-            
-            annotations_files_no_ext =  [get_name(file) for file in annotations_files]
+            annotations_files = os.listdir(
+                os.path.join(test_folder, test_annotations_folder)
+            )
+            image_files = os.listdir(os.path.join(test_folder, test_images_folder))
+
+            annotations_files_no_ext = [get_name(file) for file in annotations_files]
             image_files_no_ext = [get_name(file) for file in image_files]
-            
-            annotations_files = [file for file in annotations_files if get_name(file) in image_files_no_ext]
-            image_files = [file for file in image_files if get_name(file) in annotations_files_no_ext]
 
-            if len(annotations_files) != len(annotations_files_no_ext) or len(image_files) != len(image_files_no_ext):
-                print(f"[WARN] Found some unmatched images and anotations for dataset {test_folder}")
+            annotations_files = [
+                file
+                for file in annotations_files
+                if get_name(file) in image_files_no_ext
+            ]
+            image_files = [
+                file
+                for file in image_files
+                if get_name(file) in annotations_files_no_ext
+            ]
 
-            self.annotations_path += [os.path.join(test_folder, test_annotations_folder, file) for file in annotations_files]
+            if len(annotations_files) != len(annotations_files_no_ext) or len(
+                image_files
+            ) != len(image_files_no_ext):
+                print(
+                    f"[WARN] Found some unmatched images and anotations for dataset {test_folder}"
+                )
+
+            self.annotations_path += [
+                os.path.join(test_folder, test_annotations_folder, file)
+                for file in annotations_files
+            ]
             # make the two lists in the same order, here we assume the image extensions are always '.jpg'
-            self.images_path += [os.path.join(test_folder, test_images_folder, get_name(file) + '.jpg') for file in annotations_files]
-        
+            self.images_path += [
+                os.path.join(test_folder, test_images_folder, get_name(file) + ".jpg")
+                for file in annotations_files
+            ]
+
         self.labels_of_interest = labels_of_interest
         # in order to reduce the memory required for the masks (for instance segmentation models)
         # the image and the annotations can be downsized by the passed scale_factor_dict
@@ -1124,37 +1440,42 @@ class TestDataSet:
         # diameter should be converted to a number of pixels based on magnification and sensor pixel size
         self.min_object_diameter = min_object_diameter
         # the optical characteristics of the device (used to convert the above min_object_diameter from um to pixels)
-        self.optical_characteristics = optical_characteristics      
+        self.optical_characteristics = optical_characteristics
 
     def __getitem__(self, idx: int):
         # load images and masks
         annotation_path: str = self.annotations_path[idx]
         img_path: str = self.images_path[idx]
 
-        if annotation_path[-4:] == 'json':
+        if annotation_path[-4:] == "json":
             # parse the annotations file, this is the first time an image/annotation pair is called
-            annotations = parse_json_annotations(json_filename=annotation_path,
-                                                 labels_of_interest=self.labels_of_interest,
-                                                 download_image=False,
-                                                 percentage_to_expand_bbox_boundaries=self.percentage_to_expand_bbox_boundaries,
-                                                 min_object_diameter=self.min_object_diameter,
-                                                 optical_characteristics=self.optical_characteristics,
-                                                 return_masks_in_coco_rle_format=False)
+            annotations = parse_json_annotations(
+                json_filename=annotation_path,
+                labels_of_interest=self.labels_of_interest,
+                download_image=False,
+                percentage_to_expand_bbox_boundaries=self.percentage_to_expand_bbox_boundaries,
+                min_object_diameter=self.min_object_diameter,
+                optical_characteristics=self.optical_characteristics,
+                return_masks_in_coco_rle_format=False,
+            )
             if self.class_names_to_ids_map is not None:
-                annotations['annotations']['label'] = annotations['annotations']['label'].map(self.class_names_to_ids_map)
-        elif annotation_path[-3:] == 'npy':
+                annotations["annotations"]["label"] = annotations["annotations"][
+                    "label"
+                ].map(self.class_names_to_ids_map)
+        elif annotation_path[-3:] == "npy":
             # annotations in .npy format
             # note: annotations['annotations']['label'] is already int and no need to convert to integers
             annots = np.load(annotation_path, allow_pickle=True)
-            annotations = {"name": os.path.basename(img_path), 
-                           "annotations": annots.item().get("annotations"), 
-                           "masks": annots.item().get("masks")}
-            
+            annotations = {
+                "name": os.path.basename(img_path),
+                "annotations": annots.item().get("annotations"),
+                "masks": annots.item().get("masks"),
+            }
 
         # img = cv2.imread(img_path, cv2.IMREAD_UNCHANGED)
         # use Image.open to read overlaid images in RGB format
         img = np.array(Image.open(img_path))
-        
+
         image_height, image_width = img.shape[:2]
         # scale factor
         if (image_width, image_height) in self.scale_factor_dict:
@@ -1162,79 +1483,113 @@ class TestDataSet:
         else:
             scale_factor: float = 1.0
 
-        larger_side: int = max(int(image_width / scale_factor), int(image_height / scale_factor))
-        smaller_side: int = min(int(image_width / scale_factor), int(image_height / scale_factor))
+        larger_side: int = max(
+            int(image_width / scale_factor), int(image_height / scale_factor)
+        )
+        smaller_side: int = min(
+            int(image_width / scale_factor), int(image_height / scale_factor)
+        )
 
         if larger_side > self.max_larger_side or smaller_side > self.max_smaller_side:
-            scale_factor *= max(float(larger_side) / self.max_larger_side, float(smaller_side) / self.max_smaller_side)
+            scale_factor *= max(
+                float(larger_side) / self.max_larger_side,
+                float(smaller_side) / self.max_smaller_side,
+            )
 
         if scale_factor != 1:
             # for decimating an image, cv2.INTER_AREA is the preferred method (scale_factor is always > 1)
-            img = cv2.resize(img, (int(image_width / scale_factor), int(image_height / scale_factor)),
-                             interpolation=cv2.INTER_AREA)
+            img = cv2.resize(
+                img,
+                (int(image_width / scale_factor), int(image_height / scale_factor)),
+                interpolation=cv2.INTER_AREA,
+            )
             # update all the masks and annotations
-            annotations['annotations'][['xtl', 'ytl', 'xbr', 'ybr']] = annotations['annotations'][
-                ['xtl', 'ytl', 'xbr', 'ybr']].div(scale_factor).astype(int)
+            annotations["annotations"][["xtl", "ytl", "xbr", "ybr"]] = (
+                annotations["annotations"][["xtl", "ytl", "xbr", "ybr"]]
+                .div(scale_factor)
+                .astype(int)
+            )
 
             # make sure no box width/height becomes zero after the resize
             # only keep boxes with positive width and height
-            annotations['annotations'] = annotations['annotations'][
-                (annotations['annotations']['ybr'] - annotations['annotations']['ytl'] > 0) &
-                (annotations['annotations']['xbr'] - annotations['annotations']['xtl'] > 0)]
+            annotations["annotations"] = annotations["annotations"][
+                (
+                    annotations["annotations"]["ybr"]
+                    - annotations["annotations"]["ytl"]
+                    > 0
+                )
+                & (
+                    annotations["annotations"]["xbr"]
+                    - annotations["annotations"]["xtl"]
+                    > 0
+                )
+            ]
 
             # keep the corresponding masks after resizing
-            annotations['masks'] = [annotations['masks'][i] for i in annotations['annotations'].index]
+            annotations["masks"] = [
+                annotations["masks"][i] for i in annotations["annotations"].index
+            ]
             # reset the index
-            annotations['annotations'].reset_index(inplace=True, drop=True)
+            annotations["annotations"].reset_index(inplace=True, drop=True)
 
             # now resize the masks (note that they are defined within the bounding boxes)
-            for idx in range(len(annotations['masks'])):
-                box_xtl, box_ytl, box_xbr, box_ybr = annotations['annotations'].loc[
-                    idx, ['xtl', 'ytl', 'xbr', 'ybr']].values
-                annotations['masks'][idx] = cv2.resize(annotations['masks'][idx],
-                                                       (box_xbr - box_xtl, box_ybr - box_ytl),
-                                                       interpolation=cv2.INTER_NEAREST)
+            for idx in range(len(annotations["masks"])):
+                box_xtl, box_ytl, box_xbr, box_ybr = (
+                    annotations["annotations"]
+                    .loc[idx, ["xtl", "ytl", "xbr", "ybr"]]
+                    .values
+                )
+                annotations["masks"][idx] = cv2.resize(
+                    annotations["masks"][idx],
+                    (box_xbr - box_xtl, box_ybr - box_ytl),
+                    interpolation=cv2.INTER_NEAREST,
+                )
 
-        annotations['image'] = img
+        annotations["image"] = img
         # update the name of the image
-        annotations['name']: str = os.path.basename(img_path)
+        annotations["name"]: str = os.path.basename(img_path)
 
         return annotations
 
     def __len__(self):
         return len(self.annotations_path)
 
+
 # a dataset classe to "parse" the masks and extract the bounding boxes from annotations
 # this function combines annotations provided in multiple files (assuming each annotation file set
 # covers a different set of classes)
 class MaskDatasetFromMultiAnnotations:
-    def __init__(self,
-                 images_path: str,
-                 annotations_paths: List[str],
-                 common_names_to_use: List[str],
-                 annotation_files_exts: List[str], 
-                 labels_of_interest: Union[List[str], None] = None,
-                 percentage_to_expand_bbox_boundaries: float = 0.2,
-                 color_depth: int = 12,
-                 min_object_diameter: float = 0.0,
-                 optical_characteristics: Dict[Tuple[int, int], Dict[str, float]] = OPTICAL_CHARACTERISTICS,
-                 scale_factor_dict: Dict[Tuple[int, int], float] = {},
-                 max_larger_side: int = 4512,
-                 max_smaller_side: int = 4512,
-                 normalize: bool = False,
-                 class_names_to_ids_map: dict = DEFAULT_CLASS_NAMES_TO_IDS_MAP) -> None:
+    def __init__(
+        self,
+        images_path: str,
+        annotations_paths: List[str],
+        common_names_to_use: List[str],
+        annotation_files_exts: List[str],
+        labels_of_interest: Union[List[str], None] = None,
+        percentage_to_expand_bbox_boundaries: float = 0.2,
+        color_depth: int = 12,
+        min_object_diameter: float = 0.0,
+        optical_characteristics: Dict[
+            Tuple[int, int], Dict[str, float]
+        ] = OPTICAL_CHARACTERISTICS,
+        scale_factor_dict: Dict[Tuple[int, int], float] = {},
+        max_larger_side: int = 4512,
+        max_smaller_side: int = 4512,
+        normalize: bool = False,
+        class_names_to_ids_map: dict = DEFAULT_CLASS_NAMES_TO_IDS_MAP,
+    ) -> None:
         """_summary_
 
         Args:
             images_path (str): Path to images.
-            annotations_paths (List[str]): Path to multiple annotations folders. Each file should follow 
+            annotations_paths (List[str]): Path to multiple annotations folders. Each file should follow
                 the following convention: common_name + '_' + annotation_specific_ext + '.json', where
-                common_name should be the same in the image name (common_name + '.jpg') and all different 
+                common_name should be the same in the image name (common_name + '.jpg') and all different
                 annotations files of that image,  annotation_specific_ext should differentiate the filenames
                 (e.g., 'cyto', 'nucl'). The list of annotation_specific_ext should be passed as well.
-            common_names_to_use (List[str]): List of train/test annotations files without extension and 
+            common_names_to_use (List[str]): List of train/test annotations files without extension and
                 without the added extention to the filename (see annotation_files_exts) to use.
-            annotation_files_exts (List[str]): List of annotation_specific_ext values (in the same oder 
+            annotation_files_exts (List[str]): List of annotation_specific_ext values (in the same oder
                 provided in annotations_paths).
             labels_of_interest (Union[List[str], None], optional): _description_. Defaults to None.
             percentage_to_expand_bbox_boundaries (float, optional): _description_. Defaults to 0.2.
@@ -1251,20 +1606,24 @@ class MaskDatasetFromMultiAnnotations:
         self.images_path = images_path
         self.annotations_paths = annotations_paths
         if len(annotations_paths) != len(annotation_files_exts):
-            print("[ERROR]: Args annotations_paths and annotation_files_exts should have the same length!")
+            print(
+                "[ERROR]: Args annotations_paths and annotation_files_exts should have the same length!"
+            )
             print("[ERROR]: Class was not instantiated")
-            return 
-    
+            return
+
         # annotations contain the list of train or test files without extension.
         # the assumption is the image and its multiple mask/label annotation use the same common
-        # name; each annotation file name should follow the following convention: 
-        # common_name + '_' + annotation_specific_ext + '.json', where common_name should be the 
-        # same in the image name (common_name + '.jpg') and all different annotations files of that 
+        # name; each annotation file name should follow the following convention:
+        # common_name + '_' + annotation_specific_ext + '.json', where common_name should be the
+        # same in the image name (common_name + '.jpg') and all different annotations files of that
         # image,  annotation_specific_ext should differentiate the filenames
         # (e.g., 'cyto', 'nucl'). The list of annotation_specific_ext should be passed as well.
-        # the images should already be downloaded in the images_path, 
-        
-        self.annotations: Dict[str, List[str]] = {key: [] for key in annotation_files_exts}
+        # the images should already be downloaded in the images_path,
+
+        self.annotations: Dict[str, List[str]] = {
+            key: [] for key in annotation_files_exts
+        }
         self.images_names: List[str] = []
         self.common_names: List[str] = []
         for annotation_file in common_names_to_use:
@@ -1272,27 +1631,28 @@ class MaskDatasetFromMultiAnnotations:
             if img_full_name is None:
                 # image could not be found
                 continue
-            
+
             found_all_annotation_files = True
             for i, annotation_specific_ext in enumerate(annotation_files_exts):
-            
-                annotation_path: str = os.path.join(self.annotations_paths[i], 
-                                                    f"{annotation_file + '_' + annotation_specific_ext}.json")
+                annotation_path: str = os.path.join(
+                    self.annotations_paths[i],
+                    f"{annotation_file + '_' + annotation_specific_ext}.json",
+                )
                 if not os.path.exists(annotation_path):
                     found_all_annotation_files = False
                     break
-            
+
             if found_all_annotation_files:
                 # we have found the image and all the annotation files
                 self.images_names.append(img_full_name)
                 self.common_names.append(annotation_file)
                 for i, annotation_specific_ext in enumerate(annotation_files_exts):
-            
-                    annotation_path: str = os.path.join(self.annotations_paths[i], 
-                                                        f"{annotation_file + '_' + annotation_specific_ext}.json")
+                    annotation_path: str = os.path.join(
+                        self.annotations_paths[i],
+                        f"{annotation_file + '_' + annotation_specific_ext}.json",
+                    )
                     self.annotations[annotation_specific_ext].append(annotation_path)
-        
-        
+
         self.labels_of_interest = labels_of_interest
         # in order to reduce the memory required for the masks (for instance segmentation models)
         # the image and the annotations can be downsized by the passed scale_factor_dict
@@ -1308,7 +1668,7 @@ class MaskDatasetFromMultiAnnotations:
         # conversion to get values in [0, 1]
         # this is 2 ^ color_depth - 1, where color_depth is the number of bits
         # use to represent the intensities for each channel
-        self.channel_scale = 2 ** color_depth - 1
+        self.channel_scale = 2**color_depth - 1
         self.normalize = normalize
         self.class_names_to_ids_map = class_names_to_ids_map
         self.percentage_to_expand_bbox_boundaries = percentage_to_expand_bbox_boundaries
@@ -1322,43 +1682,55 @@ class MaskDatasetFromMultiAnnotations:
 
     def __getitem__(self, idx: int):
         # load images and masks
-        
+
         img_path = self.images_names[idx]
         img = np.array(Image.open(img_path))
-        
+
         # parse the annotations file
-        annotations_df: pd.DataFrame = pd.DataFrame(columns=['xtl', 'ytl', 'xbr', 'ybr', 'label'])
+        annotations_df: pd.DataFrame = pd.DataFrame(
+            columns=["xtl", "ytl", "xbr", "ybr", "label"]
+        )
         masks: List[np.ndarray] = []
         for annotation_specific_ext in self.annotations.keys():
             annotation_path: str = self.annotations[annotation_specific_ext][idx]
-            annotations = parse_json_annotations(json_filename=annotation_path,
-                                                 labels_of_interest=self.labels_of_interest,
-                                                 download_image=False,
-                                                 percentage_to_expand_bbox_boundaries=self.percentage_to_expand_bbox_boundaries,
-                                                 min_object_diameter=self.min_object_diameter,
-                                                 optical_characteristics=self.optical_characteristics,
-                                                 return_masks_in_coco_rle_format=False)
-            
-            annotations_df = pd.concat([annotations_df, annotations['annotations']])
-            masks += annotations['masks']
-        
-        # Note that the name in annotations['name'] is taken from the annotation files, since we are combining 
+            annotations = parse_json_annotations(
+                json_filename=annotation_path,
+                labels_of_interest=self.labels_of_interest,
+                download_image=False,
+                percentage_to_expand_bbox_boundaries=self.percentage_to_expand_bbox_boundaries,
+                min_object_diameter=self.min_object_diameter,
+                optical_characteristics=self.optical_characteristics,
+                return_masks_in_coco_rle_format=False,
+            )
+
+            annotations_df = pd.concat([annotations_df, annotations["annotations"]])
+            masks += annotations["masks"]
+
+        # Note that the name in annotations['name'] is taken from the annotation files, since we are combining
         # the annotations here, the name is referred to the FL image used in annotations and is not consistent
         # with the image name here, so use the image name directly
-        annotations = {'name': self.common_names[idx] + '.jpg', 'annotations': annotations_df.reset_index(drop=True), 'masks': masks}
+        annotations = {
+            "name": self.common_names[idx] + ".jpg",
+            "annotations": annotations_df.reset_index(drop=True),
+            "masks": masks,
+        }
         # map the class names included in the annotations DataFrame to class IDs if a
         # mapping is passed
         # Note that class_names_to_ids_map should include all the class names used in the annotations
         # as the keys
         if self.class_names_to_ids_map is not None:
-            annotations['annotations']['label'] = annotations['annotations']['label'].map(self.class_names_to_ids_map)
+            annotations["annotations"]["label"] = annotations["annotations"][
+                "label"
+            ].map(self.class_names_to_ids_map)
 
         # convert the returned np.unit32 image to float with values between 0, 1
         if self.normalize:
             # if this flag is set, normalize the image such the the minimum intensity
             # is mapped to zero, and the maximum is mapped to one
             # convert the image to a numpy array
-            img = cv2.normalize(img, img, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX).astype(np.uint8)
+            img = cv2.normalize(
+                img, img, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX
+            ).astype(np.uint8)
         else:
             # the intensity of the images is color_deptj bits, so we need to divide by 2^color_depth - 1
             img = (255 * img.astype(float) / self.channel_scale).astype(np.uint8)
@@ -1370,42 +1742,69 @@ class MaskDatasetFromMultiAnnotations:
         else:
             scale_factor: float = 1.0
 
-        larger_side: int = max(int(image_width / scale_factor), int(image_height / scale_factor))
-        smaller_side: int = min(int(image_width / scale_factor), int(image_height / scale_factor))
+        larger_side: int = max(
+            int(image_width / scale_factor), int(image_height / scale_factor)
+        )
+        smaller_side: int = min(
+            int(image_width / scale_factor), int(image_height / scale_factor)
+        )
 
         if larger_side > self.max_larger_side or smaller_side > self.max_smaller_side:
-            scale_factor *= max(float(larger_side) / self.max_larger_side, float(smaller_side) / self.max_smaller_side)
-        
-        
-        
+            scale_factor *= max(
+                float(larger_side) / self.max_larger_side,
+                float(smaller_side) / self.max_smaller_side,
+            )
+
         if scale_factor != 1:
             # for decimating an image, cv2.INTER_AREA is the preferred method (scale_factor is always > 1)
-            img = cv2.resize(img, (int(image_width / scale_factor), int(image_height / scale_factor)),
-                             interpolation=cv2.INTER_AREA)
+            img = cv2.resize(
+                img,
+                (int(image_width / scale_factor), int(image_height / scale_factor)),
+                interpolation=cv2.INTER_AREA,
+            )
             # update all the masks and annotations
-            annotations['annotations'][['xtl', 'ytl', 'xbr', 'ybr']] = annotations['annotations'][
-                ['xtl', 'ytl', 'xbr', 'ybr']].div(scale_factor).astype(int)
+            annotations["annotations"][["xtl", "ytl", "xbr", "ybr"]] = (
+                annotations["annotations"][["xtl", "ytl", "xbr", "ybr"]]
+                .div(scale_factor)
+                .astype(int)
+            )
 
             # make sure no box width/height becomes zero after the resize
             # only keep boxes with positive width and height
-            annotations['annotations'] = annotations['annotations'][
-                (annotations['annotations']['ybr'] - annotations['annotations']['ytl'] > 0) &
-                (annotations['annotations']['xbr'] - annotations['annotations']['xtl'] > 0)]
+            annotations["annotations"] = annotations["annotations"][
+                (
+                    annotations["annotations"]["ybr"]
+                    - annotations["annotations"]["ytl"]
+                    > 0
+                )
+                & (
+                    annotations["annotations"]["xbr"]
+                    - annotations["annotations"]["xtl"]
+                    > 0
+                )
+            ]
 
             # keep the corresponding masks after resizing
-            annotations['masks'] = [annotations['masks'][i] for i in annotations['annotations'].index]
+            annotations["masks"] = [
+                annotations["masks"][i] for i in annotations["annotations"].index
+            ]
             # reset the index
-            annotations['annotations'].reset_index(inplace=True, drop=True)
+            annotations["annotations"].reset_index(inplace=True, drop=True)
 
             # now resize the masks (note that they are defined within the bounding boxes)
-            for idx in range(len(annotations['masks'])):
-                box_xtl, box_ytl, box_xbr, box_ybr = annotations['annotations'].loc[
-                    idx, ['xtl', 'ytl', 'xbr', 'ybr']].values
-                annotations['masks'][idx] = cv2.resize(annotations['masks'][idx],
-                                                       (box_xbr - box_xtl, box_ybr - box_ytl),
-                                                       interpolation=cv2.INTER_NEAREST)
+            for idx in range(len(annotations["masks"])):
+                box_xtl, box_ytl, box_xbr, box_ybr = (
+                    annotations["annotations"]
+                    .loc[idx, ["xtl", "ytl", "xbr", "ybr"]]
+                    .values
+                )
+                annotations["masks"][idx] = cv2.resize(
+                    annotations["masks"][idx],
+                    (box_xbr - box_xtl, box_ybr - box_ytl),
+                    interpolation=cv2.INTER_NEAREST,
+                )
 
-        annotations['image'] = img
+        annotations["image"] = img
 
         return annotations
 
@@ -1424,16 +1823,22 @@ class MaskDatasetFromMultiAnnotations:
             return png_file_path
 
         return None
-# helper functions to crop large annotated images into smaller ones 
+
+
+# helper functions to crop large annotated images into smaller ones
 # for training
 
 
-def optimize_crop(annotations_df: pd.DataFrame,
-                  crop_coords: Union[List[int], Tuple[int]],
-                  dx: int, dy: int,
-                  w: int, h: int,
-                  labels_of_interest: Union[List[int], List[str]],
-                  masks: Union[None, List[np.ndarray]] = None):
+def optimize_crop(
+    annotations_df: pd.DataFrame,
+    crop_coords: Union[List[int], Tuple[int]],
+    dx: int,
+    dy: int,
+    w: int,
+    h: int,
+    labels_of_interest: Union[List[int], List[str]],
+    masks: Union[None, List[np.ndarray]] = None,
+):
     """
     This function finds the "best" center for the crop with corners (x1, y1),
     (x2, y2) within the specified range +/-dx and +/-dy such that the bounding boxes
@@ -1482,20 +1887,28 @@ def optimize_crop(annotations_df: pd.DataFrame,
     df = annotations_df.copy()
 
     # transform the bounding boxes
-    df[['xtl', 'xbr']] = df[['xtl', 'xbr']] - xc1
-    df[['ytl', 'ybr']] = df[['ytl', 'ybr']] - yc1
-    
+    df[["xtl", "xbr"]] = df[["xtl", "xbr"]] - xc1
+    df[["ytl", "ybr"]] = df[["ytl", "ybr"]] - yc1
+
     crop_width: int = xc2 - xc1 + 1
     crop_height: int = yc2 - yc1 + 1
 
     # remove the bounding boxes that are totally outside the extended cropped image
     # keep the ones that have some non-zero overlap
 
-    df = df[df.apply(lambda row: True if
-    max(0, min(row['xbr'], crop_width) - max(row['xtl'], 0)) * \
-    max(0, min(row['ybr'], crop_height) - max(row['ytl'], 0)) > 0 and \
-    row['label'] in labels_of_interest
-    else False, axis=1)]
+    df = df[
+        df.apply(
+            lambda row: (
+                True
+                if max(0, min(row["xbr"], crop_width) - max(row["xtl"], 0))
+                * max(0, min(row["ybr"], crop_height) - max(row["ytl"], 0))
+                > 0
+                and row["label"] in labels_of_interest
+                else False
+            ),
+            axis=1,
+        )
+    ]
 
     # save the indices of the retained rows (needed for filtering the masks if passes)
     idxs_of_retained_objects: np.ndarray = df.index.values
@@ -1513,16 +1926,18 @@ def optimize_crop(annotations_df: pd.DataFrame,
     center_score: float = 1.0
 
     for _, row in df.iterrows():
-        xtl: int = int(row['xtl'])
-        ytl: int = int(row['ytl'])
-        xbr: int = int(row['xbr'])
-        ybr: int = int(row['ybr'])
+        xtl: int = int(row["xtl"])
+        ytl: int = int(row["ytl"])
+        xbr: int = int(row["xbr"])
+        ybr: int = int(row["ybr"])
 
-        if row['label'] not in labels_of_interest:
+        if row["label"] not in labels_of_interest:
             continue
 
         # skip skinny boxes
-        if (xbr - xtl) < min_bbox_size_to_consider or (ybr - ytl) < min_bbox_size_to_consider:
+        if (xbr - xtl) < min_bbox_size_to_consider or (
+            ybr - ytl
+        ) < min_bbox_size_to_consider:
             continue
 
         # stepwise weight for the box in x dimension, box_score[0] is the weight at x = xtl and
@@ -1531,9 +1946,13 @@ def optimize_crop(annotations_df: pd.DataFrame,
         box_edge_portion_1: int = max(1, int((xbr - xtl) / 10))
         box_edge_portion_2: int = int((xbr - xtl) / 4) - box_edge_portion_1
         box_edge_portion: int = box_edge_portion_1 + box_edge_portion_2
-        box_score: List[float] = [0.0] * box_edge_portion_1 + [edge_score] * box_edge_portion_2 + \
-                                 [center_score] * (xbr - xtl - 2 * box_edge_portion) + \
-                                 [edge_score] * box_edge_portion_2 + [0.0] * box_edge_portion_1
+        box_score: List[float] = (
+            [0.0] * box_edge_portion_1
+            + [edge_score] * box_edge_portion_2
+            + [center_score] * (xbr - xtl - 2 * box_edge_portion)
+            + [edge_score] * box_edge_portion_2
+            + [0.0] * box_edge_portion_1
+        )
 
         """
         # triangular weight for the box in x dimension, box_score[0] is the weight at x = xtl and 
@@ -1559,9 +1978,13 @@ def optimize_crop(annotations_df: pd.DataFrame,
         box_edge_portion_1: int = max(1, int((ybr - ytl) / 10))
         box_edge_portion_2: int = int((ybr - ytl) / 4) - box_edge_portion_1
         box_edge_portion: int = box_edge_portion_1 + box_edge_portion_2
-        box_score: List[float] = [0.0] * box_edge_portion_1 + [edge_score] * box_edge_portion_2 + \
-                                 [center_score] * (ybr - ytl - 2 * box_edge_portion) + \
-                                 [edge_score] * box_edge_portion_2 + [0.0] * box_edge_portion_1
+        box_score: List[float] = (
+            [0.0] * box_edge_portion_1
+            + [edge_score] * box_edge_portion_2
+            + [center_score] * (ybr - ytl - 2 * box_edge_portion)
+            + [edge_score] * box_edge_portion_2
+            + [0.0] * box_edge_portion_1
+        )
 
         """
         # triangular weight for the box in y dimension, box_score[0] is the weight at y = ytl and 
@@ -1588,13 +2011,15 @@ def optimize_crop(annotations_df: pd.DataFrame,
     if masks is not None:
         for idx in idxs_of_retained_objects:
             this_mask: np.ndarray = np.zeros((crop_height, crop_width), np.uint8)
-            xtl, ytl, xbr, ybr = df.loc[idx, ['xtl', 'ytl', 'xbr', 'ybr']].values
+            xtl, ytl, xbr, ybr = df.loc[idx, ["xtl", "ytl", "xbr", "ybr"]].values
             # confine the mask within the crop
             xtl_a = max(0, xtl)
             ytl_a = max(0, ytl)
             xbr_a = min(crop_width, xbr)
             ybr_a = min(crop_height, ybr)
-            this_mask[ytl_a:ybr_a, xtl_a:xbr_a] = masks[idx][ytl_a - ytl: ybr_a - ytl, xtl_a - xtl: xbr_a - xtl]
+            this_mask[ytl_a:ybr_a, xtl_a:xbr_a] = masks[idx][
+                ytl_a - ytl : ybr_a - ytl, xtl_a - xtl : xbr_a - xtl
+            ]
             objects_mask = cv2.bitwise_or(objects_mask, this_mask)
 
     """
@@ -1626,139 +2051,173 @@ def optimize_crop(annotations_df: pd.DataFrame,
 
     x_start_candidates: np.ndarray = np.array([x1])
     if len(start_cost_x) > 0:
-        x_start_candidates = np.where(start_cost_x == np.min(start_cost_x))[0] + x1 - left_delta
+        x_start_candidates = (
+            np.where(start_cost_x == np.min(start_cost_x))[0] + x1 - left_delta
+        )
 
     y_start_candidates: np.ndarray = np.array([y1])
     if len(start_cost_y) > 0:
-        y_start_candidates = np.where(start_cost_y == np.min(start_cost_y))[0] + y1 - top_delta
+        y_start_candidates = (
+            np.where(start_cost_y == np.min(start_cost_y))[0] + y1 - top_delta
+        )
 
     # is mask is available, and there are multiple options for the crops, use the one with minimum length
     # for crossing the object masks
     x1_adjusted: int = x_start_candidates[0]
     if masks is not None and len(x_start_candidates) > 1:
         x1_adjusted = x_start_candidates[
-            np.argmin(np.sum(objects_mask[:, x_start_candidates - x1 + left_delta], axis=0) +
-                      np.sum(objects_mask[:, x_start_candidates - x1 + left_delta + x2 - x1], axis=0))]
+            np.argmin(
+                np.sum(objects_mask[:, x_start_candidates - x1 + left_delta], axis=0)
+                + np.sum(
+                    objects_mask[:, x_start_candidates - x1 + left_delta + x2 - x1],
+                    axis=0,
+                )
+            )
+        ]
 
     y1_adjusted: int = y_start_candidates[0]
     if masks is not None and len(y_start_candidates) > 1:
         y1_adjusted = y_start_candidates[
-            np.argmin(np.sum(objects_mask[y_start_candidates - y1 + top_delta, :], axis=1) +
-                      np.sum(objects_mask[y_start_candidates - y1 + top_delta + y2 - y1, :], axis=1))]
+            np.argmin(
+                np.sum(objects_mask[y_start_candidates - y1 + top_delta, :], axis=1)
+                + np.sum(
+                    objects_mask[y_start_candidates - y1 + top_delta + y2 - y1, :],
+                    axis=1,
+                )
+            )
+        ]
 
     return x1_adjusted, y1_adjusted, x1_adjusted + x2 - x1, y1_adjusted + y2 - y1
 
 
 # crop function
-def crop_and_block(sample, crop_coords, labels_of_interest=None, 
-                   block_label='block', keep_area_threshold=0.9):
+def crop_and_block(
+    sample,
+    crop_coords,
+    labels_of_interest=None,
+    block_label="block",
+    keep_area_threshold=0.9,
+):
     """
-    Crop the image in a sample for a given crop coordinates and black out 
+    Crop the image in a sample for a given crop coordinates and black out
     the partial bounding boxes the lies on the crop boundary.
 
     Args:
         sample (dictionary): Input data sample to be cropped. The dictionary
-            should include "name", "image", "annotations" and optionally "masks" keys 
-            for passing the image name, the image in np.uint8 1/3-channel numpy array, 
-            the bounding boxes pandas DataFrame (with columns 'xtl', 'ytl', 'xbr', 'ybr') 
-            and optionally the list of masks for annotated each object (each as a 
+            should include "name", "image", "annotations" and optionally "masks" keys
+            for passing the image name, the image in np.uint8 1/3-channel numpy array,
+            the bounding boxes pandas DataFrame (with columns 'xtl', 'ytl', 'xbr', 'ybr')
+            and optionally the list of masks for annotated each object (each as a
             numpy array of the same size the the bounding box specified in "annotations").
-        crop_coords (4-tuple or 4-element list of int): xtl, ytl, xbr, and ybr 
+        crop_coords (4-tuple or 4-element list of int): xtl, ytl, xbr, and ybr
             box coordinates for cropping.
-        labels_of_interest (list of integers or strings or None): List of classnames or 
-            class IDs of interest depending on the values reporeted in annotations_df['label'] 
-            (names or IDs). Any annotated object outside this list will be removed from the 
-            annotations. If None passed, all the object classed will be included. 
-        block_label (integer or string): String class name or integer ID used for blocking 
-            areas (hiding during training). This should be the same as the ID used in the 
-            annotations (if used). 
-        keep_area_threshold (float): The threshold on the ratio of the area of the 
-            bounding boxes that lie inside the cropped image to keep. Bounding boxes 
-            with at least keep_area_threshold of their area inside the cropped image 
-            will be kept. Otherwise, all the  bounding boxes crossing the boundaries 
-            of the cropped image will be removed. 'block' labels are kept to be 
-            blacked out in the train/test images later. 
+        labels_of_interest (list of integers or strings or None): List of classnames or
+            class IDs of interest depending on the values reporeted in annotations_df['label']
+            (names or IDs). Any annotated object outside this list will be removed from the
+            annotations. If None passed, all the object classed will be included.
+        block_label (integer or string): String class name or integer ID used for blocking
+            areas (hiding during training). This should be the same as the ID used in the
+            annotations (if used).
+        keep_area_threshold (float): The threshold on the ratio of the area of the
+            bounding boxes that lie inside the cropped image to keep. Bounding boxes
+            with at least keep_area_threshold of their area inside the cropped image
+            will be kept. Otherwise, all the  bounding boxes crossing the boundaries
+            of the cropped image will be removed. 'block' labels are kept to be
+            blacked out in the train/test images later.
     """
-    
+
     if keep_area_threshold < 0.33:
         keep_area_threshold = 0.33
-    
+
     x1, y1, x2, y2 = crop_coords
     # make a copy of the input to make sure it is not modified
-    name, image, df = sample['name'], sample['image'].copy(), sample['annotations'].copy()
-    
+    name, image, df = (
+        sample["name"],
+        sample["image"].copy(),
+        sample["annotations"].copy(),
+    )
+
     h, w = image.shape[:2]
-    
+
     xc1 = int(max(x1, 0))
     yc1 = int(max(y1, 0))
     xc2 = int(min(x2, w))
     yc2 = int(min(y2, h))
-    
+
     if xc2 <= xc1 or yc2 <= yc1:
         # incorrect input dimensions
         return None
-    
+
     # sizes of cropped image
     crop_width = xc2 - xc1
     crop_height = yc2 - yc1
-    
+
     # remove the bounding boxes that are totally outside the cropped image
     # keep the ones that have some non-zero overlap
-        
-    df = df[df.apply(lambda row: True if 
-                     max(0, min(row['xbr'] - xc1, crop_width) - max(row['xtl'] - xc1, 0)) * \
-                     max(0, min(row['ybr'] - yc1, crop_height) - max(row['ytl'] - yc1, 0)) > 0\
-                     else False, axis = 1)]
-    
-    if 'masks' in sample:
-    
+
+    df = df[
+        df.apply(
+            lambda row: (
+                True
+                if max(0, min(row["xbr"] - xc1, crop_width) - max(row["xtl"] - xc1, 0))
+                * max(0, min(row["ybr"] - yc1, crop_height) - max(row["ytl"] - yc1, 0))
+                > 0
+                else False
+            ),
+            axis=1,
+        )
+    ]
+
+    if "masks" in sample:
         # identify the masks that would lie inside the newly cropped
-        # image by more than keep_area_threshold; these masks and boxes are kept 
-    
+        # image by more than keep_area_threshold; these masks and boxes are kept
+
         # also identify the masks that would lie inside the newly cropped
-        # image by less than keep_area_threshold and more than 30%; we are going 
-        # to black out the area of these bounding boxes (together with objects 
-        # identified with block_label in the annotations) in the image to prevent 
+        # image by less than keep_area_threshold and more than 30%; we are going
+        # to black out the area of these bounding boxes (together with objects
+        # identified with block_label in the annotations) in the image to prevent
         # the model from seeing thes partial objects
-    
+
         # for any object with overlap less than 30% with the cropped
-        # sub-image, we only remove the annotation (mask and bounding box). We allow 
-        # the model to see the content of the partial object 
-    
-     
-        # list of df indices to keep 
+        # sub-image, we only remove the annotation (mask and bounding box). We allow
+        # the model to see the content of the partial object
+
+        # list of df indices to keep
         idxs_to_keep = []
         # list of df indices to block
         idxs_to_block = []
         # list of masks to keep (should correspond to the same indices in the df to keep)
         masks = []
-        
+
         for obj_id in df.index:
-        
             # ignore the object if not in the labels_of_interest (if specified) or if it should not be blocked
-            if labels_of_interest is not None and df.loc[obj_id, 'label'] not in (labels_of_interest + [block_label]):
+            if labels_of_interest is not None and df.loc[obj_id, "label"] not in (
+                labels_of_interest + [block_label]
+            ):
                 continue
-            
+
             # find the overlapping part between the object's bounding box (where the mask is defined within)
             # and the crop
-            box_xtl, box_ytl, box_xbr, box_ybr = df.loc[obj_id, ['xtl', 'ytl', 'xbr', 'ybr']].values
+            box_xtl, box_ytl, box_xbr, box_ybr = df.loc[
+                obj_id, ["xtl", "ytl", "xbr", "ybr"]
+            ].values
             # the upper bound for xmin, ymin (the outher min) is not really needed becuase
-            # the DataFrame is already filtered to keep overlapping bounding boxes with the crop 
+            # the DataFrame is already filtered to keep overlapping bounding boxes with the crop
             # with xc1 < box_xbr and yc1 < box_ybr for df.index
-            # similarly, the lower bound of 0 for xmax, ymax (the inner max) is not needed 
+            # similarly, the lower bound of 0 for xmax, ymax (the inner max) is not needed
             # becuase the DataFrame is already filtered and box_xtl < xbr2 and box_ytl < yc2 for df.index
             xmin = min(max(0, xc1 - box_xtl), box_xbr - box_xtl)
             xmax = min(max(0, xc2 - box_xtl), box_xbr - box_xtl)
             ymin = min(max(0, yc1 - box_ytl), box_ybr - box_ytl)
             ymax = min(max(0, yc2 - box_ytl), box_ybr - box_ytl)
-            
-            cropped_mask = sample['masks'][obj_id][ymin: ymax, xmin: xmax]
-            
-            # now update the bounding boxes as the mask confined to the crop may be smaller, hence different box 
+
+            cropped_mask = sample["masks"][obj_id][ymin:ymax, xmin:xmax]
+
+            # now update the bounding boxes as the mask confined to the crop may be smaller, hence different box
             pos = np.where(cropped_mask)
             if len(pos[0]) == 0 or len(pos[1]) == 0:
                 continue
-            
+
             # Note that the configuration percentage_to_expand_bbox_boundaries might have been applied
             # to the bounding boxes of the original annotations (with respect to the mask) in parse_json_annotations
             # function
@@ -1772,7 +2231,9 @@ def crop_and_block(sample, crop_coords, labels_of_interest=None,
 
             if xmax < box_xbr - box_xtl:
                 # the right side of the bounding box crosses the crop boundary, expand by +1 as we always do by default
-                delta_x2 = min(np.max(pos[1]) + 1 + 1, cropped_mask.shape[1])  # the first +1 is included as we need to include this point
+                delta_x2 = min(
+                    np.max(pos[1]) + 1 + 1, cropped_mask.shape[1]
+                )  # the first +1 is included as we need to include this point
             else:
                 delta_x2 = cropped_mask.shape[1]
 
@@ -1784,293 +2245,370 @@ def crop_and_block(sample, crop_coords, labels_of_interest=None,
 
             if ymax < box_ybr - box_ytl:
                 # the bottom side of the bounding box crosses the crop boundary, expand by +1 as we always do by default
-                delta_y2 = min(np.max(pos[0]) + 1 + 1, cropped_mask.shape[0])  # the first +1 is included as we need to include this point
+                delta_y2 = min(
+                    np.max(pos[0]) + 1 + 1, cropped_mask.shape[0]
+                )  # the first +1 is included as we need to include this point
             else:
                 delta_y2 = cropped_mask.shape[0]
-            
+
             if delta_x1 >= delta_x2 or delta_y1 >= delta_y2:
                 continue
 
             cropped_mask_area = cropped_mask[delta_y1:delta_y2, delta_x1:delta_x2].sum()
-            mask_area = sample['masks'][obj_id].sum()
-            
-            if df.loc[obj_id, 'label'] == block_label or 0.3 * mask_area <= cropped_mask_area < keep_area_threshold * mask_area:
+            mask_area = sample["masks"][obj_id].sum()
+
+            if (
+                df.loc[obj_id, "label"] == block_label
+                or 0.3 * mask_area
+                <= cropped_mask_area
+                < keep_area_threshold * mask_area
+            ):
                 idxs_to_block.append(obj_id)
             elif cropped_mask_area >= keep_area_threshold * mask_area:
                 idxs_to_keep.append(obj_id)
                 masks.append(cropped_mask[delta_y1:delta_y2, delta_x1:delta_x2].copy())
-            
-            # update the bounding box around the mask part that lies inside the crop (even for block_label objects, 
-            # we do not want to block more than needed)    
+
+            # update the bounding box around the mask part that lies inside the crop (even for block_label objects,
+            # we do not want to block more than needed)
             new_box_xtl = box_xtl + xmin + delta_x1
             new_box_xbr = box_xtl + xmin + delta_x2
             new_box_ytl = box_ytl + ymin + delta_y1
             new_box_ybr = box_ytl + ymin + delta_y2
 
-            df.at[obj_id, 'xtl'] = new_box_xtl
-            df.at[obj_id, 'ytl'] = new_box_ytl
-            df.at[obj_id, 'xbr'] = new_box_xbr
-            df.at[obj_id, 'ybr'] = new_box_ybr
-                
-        
-        # transform the bounding boxes (needed below)
-        df[['xtl', 'xbr']] = df[['xtl', 'xbr']] - xc1
-        df[['ytl', 'ybr']] = df[['ytl', 'ybr']] - yc1   
-    else: 
-        # only bounding boxes are included in the annotations
-        # use them to identify the objects that would lie in the cropped image       
-        # transform the bounding boxes
-        df[['xtl', 'xbr']] = df[['xtl', 'xbr']] - xc1
-        df[['ytl', 'ybr']] = df[['ytl', 'ybr']] - yc1
+            df.at[obj_id, "xtl"] = new_box_xtl
+            df.at[obj_id, "ytl"] = new_box_ytl
+            df.at[obj_id, "xbr"] = new_box_xbr
+            df.at[obj_id, "ybr"] = new_box_ybr
 
-        # identify bounding boxes that should be kept, left or blocked following 
+        # transform the bounding boxes (needed below)
+        df[["xtl", "xbr"]] = df[["xtl", "xbr"]] - xc1
+        df[["ytl", "ybr"]] = df[["ytl", "ybr"]] - yc1
+    else:
+        # only bounding boxes are included in the annotations
+        # use them to identify the objects that would lie in the cropped image
+        # transform the bounding boxes
+        df[["xtl", "xbr"]] = df[["xtl", "xbr"]] - xc1
+        df[["ytl", "ybr"]] = df[["ytl", "ybr"]] - yc1
+
+        # identify bounding boxes that should be kept, left or blocked following
         # the same logic as masks
-    
+
         if labels_of_interest is None:
             # consider all objects
-            idxs_to_keep = df.apply(lambda row: True \
-                                    if (min(row['xbr'], crop_width) - max(row['xtl'], 0)) * 
-                                    (min(row['ybr'], crop_height) - max(row['ytl'], 0)) >= keep_area_threshold * 
-                                    (row['xbr'] - row['xtl']) * (row['ybr'] - row['ytl']) and 
-                                    row['label'] != block_label else False, axis=1)
-            idxs_to_block = df.apply(lambda row: True \
-                                     if ((min(row['xbr'], crop_width) - max(row['xtl'], 0)) * 
-                                         (min(row['ybr'], crop_height) - max(row['ytl'], 0)) < keep_area_threshold * 
-                                         (row['xbr'] - row['xtl']) * (row['ybr'] - row['ytl']) and 
-                                         (min(row['xbr'], crop_width) - max(row['xtl'], 0)) * 
-                                         (min(row['ybr'], crop_height) - max(row['ytl'], 0)) >= 0.3 * 
-                                         (row['xbr'] - row['xtl']) * (row['ybr'] - row['ytl'])) or
-                                     row['label'] == block_label else False, axis=1)
+            idxs_to_keep = df.apply(
+                lambda row: (
+                    True
+                    if (min(row["xbr"], crop_width) - max(row["xtl"], 0))
+                    * (min(row["ybr"], crop_height) - max(row["ytl"], 0))
+                    >= keep_area_threshold
+                    * (row["xbr"] - row["xtl"])
+                    * (row["ybr"] - row["ytl"])
+                    and row["label"] != block_label
+                    else False
+                ),
+                axis=1,
+            )
+            idxs_to_block = df.apply(
+                lambda row: (
+                    True
+                    if (
+                        (min(row["xbr"], crop_width) - max(row["xtl"], 0))
+                        * (min(row["ybr"], crop_height) - max(row["ytl"], 0))
+                        < keep_area_threshold
+                        * (row["xbr"] - row["xtl"])
+                        * (row["ybr"] - row["ytl"])
+                        and (min(row["xbr"], crop_width) - max(row["xtl"], 0))
+                        * (min(row["ybr"], crop_height) - max(row["ytl"], 0))
+                        >= 0.3 * (row["xbr"] - row["xtl"]) * (row["ybr"] - row["ytl"])
+                    )
+                    or row["label"] == block_label
+                    else False
+                ),
+                axis=1,
+            )
         else:
             # if labels_of_interest is provided, use it to only keep the ones we need to keep, IT SHOULD NOT INCLUDE block_label
-            idxs_to_keep = df.apply(lambda row: True \
-                                    if (min(row['xbr'], crop_width) - max(row['xtl'], 0)) * 
-                                    (min(row['ybr'], crop_height) - max(row['ytl'], 0)) >= keep_area_threshold * 
-                                    (row['xbr'] - row['xtl']) * (row['ybr'] - row['ytl']) and 
-                                    row['label'] in labels_of_interest else False, axis=1)
-            idxs_to_block = df.apply(lambda row: True \
-                                     if ((min(row['xbr'], crop_width) - max(row['xtl'], 0)) * 
-                                         (min(row['ybr'], crop_height) - max(row['ytl'], 0)) < keep_area_threshold * 
-                                         (row['xbr'] - row['xtl']) * (row['ybr'] - row['ytl']) and 
-                                         (min(row['xbr'], crop_width) - max(row['xtl'], 0)) * 
-                                         (min(row['ybr'], crop_height) - max(row['ytl'], 0)) >= 0.3 * 
-                                         (row['xbr'] - row['xtl']) * (row['ybr'] - row['ytl']) and 
-                                         row['label'] in labels_of_interest) or
-                                     row['label'] == block_label  else False, axis=1)
-        # convert to indices of df                             
+            idxs_to_keep = df.apply(
+                lambda row: (
+                    True
+                    if (min(row["xbr"], crop_width) - max(row["xtl"], 0))
+                    * (min(row["ybr"], crop_height) - max(row["ytl"], 0))
+                    >= keep_area_threshold
+                    * (row["xbr"] - row["xtl"])
+                    * (row["ybr"] - row["ytl"])
+                    and row["label"] in labels_of_interest
+                    else False
+                ),
+                axis=1,
+            )
+            idxs_to_block = df.apply(
+                lambda row: (
+                    True
+                    if (
+                        (min(row["xbr"], crop_width) - max(row["xtl"], 0))
+                        * (min(row["ybr"], crop_height) - max(row["ytl"], 0))
+                        < keep_area_threshold
+                        * (row["xbr"] - row["xtl"])
+                        * (row["ybr"] - row["ytl"])
+                        and (min(row["xbr"], crop_width) - max(row["xtl"], 0))
+                        * (min(row["ybr"], crop_height) - max(row["ytl"], 0))
+                        >= 0.3 * (row["xbr"] - row["xtl"]) * (row["ybr"] - row["ytl"])
+                        and row["label"] in labels_of_interest
+                    )
+                    or row["label"] == block_label
+                    else False
+                ),
+                axis=1,
+            )
+        # convert to indices of df
         idxs_to_keep = df[idxs_to_keep].index
         idxs_to_block = df[idxs_to_block].index
-    
+
     # limit the bounding boxes to image coordinates
-    df.loc[df['xtl'] < 0, 'xtl'] = 0
-    df.loc[df['ytl'] < 0, 'ytl'] = 0
-    df.loc[df['xbr'] > crop_width, 'xbr'] = crop_width
-    df.loc[df['ybr'] > crop_height, 'ybr'] = crop_height
-    
+    df.loc[df["xtl"] < 0, "xtl"] = 0
+    df.loc[df["ytl"] < 0, "ytl"] = 0
+    df.loc[df["xbr"] > crop_width, "xbr"] = crop_width
+    df.loc[df["ybr"] > crop_height, "ybr"] = crop_height
+
     # now black out the image on the boxes that should be blacked out
     crop_mask = np.ones((crop_height, crop_width), dtype=np.uint8)
-    
+
     # indicate the areas that should be blacked out from the bounding
     # boxes to be blocked
     for _, row in df.loc[idxs_to_block].iterrows():
-        crop_mask[int(row['ytl']):int(row['ybr']), int(row['xtl']):int(row['xbr'])]  = 0
-    
+        crop_mask[
+            int(row["ytl"]) : int(row["ybr"]), int(row["xtl"]) : int(row["xbr"])
+        ] = 0
+
     # then overwrite them by the annotated objects that we are going to keep
     # we do this to make sure we are not blacking out anything from the objects
-    # that are going to be used for training, and only black out objects that we 
+    # that are going to be used for training, and only black out objects that we
     # are not going to use (not annotated anymore)
     for _, row in df.loc[idxs_to_keep].iterrows():
-        crop_mask[int(row['ytl']):int(row['ybr']), int(row['xtl']):int(row['xbr'])]  = 1
-    
-    if 'masks' in sample:
+        crop_mask[
+            int(row["ytl"]) : int(row["ybr"]), int(row["xtl"]) : int(row["xbr"])
+        ] = 1
+
+    if "masks" in sample:
         for i, obj_id in enumerate(idxs_to_keep):
-            box_xtl, box_ytl, box_xbr, box_ybr = df.loc[obj_id, ['xtl', 'ytl', 'xbr', 'ybr']].values
-            masks[i] = (masks[i] * crop_mask[box_ytl:box_ybr, box_xtl:box_xbr]).astype(np.uint8)
-    
+            box_xtl, box_ytl, box_xbr, box_ybr = df.loc[
+                obj_id, ["xtl", "ytl", "xbr", "ybr"]
+            ].values
+            masks[i] = (masks[i] * crop_mask[box_ytl:box_ybr, box_xtl:box_xbr]).astype(
+                np.uint8
+            )
+
     # reset the indexes in the annotations DataFrame
     df = df.loc[idxs_to_keep].reset_index(drop=True)
-    
+
     if len(image.shape) > 2:
         # 3 channel image
         crop_mask = crop_mask[:, :, np.newaxis]
-    
-    if 'masks' in sample:
-        return  {'name': name, 'image': image[yc1: yc2, xc1: xc2] * crop_mask, 
-                 'annotations': df, 'masks': masks} 
-    
-    return  {'name': name, 'image': image[yc1: yc2, xc1: xc2] * crop_mask, 'annotations': df}
+
+    if "masks" in sample:
+        return {
+            "name": name,
+            "image": image[yc1:yc2, xc1:xc2] * crop_mask,
+            "annotations": df,
+            "masks": masks,
+        }
+
+    return {
+        "name": name,
+        "image": image[yc1:yc2, xc1:xc2] * crop_mask,
+        "annotations": df,
+    }
 
 
-def enforce_one_to_one_mapping(data_sample: dict, child_parent_map: Dict[int, int]) -> dict:
+def enforce_one_to_one_mapping(
+    data_sample: dict, child_parent_map: Dict[int, int]
+) -> dict:
     """
     A function to clean up annotations and enforce a one-to-one mapping between child-parent pairs of objects.
-    For some annotations, there is a hierarchy between objects of different classes. For example, the mask of an 
-    object from class 'nucleus' should always be inside the mask of another object of class 'cytoplasm'/'cell-adhered'. 
-    Furthermore, this mapping has to be one-to-one in certain scenarios. A 'cytoplasm'/'cell-adhered' object can only 
-    have one 'nucleus', and a 'nucleus' object should belong to only one 'cytoplasm'/'cell-adhered'. 
-    In many annotated images, different objects of class 'cytoplasm' cannot be accurately differentiated and multiple 
-    objects are combined (hence have multiple nuclei). This function is used to remove these invalid annotations by 
-    passing a set of child:parent relationships that should be enforced in 'child_parent_map' argument. 
-    
+    For some annotations, there is a hierarchy between objects of different classes. For example, the mask of an
+    object from class 'nucleus' should always be inside the mask of another object of class 'cytoplasm'/'cell-adhered'.
+    Furthermore, this mapping has to be one-to-one in certain scenarios. A 'cytoplasm'/'cell-adhered' object can only
+    have one 'nucleus', and a 'nucleus' object should belong to only one 'cytoplasm'/'cell-adhered'.
+    In many annotated images, different objects of class 'cytoplasm' cannot be accurately differentiated and multiple
+    objects are combined (hence have multiple nuclei). This function is used to remove these invalid annotations by
+    passing a set of child:parent relationships that should be enforced in 'child_parent_map' argument.
+
     Args:
-        - data_sample (dictionary): A dictionary with keys and values as 
+        - data_sample (dictionary): A dictionary with keys and values as
             'name'(str): image name,
             'image'(numpy.ndarray): H x W (Gray scale) or H x W x 3 image array in BGR format,
             'annotations' (pandas DataFrame): A DataFrame with columns 'xtl', 'ytl', 'xbr', 'ybr', 'label'.
                 The i-th row is the bounding box coordinates and the label for the i-th annotated object,
-            'masks'(list of numpy.ndarrays): masks[i] is the H x W array mask for the i-th object with value 1 for 
+            'masks'(list of numpy.ndarrays): masks[i] is the H x W array mask for the i-th object with value 1 for
                 the object.
         - child_parent_map (dictionary): A dictionary with integer keys and values specifying the one-to-one relationship
-            as between child class ID and parent class ID. 
+            as between child class ID and parent class ID.
     Returns:
-        - The filtered data_sample with invalid objects removed and blacked-out in the image.  
+        - The filtered data_sample with invalid objects removed and blacked-out in the image.
     """
-    
+
     # make sure the index in the DataFrame is the same as the row index
-    annotations: pd.DataFrame  = data_sample['annotations'].reset_index(drop=True).copy()
-    
+    annotations: pd.DataFrame = data_sample["annotations"].reset_index(drop=True).copy()
+
     # the indexes of invalid objects from the child and parent classes
     # objects from the child classes (with class IDs specified by the keys in child_parent_map)
-    # that have no objects from the mapped parent class including them, or have multiple objects from 
+    # that have no objects from the mapped parent class including them, or have multiple objects from
     # the mapped parent class covering them (not expected)
     invalid_child_idxs: List[int] = []
     # objects from the parent classes (with class IDs specified by the values in child_parent_map)
-    # that have no objects from the mapped child class belonging to them, or cover multiple objects from 
-    # the mapped child class 
+    # that have no objects from the mapped child class belonging to them, or cover multiple objects from
+    # the mapped child class
     invalid_parent_idxs: List[int] = []
-        
+
     # go over the child-parent pairs for which one-to-one mapping should be enforced
     for child_class_id, parent_class_id in child_parent_map.items():
-    
-    
-        child_df: pd.DataFrame = annotations[annotations['label'] == child_class_id]
-        parent_df: pd.DataFrame = annotations[annotations['label'] == parent_class_id]
-        
+        child_df: pd.DataFrame = annotations[annotations["label"] == child_class_id]
+        parent_df: pd.DataFrame = annotations[annotations["label"] == parent_class_id]
+
         # indexes
         child_idxs: np.ndarray = child_df.index.values
         parent_idxs: np.ndarray = parent_df.index.values
-            
+
         if len(child_idxs) == 0:
             if len(parent_idxs) > 0:
-                invalid_parent_idxs += parent_idxs.tolist()    
+                invalid_parent_idxs += parent_idxs.tolist()
             continue
         elif len(parent_idxs) == 0:
             invalid_child_idxs += child_idxs.tolist()
-            continue    
-        
+            continue
+
         # bounding boxes
-        child_boxes: np.ndarray = child_df[['xtl', 'ytl', 'xbr', 'ybr']].values
-        parent_boxes: np.ndarray = parent_df[['xtl', 'ytl', 'xbr', 'ybr']].values
+        child_boxes: np.ndarray = child_df[["xtl", "ytl", "xbr", "ybr"]].values
+        parent_boxes: np.ndarray = parent_df[["xtl", "ytl", "xbr", "ybr"]].values
 
         # masks
-        child_masks: List[np.ndarray] = [data_sample['masks'][idx] for idx in child_idxs]
-        parent_masks: List[np.ndarray] = [data_sample['masks'][idx] for idx in parent_idxs]
+        child_masks: List[np.ndarray] = [
+            data_sample["masks"][idx] for idx in child_idxs
+        ]
+        parent_masks: List[np.ndarray] = [
+            data_sample["masks"][idx] for idx in parent_idxs
+        ]
 
-        # the IoU matrix for the bounding boxes, element (i, j) in the matrix below is the 
-        # IoU between the bounding box of the child object i (with index child_idxs[i] in the 
-        # data_sample['annotations'] and data_sample['masks']) and the bounding box of the 
+        # the IoU matrix for the bounding boxes, element (i, j) in the matrix below is the
+        # IoU between the bounding box of the child object i (with index child_idxs[i] in the
+        # data_sample['annotations'] and data_sample['masks']) and the bounding box of the
         # parent object j (with index parent_idxs[j])
         iou_box_matrix: np.ndarray = iou_batch(child_boxes, parent_boxes)
-    
+
         overlapping_child_idxs, overlapping_parent_idxs = np.where(iou_box_matrix > 0)
-    
+
         # the IoU matrix for the masks, for efficiency reasons, it is only calculated
         # for pairs with box IoU > 0
         iou_mask_matrix: np.ndarray = np.zeros((len(child_idxs), len(parent_idxs)))
-    
-        for (i, j) in zip(overlapping_child_idxs, overlapping_parent_idxs):        
-            iou_mask_matrix[i, j] = iou_mask_pair(child_boxes[i], child_masks[i], 
-                                                  parent_boxes[j], parent_masks[j])
+
+        for i, j in zip(overlapping_child_idxs, overlapping_parent_idxs):
+            iou_mask_matrix[i, j] = iou_mask_pair(
+                child_boxes[i], child_masks[i], parent_boxes[j], parent_masks[j]
+            )
 
         iou_mask_matrix[iou_mask_matrix > 0] = 1
-        
-        # the (columns) index of parent objects without an object from the child class or 
-        # with multiple objects from the child class 
+
+        # the (columns) index of parent objects without an object from the child class or
+        # with multiple objects from the child class
         invalid_col_idxs: np.ndarray = np.where(np.sum(iou_mask_matrix, axis=0) != 1)[0]
-        # only keep objects from the parent class with one child, before finding invalid 
+        # only keep objects from the parent class with one child, before finding invalid
         # objects of class child
-        valid_col_idxs: np.ndarray = np.array([idx for idx in range(len(parent_idxs)) 
-                                               if idx not in invalid_col_idxs])
-            
+        valid_col_idxs: np.ndarray = np.array(
+            [idx for idx in range(len(parent_idxs)) if idx not in invalid_col_idxs]
+        )
+
         if len(valid_col_idxs) == 0:
-            invalid_row_idxs: np.ndarray = np.array([idx for idx in range(len(child_idxs))])
+            invalid_row_idxs: np.ndarray = np.array(
+                [idx for idx in range(len(child_idxs))]
+            )
         else:
-            # the (row) index of child objects without an object from the parent class or 
-            # with multiple objects from the parent class 
-            invalid_row_idxs: np.ndarray = np.where(np.sum(iou_mask_matrix[:, valid_col_idxs], axis=1) != 1)[0]    
-            
-        
+            # the (row) index of child objects without an object from the parent class or
+            # with multiple objects from the parent class
+            invalid_row_idxs: np.ndarray = np.where(
+                np.sum(iou_mask_matrix[:, valid_col_idxs], axis=1) != 1
+            )[0]
+
         invalid_child_idxs += child_idxs[invalid_row_idxs].tolist()
         invalid_parent_idxs += parent_idxs[invalid_col_idxs].tolist()
-    
+
     # black out invalid objects in the image, and remove them from the annotations and masks
-    img: np.ndarray = data_sample['image'].copy()
+    img: np.ndarray = data_sample["image"].copy()
     img_mask: np.ndarray = np.zeros(img.shape[:2], np.uint8)
     blacked_out_mask: np.ndarray = np.ones(img.shape[:2], np.uint8)
 
     valid_idxs: List[int] = []
     for idx, row in annotations.iterrows():
-        xtl, ytl, xbr, ybr = row[['xtl', 'ytl', 'xbr', 'ybr']].values
+        xtl, ytl, xbr, ybr = row[["xtl", "ytl", "xbr", "ybr"]].values
         if idx in (invalid_child_idxs + invalid_parent_idxs):
             blacked_out_mask[ytl:ybr, xtl:xbr] = 0
         else:
             img_mask[ytl:ybr, xtl:xbr] = 1
             valid_idxs.append(idx)
     out: dict = {}
-    out['name'] = data_sample['name']
-    out['image']: np.ndarray = cv2.bitwise_or(blacked_out_mask, img_mask) * img
-    out['annotations']: pd.DataFrame = annotations.loc[valid_idxs].reset_index(drop=True).copy()
-    out['masks']: List[np.ndarray] = [data_sample['masks'][idx].copy() for idx in valid_idxs]
-        
+    out["name"] = data_sample["name"]
+    out["image"]: np.ndarray = cv2.bitwise_or(blacked_out_mask, img_mask) * img
+    out["annotations"]: pd.DataFrame = (
+        annotations.loc[valid_idxs].reset_index(drop=True).copy()
+    )
+    out["masks"]: List[np.ndarray] = [
+        data_sample["masks"][idx].copy() for idx in valid_idxs
+    ]
+
     return out
+
 
 # a function to display the samples
 # colors for displaying bounding boxes
 COLORS: List[Tuple[int, int, int]] = [
-        (0, 0, 255),
-        (255, 0, 0),
-        (0, 255, 0),
-        (255, 0, 255),
-        (0, 255, 255),
-        (255, 255, 0),
-        (0, 128, 128),
-    ]
+    (0, 0, 255),
+    (255, 0, 0),
+    (0, 255, 0),
+    (255, 0, 255),
+    (0, 255, 255),
+    (255, 255, 0),
+    (0, 128, 128),
+]
+
 
 def show_sample(sample, class_id_to_name_mapping=None):
     """
-    A function to display the annotations on the image. 
-    
+    A function to display the annotations on the image.
+
     Args:
         sample (dictionary): Input data sample to be displayed. The dictionary
-            should include "name", "image", "annotations" and optionally "masks" keys 
-            for passing the image name, the image in np.uint8 1/3-channel numpy array, 
-            the bounding boxes pandas DataFrame (with columns 'xtl', 'ytl', 'xbr', 'ybr', 
-            'label') and optionally the list of masks for annotated each object (each as a 
+            should include "name", "image", "annotations" and optionally "masks" keys
+            for passing the image name, the image in np.uint8 1/3-channel numpy array,
+            the bounding boxes pandas DataFrame (with columns 'xtl', 'ytl', 'xbr', 'ybr',
+            'label') and optionally the list of masks for annotated each object (each as a
             numpy array of the same size as the object's bounding box returned in "annotations").
-        class_id_to_name_mapping (dictionary or None): A dictionary with keys as class IDs 
+        class_id_to_name_mapping (dictionary or None): A dictionary with keys as class IDs
             and values as class names. Should be passed if sample['annotations']['label']
-            includes class IDs instead of names. Otherwise, None should be passed. 
-    
+            includes class IDs instead of names. Otherwise, None should be passed.
+
     Returns numpy array of the image with annotations added
-    
+
     """
 
-    image = sample['image']
+    image = sample["image"]
     # convert to 3-channels
     if len(image.shape) < 3:
         image = np.repeat(np.expand_dims(image, axis=2), 3, axis=2)
-    annotations_df = sample['annotations']
-    boxes = annotations_df[['xtl', 'ytl', 'xbr', 'ybr']].values.astype(np.int32)
-    labels  = annotations_df['label'].values
-    if 'masks' in sample:
-        masks = sample['masks']
-    
+    annotations_df = sample["annotations"]
+    boxes = annotations_df[["xtl", "ytl", "xbr", "ybr"]].values.astype(np.int32)
+    labels = annotations_df["label"].values
+    if "masks" in sample:
+        masks = sample["masks"]
+
     if class_id_to_name_mapping is None:
         # annotations_df include class names
-        name_to_id_mapping = {key: idx for idx, key in enumerate(annotations_df['label'].unique())}
+        name_to_id_mapping = {
+            key: idx for idx, key in enumerate(annotations_df["label"].unique())
+        }
     else:
-        name_to_id_mapping = {value: key for key, value in class_id_to_name_mapping.items()}
-    
+        name_to_id_mapping = {
+            value: key for key, value in class_id_to_name_mapping.items()
+        }
+
     for i in range(len(annotations_df)):
         # the bounding box
         (xtl, ytl, xbr, ybr) = boxes[i]
@@ -2082,16 +2620,17 @@ def show_sample(sample, class_id_to_name_mapping=None):
                 color = COLORS[labels[i] % len(COLORS)]
                 text = class_id_to_name_mapping[labels[i]]
             else:
-                print('Incorrect ID was found %s' %labels[i])
+                print("Incorrect ID was found %s" % labels[i])
                 # use black for incorrect label
-                text = 'Unknown'
+                text = "Unknown"
                 color = (0, 0, 0)
-   
-                
+
         cv2.rectangle(image, (xtl, ytl), (xbr, ybr), color, 1)
-        cv2.putText(image, text, (xtl, ytl + 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
-        
-        if 'masks' in sample:
+        cv2.putText(
+            image, text, (xtl, ytl + 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1
+        )
+
+        if "masks" in sample:
             color_mask = color * np.repeat(np.expand_dims(masks[i], axis=2), 3, axis=2)
             blended = 0.4 * color_mask
             blended[color_mask == 0] = image[ytl:ybr, xtl:xbr][color_mask == 0]
@@ -2099,7 +2638,5 @@ def show_sample(sample, class_id_to_name_mapping=None):
 
             # store the blended ROI in the original image
             image[ytl:ybr, xtl:xbr] = blended.astype(np.uint8)
-        
-  
+
     return image
-    

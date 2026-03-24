@@ -4,10 +4,15 @@ import time
 import logging
 from typing import Tuple, List, Final, Optional, Dict
 
-MODEL_WEIGHTS_PATH: Final[str] = '/home/cellareye/Development/darknet/backup/nk92_cells_beads_best.weights'
-MODEL_CONFIG_PATH: Final[str] = '/home/cellareye/Development/darknet/cfg/nk92_cells_beads.cfg'
-CLASS_NAMES_PATH: Final[str] = '/home/cellareye/Development/darknet/data/nk92_cells_beads.names'
-
+MODEL_WEIGHTS_PATH: Final[str] = (
+    "/home/cellareye/Development/darknet/backup/nk92_cells_beads_best.weights"
+)
+MODEL_CONFIG_PATH: Final[str] = (
+    "/home/cellareye/Development/darknet/cfg/nk92_cells_beads.cfg"
+)
+CLASS_NAMES_PATH: Final[str] = (
+    "/home/cellareye/Development/darknet/data/nk92_cells_beads.names"
+)
 
 
 DEFAULT_DETECTION_CONFIDENCE: Final[float] = 0.4
@@ -157,13 +162,13 @@ def get_crop_corners(
 # YOLOv4 detector class
 class Yolov4ObjectDetector:
     def __init__(
-            self,
-            weights_path: Optional[str] = MODEL_WEIGHTS_PATH,
-            config_path: Optional[str] = MODEL_CONFIG_PATH, 
-            names_path: Optional[str] = CLASS_NAMES_PATH,
-            model_input_size: Tuple[int, int] = INPUT_IMAGE_SIZE,
-            confidence: float = DEFAULT_DETECTION_CONFIDENCE,
-            nms_threshold: float = DEFAULT_NMS_THRESHOLD
+        self,
+        weights_path: Optional[str] = MODEL_WEIGHTS_PATH,
+        config_path: Optional[str] = MODEL_CONFIG_PATH,
+        names_path: Optional[str] = CLASS_NAMES_PATH,
+        model_input_size: Tuple[int, int] = INPUT_IMAGE_SIZE,
+        confidence: float = DEFAULT_DETECTION_CONFIDENCE,
+        nms_threshold: float = DEFAULT_NMS_THRESHOLD,
     ):
 
         self._net = None
@@ -183,7 +188,7 @@ class Yolov4ObjectDetector:
         # read class names and create the label map
         try:
             with open(
-                    self._names_path, "r"
+                self._names_path, "r"
             ) as f:  # if fails to read then blow with error
                 class_names: List[str] = [cname.strip() for cname in f.readlines()]
 
@@ -202,16 +207,16 @@ class Yolov4ObjectDetector:
 
         # loading the darknet model
         self.load_darknet_model()
-        
+
     def load_darknet_model(self) -> None:
         try:
             logging.info(
-            f"Loading YOLOv4 darknet weights from {self._weights_path} with config {self._config_path}."
+                f"Loading YOLOv4 darknet weights from {self._weights_path} with config {self._config_path}."
             )
-            
+
             self._net = cv2.dnn.readNet(self._weights_path, self._config_path)
-             
-            logging.info('Setting dnn to use CUDA. ')
+
+            logging.info("Setting dnn to use CUDA. ")
             try:
                 self._net.setPreferableBackend(cv2.dnn.DNN_BACKEND_CUDA)
                 self._net.setPreferableTarget(cv2.dnn.DNN_TARGET_CUDA_FP16)
@@ -220,17 +225,18 @@ class Yolov4ObjectDetector:
                     "Failed to set dnn to use CUDA! Installed OpenCV is not compiled with CUDA support! "
                     "The model will be run on CPU."
                 )
-                
+
             self._model = cv2.dnn_DetectionModel(self._net)
             self._model.setInputParams(size=self._model_input_size, scale=1.0 / 255)
-        
+
         except Exception as ex:
-            logging.error(f"Failed to initialize YOLOv4 model with CUDA. Likely the paths to model weights {self._weights_path} "
-                          f"or model config {self._config_path} are incorrect: {repr(ex)}.")
-    
+            logging.error(
+                f"Failed to initialize YOLOv4 model with CUDA. Likely the paths to model weights {self._weights_path} "
+                f"or model config {self._config_path} are incorrect: {repr(ex)}."
+            )
 
     def detect(
-            self, image: np.ndarray, log_time=False
+        self, image: np.ndarray, log_time=False
     ) -> Tuple[np.array, np.array, np.array]:
         """
         The main function to detect the bounding box and masks for persons in the input image.
@@ -254,7 +260,7 @@ class Yolov4ObjectDetector:
         # if not, then the input image will be resized without keeping its aspect ratio when it
         # is passed to the model, and this may lead to inaccurate detection
         aspect_ratio_diff: float = (image_width * self._model_input_size[1]) / (
-                image_height * self._model_input_size[0]
+            image_height * self._model_input_size[0]
         ) - 1
 
         if np.abs(aspect_ratio_diff) > INPUT_IMAGE_ASPECT_RATIO_DIFF_DEV_THRESH:
@@ -271,8 +277,9 @@ class Yolov4ObjectDetector:
         else:
             input_image = image
 
-        
-        labels, scores, boxes = self._model.detect(input_image, self._confidence, self._nms_threshold)
+        labels, scores, boxes = self._model.detect(
+            input_image, self._confidence, self._nms_threshold
+        )
         # above boxes isn't usable if there's no results so we return here
         if len(labels) == 0:
             return (
@@ -280,7 +287,7 @@ class Yolov4ObjectDetector:
                 np.zeros((0,), dtype=int),
                 np.zeros((0,), dtype=float),
             )
-       
+
         # convert (x, y, w, h) box coordinates to (xtl, ytl, xbr, ybr)
         boxes[:, 2] += boxes[:, 0]
         boxes[:, 3] += boxes[:, 1]
@@ -298,7 +305,6 @@ class Yolov4ObjectDetector:
     def set_nms_threshold(self, threshold):
         self._nms_threshold = threshold
 
-
     def detect_by_cropping(
         self,
         image: np.ndarray,
@@ -307,7 +313,6 @@ class Yolov4ObjectDetector:
         only_report_cells: bool = False,
         log_time=False,
     ) -> Tuple[np.array, np.array, np.array]:
-
         """
         A function to apply the model on a high resolution image. If the
         image is high resolution with many objects, after resizing the image
@@ -415,14 +420,14 @@ class Yolov4ObjectDetector:
             # modify the score for these detected boxes (assign the minimum score of self._confidence)
             # to give them lower priority during NMS when the results in the overlapping parts
             # of cropped images are combined
-            
+
             scores[
                 (boxes[:, 0] < 4)
                 | (boxes[:, 1] < 4)
                 | (boxes[:, 2] > crop_width - 4)
                 | (boxes[:, 3] > crop_height - 4)
             ] = self._confidence
-            
+
             crop_ids_with_detection.append(crop_id)
             results["scores"].append(scores)
             results["boxes"].append(boxes + np.array([x1c, y1c, x1c, y1c], dtype=int))
@@ -454,7 +459,6 @@ class Yolov4ObjectDetector:
         # we also keep objects with IoU > nms_threshold_for_combining_crop_results, if the detection
         # score for the object in the crop is higher than the objects in the other crops
         for idx, crop_id in enumerate(crop_ids_with_detection):
-
             crop_labels: np.array = results["labels"][idx]
             crop_scores: np.array = results["scores"][idx]
             crop_boxes: np.array = results["boxes"][idx]
@@ -498,7 +502,6 @@ class Yolov4ObjectDetector:
             )
 
             for label in set(list(crop_labels) + list(rest_labels)):
-
                 # the indexes of detections of the same label in each crop and rest set
                 crop_class_idxs: np.array = np.where(crop_labels == label)
                 rest_class_idxs: np.array = np.where(rest_labels == label)
@@ -512,7 +515,6 @@ class Yolov4ObjectDetector:
                         [i for i in range(len(crop_class_idxs[0]))], dtype=int
                     )
                 else:
-
                     # compute the IoU matrix, use torchvision implementation for efficiency
                     iou_matrix: np.array = iou_batch(
                         crop_boxes[crop_class_idxs], rest_boxes[rest_class_idxs]
@@ -601,25 +603,25 @@ class Yolov4ObjectDetector:
                 )
             )
         return boxes, labels, scores
-    
-    
+
+
 detector = Yolov4ObjectDetector()
 
 RESIZE: Final[Dict[Tuple[int, int], Tuple[int, int]]] = {
-    (640, 640): (640, 640), 
+    (640, 640): (640, 640),
     (2000, 1600): (1000, 800),
     # (2000, 1600): (2000, 1600),
     # (4512, 4512): (2880, 2880),
     # (4512, 4512): (1504, 1504),
     # (4512, 4512): (2440, 2440),
-    (4512, 4512): (4512, 4512)
+    (4512, 4512): (4512, 4512),
 }
 # A dictionary with keys as the input (original) image size (width, height) tuple and
 # values as the list of coordinates (xtl, ytl, xbr, ybr) of sub-images/crops
 # to run YOLOv5 on each
 # note that the crop coordinates are with respect to resized image dimensions specified above
 CROP_CORNERS: Final[Dict[Tuple[int, int], List[List[int]]]] = {
-    (640, 640): [[0, 0, 640, 640]], 
+    (640, 640): [[0, 0, 640, 640]],
     (2000, 1600): [
         [0, 0, 640, 640],
         [0, 160, 640, 800],
@@ -683,7 +685,7 @@ CROP_CORNERS: Final[Dict[Tuple[int, int], List[List[int]]]] = {
         [1800, 0, 2440, 640],
         [1800, 600, 2440, 1240],
         [1800, 1200, 2440, 1840],
-        [1800, 1800, 2440, 2440]
+        [1800, 1800, 2440, 2440],
     ],
 }
 """
@@ -755,10 +757,11 @@ CROP_CORNERS: Final[Dict[Tuple[int, int], List[List[int]]]] = {
     ]
 """
 
+
 def run_yolo_v4(
     input_image: np.ndarray, normalize_image=False
 ) -> Tuple[np.array, np.array, np.array, float]:
-    
+
     # make a copy to not modify the input image
     img = input_image.copy()
 
@@ -776,14 +779,15 @@ def run_yolo_v4(
     if (image_width, image_height) not in RESIZE:
         logging.error(
             "The input image size {} is not supported! Returning no cells!".format(
-                image_width, )
+                image_width,
+            )
         )
         return (
-                np.zeros((0, 4), dtype=int),
-                np.zeros((0,), dtype=int),
-                np.zeros((0,), dtype=float),
-                0
-            )
+            np.zeros((0, 4), dtype=int),
+            np.zeros((0,), dtype=int),
+            np.zeros((0,), dtype=float),
+            0,
+        )
 
     # we keep the aspect ratio in RESIZE dictionary, scale_factor is the same for both dimensions
     scale_factor: float = image_width / RESIZE[(image_width, image_height)][0]
@@ -793,7 +797,6 @@ def run_yolo_v4(
 
     crop_corners: List[List[int]] = CROP_CORNERS[(image_width, image_height)]
 
-
     # only declarations
     boxes: np.ndarray = np.zeros((0, 4), dtype=int)
     labels: np.ndarray = np.zeros((0,), dtype=int)
@@ -801,9 +804,7 @@ def run_yolo_v4(
 
     st = time.time()
 
-    boxes, labels, scores = detector.detect_by_cropping(
-        resized_img, crop_corners
-    )
+    boxes, labels, scores = detector.detect_by_cropping(resized_img, crop_corners)
 
     # scale the detections back to original image resolution
     boxes = (scale_factor * boxes).astype(int)

@@ -1,6 +1,7 @@
 from omegaconf import OmegaConf
 from models.dinov2_backbone_with_fpn import Dinov2BackBoneWithFPN
 
+
 def get_backbone_unique_id(backbone_cfg, rtdetr_model_name):
     """
     Pure function: Generates the unique hash string from config.
@@ -8,23 +9,35 @@ def get_backbone_unique_id(backbone_cfg, rtdetr_model_name):
     """
     model_type = backbone_cfg.type
     unique_str = f"_{model_type}"
-    
+
     # RT-DETR model name
     unique_str += f"_{rtdetr_model_name}"
 
     # Hash key parameters
     cfg_dict = OmegaConf.to_container(backbone_cfg, resolve=True)
-    keys_to_hash = ['fpn_type', 'scale_factor', 'output_indices_for_fpn', 'upscale_method']
-    
+    keys_to_hash = [
+        "fpn_type",
+        "scale_factor",
+        "output_indices_for_fpn",
+        "upscale_method",
+    ]
+
     for k in keys_to_hash:
         if k in cfg_dict:
-            val = str(cfg_dict[k]).replace('[','').replace(']','').replace(', ','_').replace("'", "")
+            val = (
+                str(cfg_dict[k])
+                .replace("[", "")
+                .replace("]", "")
+                .replace(", ", "_")
+                .replace("'", "")
+            )
             unique_str += f"_{k}_{val}"
-            
+
     if model_type == "resnet":
         unique_str = f"_{model_type}_{backbone_cfg.name}_freeze_stage_{backbone_cfg.freeze_at_stage}"
-        
+
     return unique_str
+
 
 def build_backbone(backbone_cfg, rtdetr_model_name):
     """
@@ -33,19 +46,25 @@ def build_backbone(backbone_cfg, rtdetr_model_name):
     """
     unique_str = get_backbone_unique_id(backbone_cfg, rtdetr_model_name)
     model_type = backbone_cfg.type
-    
+
     if model_type == "dinov2":
         # Resolve interpolation before passing to class
-        resolved_channels = OmegaConf.to_container(backbone_cfg.intermediate_channel_sizes, resolve=True)
-        
+        resolved_channels = OmegaConf.to_container(
+            backbone_cfg.intermediate_channel_sizes, resolve=True
+        )
+
         model = Dinov2BackBoneWithFPN.from_pretrained(
             backbone_cfg.pretrained_name_or_path,
-            output_indices_for_fpn=OmegaConf.to_container(backbone_cfg.output_indices_for_fpn, resolve=True),
-            first_layer_dims=OmegaConf.to_container(backbone_cfg.first_layer_dims, resolve=True),
+            output_indices_for_fpn=OmegaConf.to_container(
+                backbone_cfg.output_indices_for_fpn, resolve=True
+            ),
+            first_layer_dims=OmegaConf.to_container(
+                backbone_cfg.first_layer_dims, resolve=True
+            ),
             fpn_type=backbone_cfg.fpn_type,
             scale_factor=backbone_cfg.scale_factor,
             upscale_method=backbone_cfg.upscale_method,
-            intermediate_channel_sizes=resolved_channels, 
+            intermediate_channel_sizes=resolved_channels,
         )
         return model, model.config, unique_str
 
@@ -53,10 +72,10 @@ def build_backbone(backbone_cfg, rtdetr_model_name):
         unique_str = f"_{backbone_cfg.model_name}_{backbone_cfg.name}_freeze_stage_{backbone_cfg.freeze_at_stage}"
         return None, None, unique_str
         # raise NotImplementedError("ResNet backbone not yet implemented")
-         
+
     else:
         raise ValueError(f"Unknown backbone type: {model_type}")
-    
+
 
 def freeze_backbone_layers(model, freeze_at_stage):
     """
@@ -70,18 +89,18 @@ def freeze_backbone_layers(model, freeze_at_stage):
     """
     # RT-DETRv2 standard backbone structure in Transformers:
     # model.model.backbone.model -> (conv1, bn1, layer1, layer2, layer3, layer4)
-    
-    # Locate the actual backbone module
-    if hasattr(model, 'model') and hasattr(model.model, 'backbone'):
-         # RT-DETR V1 and V2 usually follow this structure in HF
-         backbone_container = model.model.backbone
-    elif hasattr(model, 'backbone'):
-         backbone_container = model.backbone
-    else:
-         print("[WARNING] Could not locate backbone in model structure.")
-         return
 
-    if hasattr(backbone_container, 'model'):
+    # Locate the actual backbone module
+    if hasattr(model, "model") and hasattr(model.model, "backbone"):
+        # RT-DETR V1 and V2 usually follow this structure in HF
+        backbone_container = model.model.backbone
+    elif hasattr(model, "backbone"):
+        backbone_container = model.backbone
+    else:
+        print("[WARNING] Could not locate backbone in model structure.")
+        return
+
+    if hasattr(backbone_container, "model"):
         # If it's wrapped (e.g. TimmBackbone)
         backbone = backbone_container.model
     else:
@@ -90,7 +109,9 @@ def freeze_backbone_layers(model, freeze_at_stage):
 
     print(f"[INFO] Freezing backbone layers up to stage {freeze_at_stage}...")
     print(f"[DEBUG] Backbone type: {type(backbone)}")
-    print(f"[DEBUG] Backbone attributes: {[attr for attr in dir(backbone) if not attr.startswith('_')][:20]}")
+    print(
+        f"[DEBUG] Backbone attributes: {[attr for attr in dir(backbone) if not attr.startswith('_')][:20]}"
+    )
 
     # Helper to freeze a module
     def freeze_module(module, name=""):
@@ -105,34 +126,47 @@ def freeze_backbone_layers(model, freeze_at_stage):
 
     # 1. Stem (Conv1, BN, ReLU, MaxPool) - Freeze if stage >= 1
     if freeze_at_stage >= 1:
-        if hasattr(backbone, 'conv1'): freeze_module(backbone.conv1, "conv1")
-        if hasattr(backbone, 'bn1'):   freeze_module(backbone.bn1, "bn1")
-        if hasattr(backbone, 'embedder'): freeze_module(backbone.embedder, "embedder") # Alternate name
+        if hasattr(backbone, "conv1"):
+            freeze_module(backbone.conv1, "conv1")
+        if hasattr(backbone, "bn1"):
+            freeze_module(backbone.bn1, "bn1")
+        if hasattr(backbone, "embedder"):
+            freeze_module(backbone.embedder, "embedder")  # Alternate name
 
     # 2. ResNet Stages (Standard semantics: freeze_at_stage=N freezes stages 0 through N-1)
     # Note: layers are usually named 'layer1', 'layer2', etc. or 'encoder.stages.0'
     stages_to_freeze = []
 
     # Identify the stages container
-    if hasattr(backbone, 'layer1'):
+    if hasattr(backbone, "layer1"):
         # Standard TorchVision/Timm naming
-        if freeze_at_stage >= 1: stages_to_freeze.append(backbone.layer1)
-        if freeze_at_stage >= 2: stages_to_freeze.append(backbone.layer2)
-        if freeze_at_stage >= 3: stages_to_freeze.append(backbone.layer3)
-        if freeze_at_stage >= 4: stages_to_freeze.append(backbone.layer4)
-    elif hasattr(backbone, 'encoder') and hasattr(backbone.encoder, 'stages'):
+        if freeze_at_stage >= 1:
+            stages_to_freeze.append(backbone.layer1)
+        if freeze_at_stage >= 2:
+            stages_to_freeze.append(backbone.layer2)
+        if freeze_at_stage >= 3:
+            stages_to_freeze.append(backbone.layer3)
+        if freeze_at_stage >= 4:
+            stages_to_freeze.append(backbone.layer4)
+    elif hasattr(backbone, "encoder") and hasattr(backbone.encoder, "stages"):
         # Transformers ResNetBackbone naming
         stages = backbone.encoder.stages
-        if freeze_at_stage >= 1: stages_to_freeze.append(stages[0])
-        if freeze_at_stage >= 2: stages_to_freeze.append(stages[1])
-        if freeze_at_stage >= 3: stages_to_freeze.append(stages[2])
-        if freeze_at_stage >= 4: stages_to_freeze.append(stages[3])
+        if freeze_at_stage >= 1:
+            stages_to_freeze.append(stages[0])
+        if freeze_at_stage >= 2:
+            stages_to_freeze.append(stages[1])
+        if freeze_at_stage >= 3:
+            stages_to_freeze.append(stages[2])
+        if freeze_at_stage >= 4:
+            stages_to_freeze.append(stages[3])
 
     for i, stage in enumerate(stages_to_freeze):
-        freeze_module(stage, f"stage_{i+1}")
+        freeze_module(stage, f"stage_{i + 1}")
 
     total_frozen = sum(1 for p in model.parameters() if not p.requires_grad)
     total_params = sum(p.numel() for p in model.parameters())
     frozen_params = sum(p.numel() for p in model.parameters() if not p.requires_grad)
     print(f"✓ Frozen {len(stages_to_freeze)} stages + stem.")
-    print(f"✓ Total frozen params: {frozen_params:,} / {total_params:,} ({frozen_params/total_params*100:.2f}%)")
+    print(
+        f"✓ Total frozen params: {frozen_params:,} / {total_params:,} ({frozen_params / total_params * 100:.2f}%)"
+    )

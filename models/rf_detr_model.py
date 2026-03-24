@@ -12,7 +12,12 @@ from typing import Tuple, List, Final, Optional, Dict, Union
 
 DEFAULT_DETECTION_CONFIDENCE: Final[float] = 0.45
 DEFAULT_MODEL_INPUT_SIZE: Final[Tuple[int, int]] = (672, 672)
-DEFAULT_LABEL_MAP: Final[Dict[int, str]] = {0: 'cell', 1: 'bead', 2: 'soma', 3: 'cell-adhered'}
+DEFAULT_LABEL_MAP: Final[Dict[int, str]] = {
+    0: "cell",
+    1: "bead",
+    2: "soma",
+    3: "cell-adhered",
+}
 # the aspect ratio of the passed image to the model should be within this threshold (percentagewise)
 # of the aspect ratio of the input image size specified above
 # if the deviation is more than this threshold, the results may not be reliable
@@ -68,7 +73,7 @@ DEFAULT_CROP_CORNERS: Final[Dict[Tuple[int, int, str], List[List[int]]]] = {
         [888, 928, 1560, 1600],
         [1328, 0, 2000, 672],
         [1328, 464, 2000, 1136],
-        [1328, 928, 2000, 1600]
+        [1328, 928, 2000, 1600],
     ],
     (4512, 4512): [
         [0, 0, 672, 672],
@@ -151,30 +156,35 @@ DEFAULT_CROP_CORNERS: Final[Dict[Tuple[int, int, str], List[List[int]]]] = {
         [3840, 2400, 4512, 3072],
         [3840, 2880, 4512, 3552],
         [3840, 3360, 4512, 4032],
-        [3840, 3840, 4512, 4512]
+        [3840, 3840, 4512, 4512],
     ],
 }
+
 
 # RT-DETR object detection class
 class RfDetrObjectDetector(VisionModel):
     def __init__(
         self,
         weights_path: str,
-        model_name: str = 'RF-DETR', 
-        label_map: Optional[Dict[int, str]] = None, # to be read from the weights file
-        model_input_size: Optional[Tuple[int, int]] = None, # to be read from the weights file
+        model_name: str = "RF-DETR",
+        label_map: Optional[Dict[int, str]] = None,  # to be read from the weights file
+        model_input_size: Optional[
+            Tuple[int, int]
+        ] = None,  # to be read from the weights file
         confidence: float = DEFAULT_DETECTION_CONFIDENCE,
-        device: torch.device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu"),
-    ): 
+        device: torch.device = torch.device("cuda")
+        if torch.cuda.is_available()
+        else torch.device("cpu"),
+    ):
         super().__init__(
             weights_path,
-            model_name, 
+            model_name,
             label_map,
-            model_input_size, 
+            model_input_size,
             confidence,
-            device, 
+            device,
         )
-   
+
     def load(self) -> None:
         if self._model_input_size is None:
             # we need a valid model input size for Mask2Former model
@@ -182,8 +192,8 @@ class RfDetrObjectDetector(VisionModel):
                 f"Missing model input size! It was neither included in the weights file nor passed during instantiation! "
                 f"Failed to instantiate {self._model_name} class."
             )
-            return 
-            
+            return
+
         # loading the model
         try:
             self._model = RFDETRBase(pretrain_weights=self._weights_path)
@@ -195,22 +205,25 @@ class RfDetrObjectDetector(VisionModel):
             logging.error(
                 f"Failed to load {self._model_name} model from the weights file: {repr(ex)}."
             )
-            return 
-        
+            return
+
         self._metadata = {
-            'predict_masks': False, # detector model
-            'resolution': self._model_input_size,
-            'release_date': os.path.basename(self._weights_path).split('_')[0], # the model name starts with the release date
-            'model_type': 'Transformer Detector',
-            'model_name': self._model_name,
-            'model_extra_info': 'None',
-            'names': self._label_map,
-            'magnification': '4x' if '4x' in os.path.basename(self._weights_path) else '10x'
+            "predict_masks": False,  # detector model
+            "resolution": self._model_input_size,
+            "release_date": os.path.basename(self._weights_path).split("_")[
+                0
+            ],  # the model name starts with the release date
+            "model_type": "Transformer Detector",
+            "model_name": self._model_name,
+            "model_extra_info": "None",
+            "names": self._label_map,
+            "magnification": "4x"
+            if "4x" in os.path.basename(self._weights_path)
+            else "10x",
         }
-        
+
         self._loaded = True
 
-    
     def detect_batch(
         self,
         input_images_list: List[Union[Image.Image, np.ndarray]],
@@ -220,36 +233,40 @@ class RfDetrObjectDetector(VisionModel):
             logging.error(
                 f"{self._model_name} model has not been initialized. Please initialize the class before detect()."
             )
-            
-            out: List[Dict[str, list]] = [{"boxes": [], "scores": [], "labels": []}] * len(input_images_list)
+
+            out: List[Dict[str, list]] = [
+                {"boxes": [], "scores": [], "labels": []}
+            ] * len(input_images_list)
             return out
 
-        # convert to 3-channel images if needed, and store the original image dimensions for 
+        # convert to 3-channel images if needed, and store the original image dimensions for
         # post processing
         images_list: List[np.ndarray] = []
         org_img_dims: List[Tuple[int, int]] = []
         aspect_ratio_diffs: List[float] = []
-    
+
         for img in input_images_list:
             if isinstance(img, Image.Image):
                 img_array: np.ndarray = np.array(img)
             else:
                 img_array: np.ndarray = img.copy()
-            
+
             img_shape: tuple = img_array.shape
             if len(img_shape) < 3:
                 img_array = cv2.cvtColor(img_array, cv2.COLOR_GRAY2RGB)
-                
+
             org_img_dims.append(img_shape[:2])
-           
+
             # check if the aspect ratio of the input image is almost the same as the aspect ratio of
             # the model input size
             # if not, then the input image will be resized without keeping its aspect ratio when it
             # is passed to the model, and this may lead to inaccurate detection
-            aspect_ratio_diff: float = float(img_shape[1] * self._model_input_size[1]) / float(
-                    img_shape[0] * self._model_input_size[0]
-            ) - 1.0
-           
+            aspect_ratio_diff: float = (
+                float(img_shape[1] * self._model_input_size[1])
+                / float(img_shape[0] * self._model_input_size[0])
+                - 1.0
+            )
+
             if np.abs(aspect_ratio_diff) > INPUT_IMAGE_ASPECT_RATIO_DIFF_DEV_THRESH:
                 logging.warning(
                     f"The input image has a different aspect ratio: {img_shape[1] / float(img_shape[0])} than the model: "
@@ -272,25 +289,34 @@ class RfDetrObjectDetector(VisionModel):
             if aspect_ratio_diffs[img_idx] != 0:
                 # self._model_input_size is width/height, hence self._model_input_size[0] is width
                 # we are using square input sizes and this should not really matter
-                out['boxes'] = (
-                    detections.xyxy * np.array(
-                        [org_img_dims[img_idx][1] / self._model_input_size[0], org_img_dims[img_idx][0] / self._model_input_size[1]] * 2)
-                ).astype(int).tolist()
+                out["boxes"] = (
+                    (
+                        detections.xyxy
+                        * np.array(
+                            [
+                                org_img_dims[img_idx][1] / self._model_input_size[0],
+                                org_img_dims[img_idx][0] / self._model_input_size[1],
+                            ]
+                            * 2
+                        )
+                    )
+                    .astype(int)
+                    .tolist()
+                )
             else:
-                out['boxes'] = detections.xyxy.astype(int).tolist()
-            
-            out['scores'] = detections.confidence.tolist()
-            out['labels'] = detections.class_id.tolist()
-            
+                out["boxes"] = detections.xyxy.astype(int).tolist()
+
+            out["scores"] = detections.confidence.tolist()
+            out["labels"] = detections.class_id.tolist()
+
             results.append(out)
 
         results = self.postprocess(results)
         # clear the CUDA cache
         torch.cuda.empty_cache()
-        
+
         return results
 
-    
     def postprocess(self, results):
         for result in results:
             # map the class IDs
@@ -302,5 +328,5 @@ class RfDetrObjectDetector(VisionModel):
                         else x
                     )
                 )(result["labels"]).tolist()
-        
+
         return results

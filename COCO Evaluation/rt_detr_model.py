@@ -9,12 +9,15 @@ from PIL import Image
 import torch
 from transformers import RTDetrForObjectDetection, RTDetrImageProcessor
 
-BASE_PATH: Final[str] = '/home/cellareye/Cellanome/dl-mehdi/Mask RCNN/checkpoints'
-MODEL_WEIGHTS_PATH: Final[str] = '/home/cellareye/Cellanome/dl-mehdi/Mask RCNN/checkpoints/20250331_sets_1_2_3_6_to_41_rt_detr_16_bs_10_epochs.pt'
+BASE_PATH: Final[str] = "/home/cellareye/Cellanome/dl-mehdi/Mask RCNN/checkpoints"
+MODEL_WEIGHTS_PATH: Final[str] = (
+    "/home/cellareye/Cellanome/dl-mehdi/Mask RCNN/checkpoints/20250331_sets_1_2_3_6_to_41_rt_detr_16_bs_10_epochs.pt"
+)
 DEFAULT_DETECTION_CONFIDENCE: Final[float] = 0.4
-MODEL_INPUT_SIZE: Final[int] = 640 
-# TRANSFORM_MEAN: Final[List[float]] = [0.485, 0.456, 0.406] 
+MODEL_INPUT_SIZE: Final[int] = 640
+# TRANSFORM_MEAN: Final[List[float]] = [0.485, 0.456, 0.406]
 # TRANSFORM_STD: Final[List[float]] = [0.229, 0.224, 0.225]
+
 
 # Utility functions
 # very efficient batch IoU calculation
@@ -46,12 +49,15 @@ def iou_batch(bboxes1: np.ndarray, bboxes2: np.ndarray) -> np.ndarray:
     )  # pairwise union area NxM
     return inter_areas / union_areas  # pairwise intersection divided by union (iou) NxM
 
-def overlap_batch(bboxes1: np.ndarray, bboxes2: np.ndarray, ordered: bool = False) -> np.ndarray:
-    """Given Nx4 & Mx4 ndarrays of bounding boxes, compute pairwise overlaps defined as the intersection over 
+
+def overlap_batch(
+    bboxes1: np.ndarray, bboxes2: np.ndarray, ordered: bool = False
+) -> np.ndarray:
+    """Given Nx4 & Mx4 ndarrays of bounding boxes, compute pairwise overlaps defined as the intersection over
     the smallest box area (ordered set to False); a small box fully enclosed by a large box has an "overlap" of 1.
-    if ordered is set to 1, the overlap is the intersection over the area of the box from bboxes2 set. In this case, 
+    if ordered is set to 1, the overlap is the intersection over the area of the box from bboxes2 set. In this case,
     overlap is close to 1 only if the box from bboxes2 lies inside the box from bboxes1"""
-    
+
     # expand dims to allow computing pairwise overlap via outerproducts (creates NxM below)
     bboxes1 = np.expand_dims(bboxes1, 1)  # Nx1x4
     bboxes2 = np.expand_dims(bboxes2, 0)  # 1xMx4
@@ -61,19 +67,31 @@ def overlap_batch(bboxes1: np.ndarray, bboxes2: np.ndarray, ordered: bool = Fals
     inter_y1s = np.maximum(bboxes1[..., 1], bboxes2[..., 1])  # pairwise max NxM
     inter_x2s = np.minimum(bboxes1[..., 2], bboxes2[..., 2])  # pairwise min NxM
     inter_y2s = np.minimum(bboxes1[..., 3], bboxes2[..., 3])  # pairwise min NxM
-    inter_ws = np.maximum(0., inter_x2s - inter_x1s)  # pairwise width of intersection rectangle NxM
-    inter_hs = np.maximum(0., inter_y2s - inter_y1s)  # pairwise height of intersection rectangle NxM
+    inter_ws = np.maximum(
+        0.0, inter_x2s - inter_x1s
+    )  # pairwise width of intersection rectangle NxM
+    inter_hs = np.maximum(
+        0.0, inter_y2s - inter_y1s
+    )  # pairwise height of intersection rectangle NxM
     inter_areas = inter_ws * inter_hs  # pairwise intersection area NxM
     if ordered:
         # use the box area of bboxes2 as the denominator
-        smallest_bb_areas = (bboxes2[..., 2] - bboxes2[..., 0]) * (bboxes2[..., 3] - bboxes2[..., 1])
+        smallest_bb_areas = (bboxes2[..., 2] - bboxes2[..., 0]) * (
+            bboxes2[..., 3] - bboxes2[..., 1]
+        )
     else:
-        smallest_bb_areas = (np.minimum((bboxes1[..., 2] - bboxes1[..., 0])
-                                        * (bboxes1[..., 3] - bboxes1[..., 1]),
-                                        (bboxes2[..., 2] - bboxes2[..., 0])
-                                        * (bboxes2[..., 3] - bboxes2[..., 1]))
-                             + 1e-30)  # smallest bb area of each paired box NXM
-    return inter_areas / smallest_bb_areas  # pairwise intersection divided by smallest box (overlap) NxM
+        smallest_bb_areas = (
+            np.minimum(
+                (bboxes1[..., 2] - bboxes1[..., 0])
+                * (bboxes1[..., 3] - bboxes1[..., 1]),
+                (bboxes2[..., 2] - bboxes2[..., 0])
+                * (bboxes2[..., 3] - bboxes2[..., 1]),
+            )
+            + 1e-30
+        )  # smallest bb area of each paired box NXM
+    return (
+        inter_areas / smallest_bb_areas
+    )  # pairwise intersection divided by smallest box (overlap) NxM
 
 
 # a function to return the area of bounding box
@@ -84,26 +102,34 @@ def box_area(box: np.array) -> float:
     Return the area.
     """
     return (box[3] - box[1]) * (box[2] - box[0])
-    
+
+
 def show_detections(input_image, predictions, label_map):
 
     # colors for displaying bounding boxes
-    COLORS = [(0, 0, 255), (255, 0, 0), (0, 255, 0), (255, 255, 0), (255, 0, 255), (0, 255, 255)]
-    
+    COLORS = [
+        (0, 0, 255),
+        (255, 0, 0),
+        (0, 255, 0),
+        (255, 255, 0),
+        (255, 0, 255),
+        (0, 255, 255),
+    ]
+
     class_ids = list(label_map.keys())
     if isinstance(input_image, np.ndarray):
         image = input_image.copy()
     else:
         # convert to a numpy array
         image = np.array(input_image)
-    
+
     # convert to 3-channels
     if len(image.shape) < 3:
         image = np.repeat(np.expand_dims(image, axis=2), 3, axis=2)
-    
-    boxes = predictions['boxes']
-    labels = predictions['labels']
-    
+
+    boxes = predictions["boxes"]
+    labels = predictions["labels"]
+
     for i in range(len(boxes)):
         # the bounding box
         (xtl, ytl, xbr, ybr) = boxes[i].astype(int)
@@ -112,15 +138,18 @@ def show_detections(input_image, predictions, label_map):
             color = (0, 0, 0)
             text = "Unknown label %s" % labels[i]
         else:
-            color = COLORS[(labels[i] + 1) % len(COLORS)] # add one to start from 1 for consistency with Mask R-CNN
+            color = COLORS[
+                (labels[i] + 1) % len(COLORS)
+            ]  # add one to start from 1 for consistency with Mask R-CNN
             text = label_map[labels[i]]
-        
+
         cv2.rectangle(image, (xtl, ytl), (xbr, ybr), color, 1)
         cv2.putText(
             image, text, (xtl, ytl + 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1
         )
     return image
-    
+
+
 def get_crop_corners(
     image_width: int,
     image_height: int,
@@ -169,8 +198,9 @@ def get_crop_corners(
             crop_coords = [xc_tl, yc_tl, xc_br, yc_br]
             crop_corners.append(crop_coords)
 
-    return crop_corners   
-    
+    return crop_corners
+
+
 # A utility function
 def to_numpy(tensor):
     """
@@ -184,6 +214,7 @@ def to_numpy(tensor):
         tensor.detach().cpu().numpy() if tensor.requires_grad else tensor.cpu().numpy()
     )
 
+
 # RT-DETR object detection class
 class RtDetrObjectDetector:
     def __init__(
@@ -192,21 +223,21 @@ class RtDetrObjectDetector:
         label_map: Optional[Dict[int, str]] = None,
         confidence: float = DEFAULT_DETECTION_CONFIDENCE,
     ):
-        
+
         self.model = None
         self._weights_path: str = str(weights_path)
         self._confidence: float = confidence
-            
+
         # available device
         self.device = (
             torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
         )
-        
+
         # the state dictionary of the model to be read from the weights file
         model_state_dict: OrderedDict = None
         # the model's label map if available in the weight file
-        loaded_label_map: Dict[int, str] = None   
-        
+        loaded_label_map: Dict[int, str] = None
+
         self._resize_dict: Union[Dict[Tuple[int, int], Tuple[int, int]], None] = None
         self._crop_corners_dict: Union[Dict[Tuple[int, int], List[List[int]]], None] = (
             None
@@ -224,7 +255,10 @@ class RtDetrObjectDetector:
             saved_model_param: Union[OrderedDict, list] = torch.load(
                 self._weights_path, map_location=self.device
             )
-            if (isinstance(saved_model_param, dict) and "model_state_dict" in saved_model_param):
+            if (
+                isinstance(saved_model_param, dict)
+                and "model_state_dict" in saved_model_param
+            ):
                 # the weights file contains the model state dictionary (the weights) and the label map (both are
                 # mandatory) and potentially other model related configs
                 # in case a dictionary is provided, the keys and values are as following:
@@ -243,8 +277,10 @@ class RtDetrObjectDetector:
                     )
                     loaded_label_map = None
 
-                    
-                if ("resize_dict" in saved_model_param and "crop_corners_dict" in saved_model_param):
+                if (
+                    "resize_dict" in saved_model_param
+                    and "crop_corners_dict" in saved_model_param
+                ):
                     # resize and crop corners are also provided in the weights file
                     logging.info(
                         "The resize and crop_corners dictionary are also provided in the weights file."
@@ -271,33 +307,40 @@ class RtDetrObjectDetector:
                 f"Failed to load Mask2Former model. Likely the paths to model .pt weights "
                 f"{self._weights_path} is incorrect: {repr(ex)}."
             )
-        
+
         if label_map is None:
             if loaded_label_map is None:
                 logging.error(
                     "The mapping between the class IDs and class names is required for the model and is "
                     "neither provided during class instantiation nor available in the weights file! Returning ..."
                 )
-                return 
+                return
             else:
-                logging.info("Mapping between class IDs and class names is provided in the weights file.") 
+                logging.info(
+                    "Mapping between class IDs and class names is provided in the weights file."
+                )
                 self._label_map: Dict[int, str] = loaded_label_map
         else:
-            logging.info("Mapping between class IDs and class names is passed during class instantiation! "
-                        "It will overwrite the label map passed in the weights file (if provided).")        
+            logging.info(
+                "Mapping between class IDs and class names is passed during class instantiation! "
+                "It will overwrite the label map passed in the weights file (if provided)."
+            )
             self._label_map: Dict[int, str] = label_map
 
-        
-        logging.info(f"Mapping between class IDs and class names: {self._label_map}") 
+        logging.info(f"Mapping between class IDs and class names: {self._label_map}")
         self._reverse_label_map: Dict[str, int] = {
             value: key for key, value in self._label_map.items()
         }
-        
+
         if self._detected_class_names_remap is not None:
             # extract the classes that will be mapped to 'bg' and should be excluded from the detections
-            class_names_to_exclude_from_dets = [k for k, v in self._detected_class_names_remap.items() if v == 'bg']
+            class_names_to_exclude_from_dets = [
+                k for k, v in self._detected_class_names_remap.items() if v == "bg"
+            ]
             # update the passed mapping and removed the ones that are going to be mapped to 'bg' (should be excluded)
-            self._detected_class_names_remap = {k: v for k, v in self._detected_class_names_remap.items() if v != 'bg'}
+            self._detected_class_names_remap = {
+                k: v for k, v in self._detected_class_names_remap.items() if v != "bg"
+            }
             self._detected_class_ids_remap: Dict[int, int] = {}
             for k, v in self._detected_class_names_remap.items():
                 if k in self._reverse_label_map and v in self._reverse_label_map:
@@ -318,7 +361,7 @@ class RtDetrObjectDetector:
 
         # RT-DETR model loaded from the original checkpoint
         pre_trained_model_checkpoint: str = "PekingU/rtdetr_r50vd_coco_o365"
-       
+
         self.model = RTDetrForObjectDetection.from_pretrained(
             pre_trained_model_checkpoint,
             id2label=self._label_map,
@@ -326,7 +369,7 @@ class RtDetrObjectDetector:
             anchor_image_size=None,
             ignore_mismatched_sizes=True,
         )
-        
+
         # loading the PyTorch model
         try:
             self.model.load_state_dict(model_state_dict)
@@ -334,20 +377,18 @@ class RtDetrObjectDetector:
             self.model.eval()
 
         except Exception as ex:
-            logging.error(
-                f"Failed to load Mask2Former model: {repr(ex)}."
-            )
-        
+            logging.error(f"Failed to load Mask2Former model: {repr(ex)}.")
+
         self.hg_preprocessor = RTDetrImageProcessor(
             do_convert_annotations=True,
             do_resize=True,
             size={"width": MODEL_INPUT_SIZE, "height": MODEL_INPUT_SIZE},
             reduce_labels=False,
-            do_rescale=True, 
-            do_normalize=True
+            do_rescale=True,
+            do_normalize=True,
         )
         # added for consistency with the YOLO model
-        # metadata will be a dictionary with keys as 'resolution', 'release_date', 'model_type', 
+        # metadata will be a dictionary with keys as 'resolution', 'release_date', 'model_type',
         # 'model_name', 'model_extra_info', 'names', 'stride'
         # example: {'resolution': 640,
         #           'release_date': '20240415',
@@ -355,23 +396,22 @@ class RtDetrObjectDetector:
         #           'model_name': 'YOLOv5m',
         #           'model_extra_info': 'V5 Medium',
         #           'names': {0: 'cell', 1: 'bead'},
-        self._metadata = {'resolution': MODEL_INPUT_SIZE,
-                          'release_date': '20250321',
-                          'model_type': 'Transformer Detector',
-                          'model_name': 'RT-DETR',
-                          'model_extra_info': 'None',
-                          'names': self._label_map,
-                          'magnification': '10x'
-                         }
-    def detect(self,
-               img: np.ndarray,
-               log_time: bool = False
-              ) -> Dict[str, list]:
+        self._metadata = {
+            "resolution": MODEL_INPUT_SIZE,
+            "release_date": "20250321",
+            "model_type": "Transformer Detector",
+            "model_name": "RT-DETR",
+            "model_extra_info": "None",
+            "names": self._label_map,
+            "magnification": "10x",
+        }
+
+    def detect(self, img: np.ndarray, log_time: bool = False) -> Dict[str, list]:
         """
         The main function to detect the bounding box and masks for objects in the input image.
 
         Args:
-            img (numpy array): Input image, should have 8 bits per channel bit-depth (np.uint8 numpy array). 
+            img (numpy array): Input image, should have 8 bits per channel bit-depth (np.uint8 numpy array).
             log_time (bool): A flag to log the model run time.
 
         Returns:
@@ -382,16 +422,15 @@ class RtDetrObjectDetector:
                 "scores": List of float detection scores, after applying the threshold self._confidence.
         """
         return self.detect_batch(input_images_list=[img], log_time=log_time)[0]
-    
-    def detect_batch(self,
-                     input_images_list: List[np.ndarray],
-                     log_time: bool = False
-                    ) -> List[Dict[str, list]]:
+
+    def detect_batch(
+        self, input_images_list: List[np.ndarray], log_time: bool = False
+    ) -> List[Dict[str, list]]:
         """
-        The main function to detect the bounding box and masks for objects in a list of inputs images (batch processing). 
+        The main function to detect the bounding box and masks for objects in a list of inputs images (batch processing).
 
         Args:
-            input_images_list (list of numpy arrays): Input images, each should have 8 bits per channel bit-depth (np.uint8 numpy array). 
+            input_images_list (list of numpy arrays): Input images, each should have 8 bits per channel bit-depth (np.uint8 numpy array).
             log_time (bool): A flag to log the model run time.
 
         Returns:
@@ -406,16 +445,22 @@ class RtDetrObjectDetector:
             logging.error(
                 "RT-DETR model has not been initialized. Please initialize the class before detect()."
             )
-            
-            out: List[Dict[str, list]] = [{"boxes": [], "scores": [], "labels": [],}] * len(input_images_list)
+
+            out: List[Dict[str, list]] = [
+                {
+                    "boxes": [],
+                    "scores": [],
+                    "labels": [],
+                }
+            ] * len(input_images_list)
             return out
 
         start: float = time.time()
-        # convert to 3-channel images if needed, and store the original image dimensions for 
+        # convert to 3-channel images if needed, and store the original image dimensions for
         # post processing
         images_list: List[np.array] = []
         org_img_dims: List[Tuple[int, int]] = []
-    
+
         for img in input_images_list:
             img_shape: tuple = img.shape
             if len(img_shape) < 3:
@@ -423,11 +468,13 @@ class RtDetrObjectDetector:
             else:
                 images_list.append(img)
             org_img_dims.append(img_shape[:2])
-       
+
         processed_imgs_dict = self.hg_preprocessor(images_list, return_tensors="pt")
         with torch.no_grad():
-            outputs = self.model(pixel_values=processed_imgs_dict["pixel_values"].to(self.device))
-        
+            outputs = self.model(
+                pixel_values=processed_imgs_dict["pixel_values"].to(self.device)
+            )
+
             processed_outputs = self.hg_preprocessor.post_process_object_detection(
                 outputs, threshold=self._confidence, target_sizes=org_img_dims
             )
@@ -437,19 +484,22 @@ class RtDetrObjectDetector:
         # - 'boxes': a (num_detection, 4) torch.float32 tensor of bounding boxes in (xtl, ytl, xbr, ybr) format
         # - 'labels': a (num_detection, 1) torch.int64 tensor of class IDs
         # - 'scores': a (num_detection, 1) torch.float32 tensor of detection confidences
-        
+
         if len(processed_outputs) == 0:
             # this should not happen and is not expected, return as if the model has not detected anything (for the whole list of images)
-            results =  [
-                {'boxes': [],
-                 'labels': [],
-                 'scores': [],
+            results = [
+                {
+                    "boxes": [],
+                    "labels": [],
+                    "scores": [],
                 }
             ] * len(images_list)
         else:
             # move to CPU and convert to numpy arrays before returning
-            results = [{k: list(to_numpy(v)) for k, v in result.items()} for result in processed_outputs]
-        
+            results = [
+                {k: list(to_numpy(v)) for k, v in result.items()}
+                for result in processed_outputs
+            ]
 
         # Clear the CUDA cache
         torch.cuda.empty_cache()
@@ -459,7 +509,6 @@ class RtDetrObjectDetector:
 
         return results
 
-    
     def _update_label_map_if_needed(self):
         if self._detected_class_names_remap is not None:
             # self._detected_class_ids_remap will also be not None
@@ -497,12 +546,12 @@ class RtDetrObjectDetector:
         return self._metadata
 
     def detect_by_cropping(
-            self,
-            img: Union[Image.Image, np.ndarray],
-            crop_corners: List[List[int]],
-            nms_threshold_for_combining_crop_results: float = 0.15,
-            classnames_to_return: Optional[List[str]] = None,
-            log_time=False,
+        self,
+        img: Union[Image.Image, np.ndarray],
+        crop_corners: List[List[int]],
+        nms_threshold_for_combining_crop_results: float = 0.15,
+        classnames_to_return: Optional[List[str]] = None,
+        log_time=False,
     ) -> Dict[str, List]:
         """
         A function to apply the model on a high resolution image. If the
@@ -592,7 +641,11 @@ class RtDetrObjectDetector:
         # combine the results, filter them based on the score,
         # and update the coordinates of the bounding boxes
         # for applying NMS later
-        results: Dict = {"scores": [], "boxes": [], "labels": [],}
+        results: Dict = {
+            "scores": [],
+            "boxes": [],
+            "labels": [],
+        }
 
         # a list to keep track of cropped sub-images with at least one object detection
         crop_ids_with_detection: List[int] = []
@@ -635,7 +688,7 @@ class RtDetrObjectDetector:
                 | (boxes[:, 1] < 4)
                 | (boxes[:, 2] > crop_width - 4)
                 | (boxes[:, 3] > crop_height - 4)
-                ] = self._confidence
+            ] = self._confidence
 
             crop_ids_with_detection.append(crop_id)
             results["scores"].append(scores)
@@ -761,7 +814,9 @@ class RtDetrObjectDetector:
                         rest_det_score = scores_to_check[max_index]
 
                         # areas of the matching boxes
-                        crop_box_area: float = box_area(crop_boxes[crop_class_idxs[0][i]])
+                        crop_box_area: float = box_area(
+                            crop_boxes[crop_class_idxs[0][i]]
+                        )
                         rest_box_area: float = box_area(
                             rest_boxes[rest_class_idxs[0][high_iou_idxs[max_index]]]
                         )
@@ -771,8 +826,8 @@ class RtDetrObjectDetector:
                         # the image) of the crops (we reduce the scores for both to the threshold score and they become
                         # equal)
                         if crop_det_score > rest_det_score or (
-                                crop_det_score == rest_det_score
-                                and crop_box_area >= rest_box_area
+                            crop_det_score == rest_det_score
+                            and crop_box_area >= rest_box_area
                         ):
                             # keep this object as it has the highest score among all
                             boxes.append(crop_boxes[crop_class_idxs[0][i]])
@@ -795,14 +850,12 @@ class RtDetrObjectDetector:
             boxes: list = [boxes[i] for i in detection_ids]
             labels: list = [labels[i] for i in detection_ids]
             scores: list = [scores[i] for i in detection_ids]
-        
+
         elap: float = time.time() - start
         if log_time:
             logging.info(
                 "RT-DETR object detection after cropping the image to "
-                "{} sub-images took {:.4f} seconds".format(
-                    len(crop_corners), elap
-                )
+                "{} sub-images took {:.4f} seconds".format(len(crop_corners), elap)
             )
 
         out: dict = {
@@ -815,7 +868,7 @@ class RtDetrObjectDetector:
 
         return out
 
-        
+
 detector = RtDetrObjectDetector(weights_path=MODEL_WEIGHTS_PATH)
 
 RESIZE: Final[Dict[Tuple[int, int, str], Tuple[int, int]]] = {
@@ -922,13 +975,13 @@ CROP_CORNERS: Final[Dict[Tuple[int, int, str], List[List[int]]]] = {
 
 
 def run_rt_detr(
-    input_image: np.ndarray, 
-    bit_depth: int = 12, 
-    normalize_image: bool=True, 
-    is_4x: bool=False, 
-    detector: RtDetrObjectDetector=detector
+    input_image: np.ndarray,
+    bit_depth: int = 12,
+    normalize_image: bool = True,
+    is_4x: bool = False,
+    detector: RtDetrObjectDetector = detector,
 ) -> Tuple[np.array, np.array, np.array, float]:
-    
+
     # make a copy to not modify the input image
     img = input_image.copy()
 
@@ -938,8 +991,8 @@ def run_rt_detr(
         )
         img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-    img = (255 * img.astype(float) / (2 ** bit_depth - 1)).astype(np.uint8)
-    
+    img = (255 * img.astype(float) / (2**bit_depth - 1)).astype(np.uint8)
+
     if normalize_image:
         img = cv2.normalize(img, img, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX)
 
@@ -960,25 +1013,25 @@ def run_rt_detr(
         # use the default values set if not provided in the model
         resize_dict = RESIZE
         crop_corners_dict = CROP_CORNERS
-    
+
     if is_4x:
         resize_dict_key: Tuple[int, int, str] = (image_width, image_height, "4x")
     else:
         resize_dict_key: Tuple[int, int, str] = (image_width, image_height, "10x")
-    
+
     if resize_dict_key not in resize_dict:
         logging.error(
             f"The input image size {(image_width, image_height)} is not supported for {'4x' if is_4x else '10x'}! Returning no cells!"
-            )
+        )
         return (
-                np.zeros((0, 4), dtype=int),
-                np.zeros((0,), dtype=int),
-                np.zeros((0,), dtype=float),
-                0
-            )
+            np.zeros((0, 4), dtype=int),
+            np.zeros((0,), dtype=int),
+            np.zeros((0,), dtype=float),
+            0,
+        )
 
     # we keep the aspect ratio in RESIZE dictionary, scale_factor is the same for both dimensions
-    
+
     scale_factor: float = image_width / resize_dict[resize_dict_key][0]
     resized_img: np.ndarray = cv2.resize(
         img, resize_dict[resize_dict_key], interpolation=cv2.INTER_AREA
@@ -988,20 +1041,21 @@ def run_rt_detr(
 
     st = time.time()
 
-    out = detector.detect_by_cropping(
-        resized_img, crop_corners
-    )
-    boxes: np.ndarray =  np.zeros((0, 4), dtype=int)
+    out = detector.detect_by_cropping(resized_img, crop_corners)
+    boxes: np.ndarray = np.zeros((0, 4), dtype=int)
     labels: np.ndarray = np.zeros((0,), dtype=int)
     scores: np.ndarray = np.zeros((0,), dtype=float)
-    
-    if len(out['labels']) > 0:
-        boxes, labels, scores = np.array(out['boxes']), np.array(out['labels']), np.array(out['scores'])
-    
+
+    if len(out["labels"]) > 0:
+        boxes, labels, scores = (
+            np.array(out["boxes"]),
+            np.array(out["labels"]),
+            np.array(out["scores"]),
+        )
+
     # scale the detections back to original image resolution
     boxes = (scale_factor * boxes).astype(int)
 
     et = time.time()
 
     return boxes, labels, scores, et - st
-

@@ -24,6 +24,7 @@ import numpy as np
 # import yolo models from ultralytics
 # from ultralytics import yolov5n, yolov5s, yolov5m, yolov5l, yolov5x
 
+
 def _import_from_yolo_repo(repo_path: str, module_name: str):
     """Import a module from the YOLOv5 repository using normal module resolution.
 
@@ -134,26 +135,38 @@ class YOLOv5LightningModule(pl.LightningModule):
         self.validation_step_outputs = []
         self.ema_validation_step_outputs = []
         self.test_step_outputs = []
-        
+
         self.validation_step_outputs_sliced = []
         self.test_step_outputs_sliced = []
-        
-        if hasattr(self.config.model, 'ema') and self.config.model.ema.enabled:
+
+        if hasattr(self.config.model, "ema") and self.config.model.ema.enabled:
             self.validation_step_outputs_ema = []
             self.test_step_outputs_ema = []
             self.validation_step_outputs_sliced_ema = []
             self.test_step_outputs_sliced_ema = []
-            
+
         self.PALETTE = [
-            (255, 64, 64), (64, 255, 64), (64, 64, 255), (255, 255, 64), (255, 64, 255),
-            (64, 255, 255), (255, 128, 64), (128, 64, 255), (64, 255, 128), (255, 64, 128),
-            (128, 255, 64), (64, 128, 255), (255, 128, 128), (128, 255, 128), (128, 128, 255)
+            (255, 64, 64),
+            (64, 255, 64),
+            (64, 64, 255),
+            (255, 255, 64),
+            (255, 64, 255),
+            (64, 255, 255),
+            (255, 128, 64),
+            (128, 64, 255),
+            (64, 255, 128),
+            (255, 64, 128),
+            (128, 255, 64),
+            (64, 128, 255),
+            (255, 128, 128),
+            (128, 255, 128),
+            (128, 128, 255),
         ]
         try:
             self.font = ImageFont.truetype("arial.ttf", 17)
         except IOError:
             self.font = ImageFont.load_default()
-            
+
         self.val_viz_counter = 0
         self.test_viz_counter = 0
         self._train_image_ids_epoch = []
@@ -186,22 +199,30 @@ class YOLOv5LightningModule(pl.LightningModule):
 
         # Check if weights_path looks like a torch hub model name (e.g., 'yolov5s', 'yolov5m')
         # and not a file path (doesn't end in .pt)
-        is_hub_model = not weights_path.endswith('.pt') and not Path(weights_path).exists()
-        
+        is_hub_model = (
+            not weights_path.endswith(".pt") and not Path(weights_path).exists()
+        )
+
         if is_hub_model:
             try:
-                print(f"[INFO] YOLOv5 Loading pre-trained weights from torch.hub: {weights_path}")
+                print(
+                    f"[INFO] YOLOv5 Loading pre-trained weights from torch.hub: {weights_path}"
+                )
                 # Load model from torch hub to get weights
                 # trusting repo since we are loading official yolov5
-                hub_model = torch.hub.load('ultralytics/yolov5', weights_path, pretrained=True, trust_repo=True)
-                
+                hub_model = torch.hub.load(
+                    "ultralytics/yolov5", weights_path, pretrained=True, trust_repo=True
+                )
+
                 # Extract state dict
-                if hasattr(hub_model, 'model'):
+                if hasattr(hub_model, "model"):
                     state_dict = hub_model.model.float().state_dict()
                 else:
                     state_dict = hub_model.float().state_dict()
-                    
-                print(f"[INFO] YOLOv5 Successfully downloaded weights for {weights_path} from torch.hub")
+
+                print(
+                    f"[INFO] YOLOv5 Successfully downloaded weights for {weights_path} from torch.hub"
+                )
             except Exception as e:
                 print(f"[WARNING] Failed to load from torch.hub: {e}")
                 print("[INFO] Falling back to local file search...")
@@ -212,37 +233,49 @@ class YOLOv5LightningModule(pl.LightningModule):
         if state_dict is None:
             # Fallback to local file search
             w = Path(weights_path).expanduser()
-            
+
             # Try finding the file in multiple common locations
             search_paths = [
-                w,                                    # As-is (usually relative to CWD)
-                Path(self.yolo_repo_path) / w,        # Relative to YOLOv5 repo
-                Path(self.yolo_repo_path).parent / w, # Relative to repo parent (our project root)
+                w,  # As-is (usually relative to CWD)
+                Path(self.yolo_repo_path) / w,  # Relative to YOLOv5 repo
+                Path(self.yolo_repo_path).parent
+                / w,  # Relative to repo parent (our project root)
             ]
-            
+
             found_path = None
             for p in search_paths:
                 if p.exists() and p.is_file():
                     found_path = p
                     break
-            
+
             if found_path is None:
-                print(f"[WARNING] YOLOv5 weights not found. Searched: {[str(p) for p in search_paths]}")
+                print(
+                    f"[WARNING] YOLOv5 weights not found. Searched: {[str(p) for p in search_paths]}"
+                )
                 return
 
-            print(f"[INFO] YOLOv5 Loading pre-trained weights from local file: {found_path}")
+            print(
+                f"[INFO] YOLOv5 Loading pre-trained weights from local file: {found_path}"
+            )
             # weights_only=False is required for YOLOv5 checkpoints as they contain custom classes
             ckpt = torch.load(str(found_path), map_location="cpu", weights_only=False)
-            state_dict = ckpt["model"].float().state_dict() if isinstance(ckpt, dict) and "model" in ckpt else ckpt
-        
+            state_dict = (
+                ckpt["model"].float().state_dict()
+                if isinstance(ckpt, dict) and "model" in ckpt
+                else ckpt
+            )
+
         # Filter state_dict by shape to handle class mismatch (Detection head layers)
         # The detection head weights will have different shapes due to num_classes differences
         # (e.g. 80 classes in COCO vs 4 classes in this dataset).
         # This dynamic filtering works for all YOLOv5 variants (n, s, m, l, x) without hardcoding layer indices.
         model_state_dict = model.state_dict()
-        state_dict = {k: v for k, v in state_dict.items() 
-                     if k in model_state_dict and v.shape == model_state_dict[k].shape}
-        
+        state_dict = {
+            k: v
+            for k, v in state_dict.items()
+            if k in model_state_dict and v.shape == model_state_dict[k].shape
+        }
+
         model.load_state_dict(state_dict, strict=False)
         print(f"[INFO] YOLOv5 Weights loaded successfully (backbone and neck only).")
 
@@ -276,7 +309,9 @@ class YOLOv5LightningModule(pl.LightningModule):
 
         if target_dtype is not None:
             self.model = self.model.to(dtype=target_dtype)
-            self.print(f"[INFO] Cast model weights to {target_dtype} for precision={self.trainer.precision}.")
+            self.print(
+                f"[INFO] Cast model weights to {target_dtype} for precision={self.trainer.precision}."
+            )
 
     @property
     def stride(self):
@@ -299,7 +334,7 @@ class YOLOv5LightningModule(pl.LightningModule):
         # we can return the labels as is.
         yolo_labels = yolo_label_tensor.tolist()
         mapped = [int(x) for x in yolo_labels]
-        
+
         # if self.config.debug and self.trainer.is_global_zero and len(yolo_labels) > 0:
         #      # Look for this in the logs to verify both match (e.g. [0, 0] -> [0, 0])
         #      self.print(f"[DEBUG] Evaluation labels (model idx): {yolo_labels[:5]}")
@@ -389,7 +424,9 @@ class YOLOv5LightningModule(pl.LightningModule):
 
     def training_step(self, batch, batch_idx):
         images, targets = batch[0], batch[1]
-        batch_size = int(images.shape[0]) if isinstance(images, torch.Tensor) else len(targets)
+        batch_size = (
+            int(images.shape[0]) if isinstance(images, torch.Tensor) else len(targets)
+        )
         images = images.to(self.device, non_blocking=True).float() / 255.0
         targets = targets.to(self.device, non_blocking=True).float()
 
@@ -400,7 +437,7 @@ class YOLOv5LightningModule(pl.LightningModule):
 
         # Ensure model is in training mode
         self.model.train()
-        
+
         outputs = self.model(images)
         _, train_out = self._extract_model_outputs(outputs)
         if train_out is None:
@@ -417,19 +454,19 @@ class YOLOv5LightningModule(pl.LightningModule):
         #         id2name = self.config.model.label_map
         #         # Ensure we handle mapping regardless of whether keys are int or str
         #         names = [id2name.get(int(i)) or id2name.get(str(int(i))) or f"ID_{int(i)}" for i in unique_ids]
-                
+
         #         self.print(f"[DEBUG] Target IDs in Batch: {unique_ids}")
         #         self.print(f"[DEBUG] Target Names in Batch: {names}")
-                
+
         #         counts = torch.unique(targets[:, 1], return_counts=True)[1].tolist()
         #         self.print(f"[DEBUG] Target Distribution: {dict(zip(names, counts))}")
-            
+
         #     # Anchor Diagnostic
         #     if hasattr(self.model, 'model') and isinstance(self.model.model[-1], torch.nn.Module):
         #         m = self.model.model[-1]
         #         if hasattr(m, 'anchors'):
         #             self.print(f"[DEBUG] Model Anchors (pixels/stride): {m.anchors}")
-            
+
         #     # Loss items: obj_loss, box_loss, cls_loss? (order depends on YOLOv5 version)
         #     # Standard YOLOv5 ComputeLoss returns [box, obj, cls]
         #     if isinstance(loss_items, torch.Tensor):
@@ -453,13 +490,17 @@ class YOLOv5LightningModule(pl.LightningModule):
     @torch.no_grad()
     def _run_eval_step(self, batch, split_name: str):
         images, targets, paths, shapes, batch_image_ids = batch
-        batch_size = int(images.shape[0]) if isinstance(images, torch.Tensor) else len(batch_image_ids)
+        batch_size = (
+            int(images.shape[0])
+            if isinstance(images, torch.Tensor)
+            else len(batch_image_ids)
+        )
         images = images.to(self.device, non_blocking=True).float() / 255.0
         targets = targets.to(self.device, non_blocking=True).float()
 
         # Ensure model is in eval mode for inference
         self.model.eval()
-        
+
         eval_mode = self.config.get("eval_inference", {}).get("mode", "whole")
         ret_dict = {}
 
@@ -495,7 +536,7 @@ class YOLOv5LightningModule(pl.LightningModule):
             for sample_idx, pred in enumerate(pred_list):
                 image_id = int(batch_image_ids[sample_idx])
                 image_ids.append(int(image_id))
-                
+
                 if pred is None or len(pred) == 0:
                     result_map[int(image_id)] = {
                         "boxes": torch.empty((0, 4), dtype=torch.float32),
@@ -513,19 +554,25 @@ class YOLOv5LightningModule(pl.LightningModule):
                     "scores": predn[:, 4].detach().cpu(),
                     "labels": mapped_labels.detach().cpu(),
                 }
-            ret_dict["whole"] = {"predictions": result_map, "image_ids": image_ids, "paths": paths}
+            ret_dict["whole"] = {
+                "predictions": result_map,
+                "image_ids": image_ids,
+                "paths": paths,
+            }
 
         if eval_mode in ["sliced", "both"]:
             sliced_batch_predictions = {}
             sliced_batch_image_ids = []
-            
+
             # Figure out visualization export directories based on self.config settings
             sahi_export_dir = None
             max_samples = self._get_visualization_limit()
             should_viz = False
-            
+
             if split_name == "val":
-                every_n = max(1, int(self.config.checkpointing.visualize_every_n_epochs))
+                every_n = max(
+                    1, int(self.config.checkpointing.visualize_every_n_epochs)
+                )
                 should_viz = (self.current_epoch + 1) % every_n == 0
                 if should_viz and max_samples is not None and max_samples != 0:
                     sahi_export_dir = os.path.join(
@@ -533,7 +580,7 @@ class YOLOv5LightningModule(pl.LightningModule):
                         self.config.checkpointing.visualization_dir,
                         "sahi",
                         f"epoch_{(self.current_epoch + 1):03d}",
-                        split_name
+                        split_name,
                     )
             elif split_name == "test":
                 should_viz = True
@@ -542,107 +589,134 @@ class YOLOv5LightningModule(pl.LightningModule):
                         self.config.checkpointing.save_dir,
                         self.config.checkpointing.visualization_dir,
                         "sahi",
-                        split_name
+                        split_name,
                     )
-            
+
             for sample_idx, img_path in enumerate(paths):
                 image_id = int(batch_image_ids[sample_idx])
                 sliced_batch_image_ids.append(image_id)
-                
+
                 # Resolve full path from ultralytics format paths if needed
-                split_name_for_path = self.config.test_name if "test" in split_name else self.config.val_name
-                full_path = os.path.join(self.config.data.path, "images", split_name_for_path, os.path.basename(img_path))
-                
+                split_name_for_path = (
+                    self.config.test_name
+                    if "test" in split_name
+                    else self.config.val_name
+                )
+                full_path = os.path.join(
+                    self.config.data.path,
+                    "images",
+                    split_name_for_path,
+                    os.path.basename(img_path),
+                )
+
                 if not full_path or not os.path.exists(full_path):
-                    self.print(f"[{split_name.upper()}] WARNING: Cannot find image {full_path} for SAHI. Falling back to whole image.")
+                    self.print(
+                        f"[{split_name.upper()}] WARNING: Cannot find image {full_path} for SAHI. Falling back to whole image."
+                    )
                     if "whole" in ret_dict:
-                         sliced_batch_predictions[image_id] = ret_dict["whole"]["predictions"][image_id]
+                        sliced_batch_predictions[image_id] = ret_dict["whole"][
+                            "predictions"
+                        ][image_id]
                     continue
-                
+
                 def predict_fn(image_np):
                     from data.yolov5_data_module import _letterbox
+
                     # Ensure dimensions match what the model expects
                     im, _, _ = _letterbox(image_np, int(self.config.model.input_size))
                     im = im.transpose((2, 0, 1))[::-1]  # HWC to CHW, BGR to RGB
                     im = np.ascontiguousarray(im)
-                    
+
                     im_tensor = torch.from_numpy(im).to(self.device).float() / 255.0
                     if len(im_tensor.shape) == 3:
                         im_tensor = im_tensor[None]
-                    
+
                     if next(self.model.parameters()).dtype == torch.float16:
                         im_tensor = im_tensor.half()
                     elif next(self.model.parameters()).dtype == torch.bfloat16:
                         im_tensor = im_tensor.bfloat16()
-                    
+
                     with torch.no_grad():
                         out = self.model(im_tensor)
                         infer_out, _ = self._extract_model_outputs(out)
-                        
+
                     conf_thres = float(self.config.model.detection_threshold)
                     iou_thres = float(self.config.model.yolov5.iou_threshold)
                     max_det = int(self.config.model.max_detections)
-                    
+
                     preds = self._non_max_suppression(
-                        infer_out, conf_thres=conf_thres, iou_thres=iou_thres, 
-                        max_det=max_det
+                        infer_out,
+                        conf_thres=conf_thres,
+                        iou_thres=iou_thres,
+                        max_det=max_det,
                     )[0]
-                    
+
                     boxes = torch.empty((0, 4), device=self.device)
                     scores = torch.empty((0,), device=self.device)
                     labels = torch.empty((0,), dtype=torch.long, device=self.device)
-                    
+
                     if preds is not None and len(preds):
                         # Use _letterbox ratio/pad to undo letterbox correctly
-                        _, ratio, (dw, dh) = _letterbox(image_np, int(self.config.model.input_size))
+                        _, ratio, (dw, dh) = _letterbox(
+                            image_np, int(self.config.model.input_size)
+                        )
                         h0, w0 = image_np.shape[:2]
                         shape_meta = ((h0, w0), (ratio, (dw, dh)))
-                        
+
                         preds[:, :4] = self._undo_letterbox(preds[:, :4], shape_meta)
                         boxes = preds[:, :4]
                         scores = preds[:, 4]
                         mapped_labels = self._map_label_ids(preds[:, 5].to(torch.int64))
                         labels = mapped_labels
-                    
+
                     return {
                         "boxes": to_cpu_device(boxes),
                         "scores": to_cpu_device(scores),
-                        "labels": to_cpu_device(labels)
+                        "labels": to_cpu_device(labels),
                     }
 
                 from PIL import Image
+
                 img_pil = Image.open(full_path).convert("RGB")
                 sahi_cfg = self.config.get("eval_inference", {}).get("sahi", {})
                 input_size = int(self.config.model.input_size)
-                
+
                 # Determine if we should visualize this specific image
                 curr_export_dir = None
                 file_name = os.path.basename(full_path)
-                
+
                 if sahi_export_dir:
                     # Check counter to limit visualizations
-                    viz_counter = self.val_viz_counter if split_name == "val" else self.test_viz_counter
+                    viz_counter = (
+                        self.val_viz_counter
+                        if split_name == "val"
+                        else self.test_viz_counter
+                    )
                     if max_samples == -1 or viz_counter < max_samples:
                         curr_export_dir = sahi_export_dir
                         file_name = f"image_{viz_counter}_{file_name}"
-                        
+
                         if split_name == "val":
                             self.val_viz_counter += 1
                         else:
                             self.test_viz_counter += 1
 
                 preds = run_sahi_sliced_eval(
-                    img_pil, 
-                    predict_fn, 
-                    sahi_cfg, 
-                    input_size, 
+                    img_pil,
+                    predict_fn,
+                    sahi_cfg,
+                    input_size,
                     label_map=self.config.model.label_map,
-                    export_dir=curr_export_dir, 
-                    file_name=file_name
+                    export_dir=curr_export_dir,
+                    file_name=file_name,
                 )
                 sliced_batch_predictions[image_id] = preds
-                
-            ret_dict["sliced"] = {"predictions": sliced_batch_predictions, "image_ids": sliced_batch_image_ids, "paths": paths}
+
+            ret_dict["sliced"] = {
+                "predictions": sliced_batch_predictions,
+                "image_ids": sliced_batch_image_ids,
+                "paths": paths,
+            }
 
         return ret_dict
 
@@ -653,36 +727,38 @@ class YOLOv5LightningModule(pl.LightningModule):
             self.validation_step_outputs.append(output["whole"])
         if "sliced" in output:
             self.validation_step_outputs_sliced.append(output["sliced"])
-        
+
         # EMA validation
-        ema_callback = next((cb for cb in self.trainer.callbacks if isinstance(cb, EMACallback)), None)
+        ema_callback = next(
+            (cb for cb in self.trainer.callbacks if isinstance(cb, EMACallback)), None
+        )
         if ema_callback and ema_callback.ema_model:
             original_model = self.model
             self.model = ema_callback.ema_model.module
             ema_output = self._run_eval_step(batch, split_name="val")
             self.model = original_model
-            
+
             if "whole" in ema_output:
                 self.validation_step_outputs_ema.append(ema_output["whole"])
             if "sliced" in ema_output:
                 self.validation_step_outputs_sliced_ema.append(ema_output["sliced"])
-            
+
         # Draw Visualizations occasionally
         # if (self.current_epoch + 1) % max(1, self.config.checkpointing.visualize_every_n_epochs) == 0 and \
         #    self.trainer.is_global_zero and \
         #    (self.val_viz_counter < self.config.checkpointing.visualize_samples or self.config.checkpointing.visualize_samples == -1):
-            
+
         #     visualizer_out = ema_output["whole"] if (ema_callback and ema_callback.ema_model and "whole" in ema_output) else output.get("whole", output.get("sliced", {}))
         #     if "predictions" in visualizer_out:
         #         save_dir = os.path.join(
         #             self.config.checkpointing.save_dir,
-        #             self.config.checkpointing.visualization_dir, 
-        #             f"epoch_{(self.current_epoch+1):03d}", 
+        #             self.config.checkpointing.visualization_dir,
+        #             f"epoch_{(self.current_epoch+1):03d}",
         #             "val"
         #         )
         #         self.val_viz_counter = self._visualize_batch(
-        #             save_dir, 
-        #             visualizer_out["predictions"], 
+        #             save_dir,
+        #             visualizer_out["predictions"],
         #             visualizer_out.get("paths", batch[2]),
         #             visualizer_out["image_ids"],
         #             self.val_viz_counter,
@@ -695,7 +771,7 @@ class YOLOv5LightningModule(pl.LightningModule):
         """Reset validation visualization counter."""
         self.val_viz_counter = 0
         if self.config.checkpointing.visualize_samples == -1:
-            self.config.checkpointing.visualize_samples = float('inf')
+            self.config.checkpointing.visualize_samples = float("inf")
 
     def on_validation_epoch_end(self):
         viz_predictions = None
@@ -708,7 +784,11 @@ class YOLOv5LightningModule(pl.LightningModule):
                 predictions = []
                 image_ids = []
                 for batch_out in all_outputs:
-                    predictions.extend(convert_preds_to_coco(batch_out["predictions"], model_to_coco=self.model_to_coco))
+                    predictions.extend(
+                        convert_preds_to_coco(
+                            batch_out["predictions"], model_to_coco=self.model_to_coco
+                        )
+                    )
                     image_ids.extend(batch_out["image_ids"])
 
                 if len(predictions) > 0:
@@ -718,31 +798,58 @@ class YOLOv5LightningModule(pl.LightningModule):
                         image_ids=sorted(list(set(image_ids))),
                         max_detections=int(self.config.model.max_detections),
                         label_map=self.config.model.label_map,
-                        prefix=f"{prefix_name} performance"
+                        prefix=f"{prefix_name} performance",
                     )
                 else:
                     metrics = {"map": 0.0, "map_50": 0.0, "map_75": 0.0}
 
             metrics = broadcast_object(metrics, src=0)
             for key, value in metrics.items():
-                self.log(f"{base_prefix}/{key}{suffix}", value, prog_bar=(key in {"map", "map_50"}), sync_dist=True)
+                self.log(
+                    f"{base_prefix}/{key}{suffix}",
+                    value,
+                    prog_bar=(key in {"map", "map_50"}),
+                    sync_dist=True,
+                )
                 if key == "map":
-                    self.log(f"{base_prefix}_{key}{suffix}", value, prog_bar=False, sync_dist=True)
+                    self.log(
+                        f"{base_prefix}_{key}{suffix}",
+                        value,
+                        prog_bar=False,
+                        sync_dist=True,
+                    )
 
             outputs_list.clear()
             return merged
 
         if self.validation_step_outputs:
-            viz_predictions = _compute_and_log(self.validation_step_outputs, "Val", "val", "")
-            
-        if self.validation_step_outputs_sliced:
-            viz_predictions = _compute_and_log(self.validation_step_outputs_sliced, "Val Sliced", "val", "_sliced")
+            viz_predictions = _compute_and_log(
+                self.validation_step_outputs, "Val", "val", ""
+            )
 
-        if hasattr(self, "validation_step_outputs_ema") and self.validation_step_outputs_ema:
-            viz_predictions = _compute_and_log(self.validation_step_outputs_ema, "Val EMA", "val", "_ema")
-            
-        if hasattr(self, "validation_step_outputs_sliced_ema") and self.validation_step_outputs_sliced_ema:
-            viz_predictions = _compute_and_log(self.validation_step_outputs_sliced_ema, "Val Sliced EMA", "val", "_sliced_ema")
+        if self.validation_step_outputs_sliced:
+            viz_predictions = _compute_and_log(
+                self.validation_step_outputs_sliced, "Val Sliced", "val", "_sliced"
+            )
+
+        if (
+            hasattr(self, "validation_step_outputs_ema")
+            and self.validation_step_outputs_ema
+        ):
+            viz_predictions = _compute_and_log(
+                self.validation_step_outputs_ema, "Val EMA", "val", "_ema"
+            )
+
+        if (
+            hasattr(self, "validation_step_outputs_sliced_ema")
+            and self.validation_step_outputs_sliced_ema
+        ):
+            viz_predictions = _compute_and_log(
+                self.validation_step_outputs_sliced_ema,
+                "Val Sliced EMA",
+                "val",
+                "_sliced_ema",
+            )
 
         if self.trainer.is_global_zero and viz_predictions is not None:
             self._visualize_aggregated_predictions(viz_predictions, split="val")
@@ -756,31 +863,33 @@ class YOLOv5LightningModule(pl.LightningModule):
             self.test_step_outputs_sliced.append(output["sliced"])
 
         # EMA test
-        ema_callback = next((cb for cb in self.trainer.callbacks if isinstance(cb, EMACallback)), None)
+        ema_callback = next(
+            (cb for cb in self.trainer.callbacks if isinstance(cb, EMACallback)), None
+        )
         if ema_callback and ema_callback.ema_model:
             original_model = self.model
             self.model = ema_callback.ema_model.module
             ema_output = self._run_eval_step(batch, split_name="test")
             self.model = original_model
-            
+
             if "whole" in ema_output:
                 self.test_step_outputs_ema.append(ema_output["whole"])
             if "sliced" in ema_output:
                 self.test_step_outputs_sliced_ema.append(ema_output["sliced"])
-            
+
         # if self.trainer.is_global_zero and \
         #    (self.test_viz_counter < self.config.checkpointing.visualize_samples or self.config.checkpointing.visualize_samples == -1):
-            
+
         #     visualizer_out = ema_output["whole"] if (ema_callback and ema_callback.ema_model and "whole" in ema_output) else output.get("whole", output.get("sliced", {}))
         #     if "predictions" in visualizer_out:
         #         save_dir = os.path.join(
         #             self.config.checkpointing.save_dir,
-        #             self.config.checkpointing.visualization_dir, 
+        #             self.config.checkpointing.visualization_dir,
         #             "test"
         #         )
         #         self.test_viz_counter = self._visualize_batch(
-        #             save_dir, 
-        #             visualizer_out["predictions"], 
+        #             save_dir,
+        #             visualizer_out["predictions"],
         #             visualizer_out.get("paths", batch[2]),
         #             visualizer_out["image_ids"],
         #             self.test_viz_counter,
@@ -793,7 +902,7 @@ class YOLOv5LightningModule(pl.LightningModule):
         """Reset validation visualization counter."""
         self.test_viz_counter = 0
         if self.config.checkpointing.visualize_samples == -1:
-            self.config.checkpointing.visualize_samples = float('inf')
+            self.config.checkpointing.visualize_samples = float("inf")
 
     def _merge_predictions_map(self, gathered_outputs):
         merged = {}
@@ -820,7 +929,11 @@ class YOLOv5LightningModule(pl.LightningModule):
         return True
 
     def _visualize_aggregated_predictions(self, predictions_map, split="val"):
-        if not self.trainer.is_global_zero or not predictions_map or not self._should_visualize(split):
+        if (
+            not self.trainer.is_global_zero
+            or not predictions_map
+            or not self._should_visualize(split)
+        ):
             return
 
         max_samples = self._get_visualization_limit()
@@ -838,7 +951,7 @@ class YOLOv5LightningModule(pl.LightningModule):
         os.makedirs(save_dir, exist_ok=True)
         saved_count = 0
         from collections import Counter
-        
+
         for image_id in sorted(predictions_map.keys()):
             if max_samples is not None and saved_count >= max_samples:
                 break
@@ -847,9 +960,16 @@ class YOLOv5LightningModule(pl.LightningModule):
             img_info = {"file_name": f"image_{image_id}.png"}
             if coco_gt and int(image_id) in getattr(coco_gt, "imgs", {}):
                 img_info = coco_gt.imgs[int(image_id)]
-                
-            split_name = self.config.test_name if split == "test" else self.config.val_name
-            full_path = os.path.join(self.config.data.path, "images", split_name, os.path.basename(img_info["file_name"]))
+
+            split_name = (
+                self.config.test_name if split == "test" else self.config.val_name
+            )
+            full_path = os.path.join(
+                self.config.data.path,
+                "images",
+                split_name,
+                os.path.basename(img_info["file_name"]),
+            )
 
             if not os.path.exists(full_path):
                 continue
@@ -857,6 +977,7 @@ class YOLOv5LightningModule(pl.LightningModule):
             try:
                 import cv2
                 from PIL import Image
+
                 image_arr = cv2.imread(full_path)
                 image_arr = cv2.cvtColor(image_arr, cv2.COLOR_BGR2RGB)
                 image = Image.fromarray(image_arr)
@@ -866,7 +987,9 @@ class YOLOv5LightningModule(pl.LightningModule):
             gt_boxes, gt_labels = [], []
             if coco_gt:
                 try:
-                    gt_anns = coco_gt.loadAnns(coco_gt.getAnnIds(imgIds=[int(image_id)]))
+                    gt_anns = coco_gt.loadAnns(
+                        coco_gt.getAnnIds(imgIds=[int(image_id)])
+                    )
                     for ann in gt_anns:
                         x, y, w, h = ann["bbox"]
                         gt_boxes.append([x, y, x + w, y + h])
@@ -876,8 +999,13 @@ class YOLOv5LightningModule(pl.LightningModule):
 
             if gt_boxes:
                 image = self.draw_boxes(
-                    image, gt_boxes, gt_labels, scores=None, id2label=label_map,
-                    color_override=(0, 255, 0), label_prefix=""
+                    image,
+                    gt_boxes,
+                    gt_labels,
+                    scores=None,
+                    id2label=label_map,
+                    color_override=(0, 255, 0),
+                    label_prefix="",
                 )
 
             pred_class_names = []
@@ -887,34 +1015,64 @@ class YOLOv5LightningModule(pl.LightningModule):
                 valid_labels = preds["labels"][valid_indices]
                 for label in valid_labels:
                     label_item = label.item() if torch.is_tensor(label) else int(label)
-                    class_name = label_map.get(int(label_item)) or label_map.get(str(int(label_item))) or str(label_item)
+                    class_name = (
+                        label_map.get(int(label_item))
+                        or label_map.get(str(int(label_item)))
+                        or str(label_item)
+                    )
                     pred_class_names.append(class_name)
 
                 image = self.draw_boxes(
-                    image, preds["boxes"], preds["labels"], preds["scores"],
-                    id2label=label_map, color_override=(255, 0, 0), label_prefix="", threshold_override=viz_threshold
+                    image,
+                    preds["boxes"],
+                    preds["labels"],
+                    preds["scores"],
+                    id2label=label_map,
+                    color_override=(255, 0, 0),
+                    label_prefix="",
+                    threshold_override=viz_threshold,
                 )
 
-            gt_counts = Counter([label_map.get(int(l)) or label_map.get(str(int(l))) or str(l) for l in gt_labels])
+            gt_counts = Counter(
+                [
+                    label_map.get(int(l)) or label_map.get(str(int(l))) or str(l)
+                    for l in gt_labels
+                ]
+            )
             pred_counts = Counter(pred_class_names)
 
             draw = ImageDraw.Draw(image)
             text_y, line_height = 10, 24
             for cls_name in sorted(set(gt_counts.keys()) | set(pred_counts.keys())):
                 parts = [
-                    (f"{cls_name}: ", "white"), (f"{pred_counts[cls_name]}", "red"),
-                    ("/", "white"), (f"{gt_counts[cls_name]}", "green"),
+                    (f"{cls_name}: ", "white"),
+                    (f"{pred_counts[cls_name]}", "red"),
+                    ("/", "white"),
+                    (f"{gt_counts[cls_name]}", "green"),
                 ]
-                total_width = sum((draw.textbbox((0, 0), text, font=self.font)[2] - draw.textbbox((0, 0), text, font=self.font)[0]) for text, _ in parts)
+                total_width = sum(
+                    (
+                        draw.textbbox((0, 0), text, font=self.font)[2]
+                        - draw.textbbox((0, 0), text, font=self.font)[0]
+                    )
+                    for text, _ in parts
+                )
                 current_x = image.width - total_width - 10
                 for text, color in parts:
-                    draw.text((current_x + 1, text_y + 1), text, fill="black", font=self.font)
+                    draw.text(
+                        (current_x + 1, text_y + 1), text, fill="black", font=self.font
+                    )
                     draw.text((current_x, text_y), text, fill=color, font=self.font)
-                    current_x += (draw.textbbox((0, 0), text, font=self.font)[2] - draw.textbbox((0, 0), text, font=self.font)[0])
+                    current_x += (
+                        draw.textbbox((0, 0), text, font=self.font)[2]
+                        - draw.textbbox((0, 0), text, font=self.font)[0]
+                    )
                 text_y += line_height
 
             original_filename = os.path.basename(img_info["file_name"])
-            image.save(os.path.join(save_dir, f"image_{int(image_id)}_{original_filename}"))
+            image.save(
+                os.path.join(save_dir, f"image_{int(image_id)}_{original_filename}")
+            )
             saved_count += 1
 
     def on_test_epoch_end(self):
@@ -928,7 +1086,11 @@ class YOLOv5LightningModule(pl.LightningModule):
                 predictions = []
                 image_ids = []
                 for batch_out in all_outputs:
-                    predictions.extend(convert_preds_to_coco(batch_out["predictions"], model_to_coco=self.model_to_coco))
+                    predictions.extend(
+                        convert_preds_to_coco(
+                            batch_out["predictions"], model_to_coco=self.model_to_coco
+                        )
+                    )
                     image_ids.extend(batch_out["image_ids"])
 
                 if len(predictions) > 0:
@@ -938,38 +1100,71 @@ class YOLOv5LightningModule(pl.LightningModule):
                         image_ids=sorted(list(set(image_ids))),
                         max_detections=int(self.config.model.max_detections),
                         label_map=self.config.model.label_map,
-                        prefix=f"{prefix_name} performance"
+                        prefix=f"{prefix_name} performance",
                     )
                 else:
                     metrics = {"map": 0.0, "map_50": 0.0, "map_75": 0.0}
 
             metrics = broadcast_object(metrics, src=0)
             for key, value in metrics.items():
-                self.log(f"{base_prefix}/{key}{suffix}", value, prog_bar=(key in {"map", "map_50"}), sync_dist=True)
+                self.log(
+                    f"{base_prefix}/{key}{suffix}",
+                    value,
+                    prog_bar=(key in {"map", "map_50"}),
+                    sync_dist=True,
+                )
 
             outputs_list.clear()
             return merged
 
         if self.test_step_outputs:
-            viz_predictions = _compute_and_log(self.test_step_outputs, "Test", "test", "")
-            
+            viz_predictions = _compute_and_log(
+                self.test_step_outputs, "Test", "test", ""
+            )
+
         if self.test_step_outputs_sliced:
-            viz_predictions = _compute_and_log(self.test_step_outputs_sliced, "Test Sliced", "test", "_sliced")
+            viz_predictions = _compute_and_log(
+                self.test_step_outputs_sliced, "Test Sliced", "test", "_sliced"
+            )
 
         if hasattr(self, "test_step_outputs_ema") and self.test_step_outputs_ema:
-            viz_predictions = _compute_and_log(self.test_step_outputs_ema, "Test EMA", "test", "_ema")
-            
-        if hasattr(self, "test_step_outputs_sliced_ema") and self.test_step_outputs_sliced_ema:
-            viz_predictions = _compute_and_log(self.test_step_outputs_sliced_ema, "Test Sliced EMA", "test", "_sliced_ema")
+            viz_predictions = _compute_and_log(
+                self.test_step_outputs_ema, "Test EMA", "test", "_ema"
+            )
+
+        if (
+            hasattr(self, "test_step_outputs_sliced_ema")
+            and self.test_step_outputs_sliced_ema
+        ):
+            viz_predictions = _compute_and_log(
+                self.test_step_outputs_sliced_ema,
+                "Test Sliced EMA",
+                "test",
+                "_sliced_ema",
+            )
 
         if self.trainer.is_global_zero and viz_predictions is not None:
             self._visualize_aggregated_predictions(viz_predictions, split="test")
 
-    def draw_boxes(self, image, boxes, labels, scores=None, id2label=None, color_override=None, label_prefix="", threshold_override=None):
+    def draw_boxes(
+        self,
+        image,
+        boxes,
+        labels,
+        scores=None,
+        id2label=None,
+        color_override=None,
+        label_prefix="",
+        threshold_override=None,
+    ):
         """Draws bounding boxes on a PIL image."""
         draw = ImageDraw.Draw(image)
-        threshold = threshold_override if threshold_override is not None else self.config.model.draw_threshold
-        
+        threshold = (
+            threshold_override
+            if threshold_override is not None
+            else self.config.model.draw_threshold
+        )
+
         if id2label is None:
             id2label = self.config.model.label_map
 
@@ -977,39 +1172,45 @@ class YOLOv5LightningModule(pl.LightningModule):
             box = boxes[i]
             label = labels[i]
             score = scores[i] if scores is not None else 1.0
-            
+
             if score < threshold:
                 continue
-            
+
             if torch.is_tensor(box):
                 box = box.tolist()
-            
+
             label_id = label.item() if torch.is_tensor(label) else int(label)
-            
+
             if color_override:
                 color = color_override
             else:
                 color = self.PALETTE[label_id % len(self.PALETTE)]
-            
+
             draw.rectangle(box, outline=color, width=3)
-            
-            class_name = id2label.get(label_id) or id2label.get(str(label_id)) or f"class_{label_id}"
+
+            class_name = (
+                id2label.get(label_id)
+                or id2label.get(str(label_id))
+                or f"class_{label_id}"
+            )
             label_text = f"{label_prefix}{class_name}"
             if scores is not None:
                 label_text += f": {score:.2f}"
-                
+
             text_box = draw.textbbox((box[0], box[1]), label_text, font=self.font)
             draw.rectangle(text_box, fill=color)
             draw.text((box[0], box[1]), label_text, fill="white", font=self.font)
-            
+
         return image
 
-    def _visualize_batch(self, save_dir, predictions_map, paths, image_ids, counter, split="val"):
+    def _visualize_batch(
+        self, save_dir, predictions_map, paths, image_ids, counter, split="val"
+    ):
         """Saves visualizations for a batch showing both GT and Predictions."""
         os.makedirs(save_dir, exist_ok=True)
         id2label = self.config.model.label_map
         max_samples = self.config.checkpointing.visualize_samples
-        
+
         if counter == 0:
             self.print(f"[VIZ] Saving visualizations to: {save_dir}")
             self.print(f"[VIZ] Max samples: {max_samples}")
@@ -1020,21 +1221,25 @@ class YOLOv5LightningModule(pl.LightningModule):
                 )
 
         coco_gt = self.test_coco_gt if split == "test" else self.val_coco_gt
-        
+
         # Use draw_threshold for visualization to show only "clean" detections.
         # detection_threshold is still used for the actual metrics/COCO eval.
         viz_threshold = float(self.config.model.draw_threshold)
-        
+
         for i, (path, img_id) in enumerate(zip(paths, image_ids)):
             if counter >= max_samples and max_samples != -1:
                 break
-                
+
             image_id = int(img_id)
-            
+
             # Resolve full path: paths from dataloader are just filenames
-            split_name = self.config.test_name if split == "test" else self.config.val_name
-            full_path = os.path.join(self.config.data.path, "images", split_name, os.path.basename(path))
-            
+            split_name = (
+                self.config.test_name if split == "test" else self.config.val_name
+            )
+            full_path = os.path.join(
+                self.config.data.path, "images", split_name, os.path.basename(path)
+            )
+
             try:
                 image_arr = cv2.imread(full_path)
                 image_arr = cv2.cvtColor(image_arr, cv2.COLOR_BGR2RGB)
@@ -1042,7 +1247,7 @@ class YOLOv5LightningModule(pl.LightningModule):
             except Exception as e:
                 self.print(f"[WARNING] Could not load {path}. Skipping viz.")
                 continue
-                
+
             # --- 1. Scaled Ground Truth Boxes ---
             gt_labels = []
             if coco_gt:
@@ -1050,96 +1255,108 @@ class YOLOv5LightningModule(pl.LightningModule):
                     gt_anns = coco_gt.loadAnns(coco_gt.getAnnIds(imgIds=image_id))
                     gt_boxes = []
                     for ann in gt_anns:
-                        x, y, w, h = ann['bbox'] # xywh
-                        gt_boxes.append([x, y, x + w, y + h]) # xyxy
-                        gt_labels.append(ann['category_id'])
+                        x, y, w, h = ann["bbox"]  # xywh
+                        gt_boxes.append([x, y, x + w, y + h])  # xyxy
+                        gt_labels.append(ann["category_id"])
 
                     image = self.draw_boxes(
-                        image, 
-                        gt_boxes, 
-                        gt_labels, 
-                        scores=None, 
+                        image,
+                        gt_boxes,
+                        gt_labels,
+                        scores=None,
                         id2label=self.config.model.label_map,
-                        color_override=(0, 255, 0), # Green
-                        label_prefix=""
+                        color_override=(0, 255, 0),  # Green
+                        label_prefix="",
                     )
                 except Exception:
                     pass
-            
+
             # --- 2. Prediction Boxes ---
             pred_class_names = []
             if image_id in predictions_map:
                 preds = predictions_map[image_id]
-                n_preds = len(preds['boxes'])
+                n_preds = len(preds["boxes"])
                 if n_preds > 0:
-                    max_score = float(preds['scores'].max()) if n_preds > 0 else 0.0
-                    above_thresh = int((preds['scores'] >= viz_threshold).sum())
+                    max_score = float(preds["scores"].max()) if n_preds > 0 else 0.0
+                    above_thresh = int((preds["scores"] >= viz_threshold).sum())
                     # self.print(f"[VIZ] image_id={image_id}: {n_preds} preds, max_score={max_score:.4f}, above_thresh({viz_threshold})={above_thresh}")
-                    
+
                     # Collect names for counts (filtered by threshold)
-                    valid_indices = preds['scores'] >= viz_threshold
-                    valid_labels = preds['labels'][valid_indices]
+                    valid_indices = preds["scores"] >= viz_threshold
+                    valid_labels = preds["labels"][valid_indices]
                     label_map = self.config.model.label_map
                     for l in valid_labels:
                         l_item = l.item() if torch.is_tensor(l) else int(l)
-                        name = label_map.get(int(l_item)) or label_map.get(str(l_item)) or str(l_item)
+                        name = (
+                            label_map.get(int(l_item))
+                            or label_map.get(str(l_item))
+                            or str(l_item)
+                        )
                         pred_class_names.append(name)
-                        
+
                 image = self.draw_boxes(
-                    image, 
-                    preds['boxes'], 
-                    preds['labels'], 
-                    preds['scores'], 
+                    image,
+                    preds["boxes"],
+                    preds["labels"],
+                    preds["scores"],
                     id2label=self.config.model.label_map,
-                    color_override=(255, 0, 0), # Red
+                    color_override=(255, 0, 0),  # Red
                     label_prefix="",
                     threshold_override=viz_threshold,
                 )
-            
+
             # --- 3. Visualization Counts & Filename ---
             from collections import Counter
+
             label_map = self.config.model.label_map
-            
+
             # GT Counts
-            gt_counts = Counter([label_map.get(int(l)) or label_map.get(str(l)) or str(l) for l in gt_labels])
-            
+            gt_counts = Counter(
+                [
+                    label_map.get(int(l)) or label_map.get(str(l)) or str(l)
+                    for l in gt_labels
+                ]
+            )
+
             # Pred Counts
             pred_counts = Counter(pred_class_names)
-            
+
             # Draw Counts on Image (Top Right)
             draw = ImageDraw.Draw(image)
             text_y = 10
             line_height = 24
-            
+
             all_classes = set(gt_counts.keys()) | set(pred_counts.keys())
-            
+
             for cls_name in sorted(all_classes):
                 # Parts to draw: (Text, Color)
                 parts = [
                     (f"{cls_name}: ", "white"),
                     (f"{pred_counts[cls_name]}", "red"),
                     ("/", "white"),
-                    (f"{gt_counts[cls_name]}", "green")
+                    (f"{gt_counts[cls_name]}", "green"),
                 ]
-                
+
                 # Calculate total width to align right
                 total_width = 0
                 for text, _ in parts:
                     bbox = draw.textbbox((0, 0), text, font=self.font)
                     total_width += bbox[2] - bbox[0]
-                
+
                 current_x = image.width - total_width - 10
-                
+
                 for text, color in parts:
                     # Draw shadow
-                    draw.text((current_x + 1, text_y + 1), text, fill="black", font=self.font)
+                    draw.text(
+                        (current_x + 1, text_y + 1), text, fill="black", font=self.font
+                    )
                     # Draw text
                     draw.text((current_x, text_y), text, fill=color, font=self.font)
-                    
+
                     # Advance cursor
                     bbox = draw.textbbox((0, 0), text, font=self.font)
                     current_x += bbox[2] - bbox[0]
-                
+
                 text_y += line_height
 
             # Construct new filename
@@ -1149,19 +1366,19 @@ class YOLOv5LightningModule(pl.LightningModule):
                 prefix = f"image_{class_str}_"
             else:
                 prefix = "image_no_detections_"
-            
+
             original_filename = os.path.basename(path)
             new_filename = f"{prefix}{original_filename}"
             new_filename = new_filename.replace("image_image_", "image_")
-            
+
             save_path = os.path.join(save_dir, new_filename)
             image.save(save_path)
             counter += 1
             # if counter % 500 == 0:
             #     self.print(f"[VIZ] {split.upper()} progress: saved {counter} images...")
-            
+
         return counter
-        
+
     @torch.no_grad()
     def predict_batch(self, images, conf_threshold=None, iou_threshold=None):
         """Simple inference helper for external inference scripts."""
@@ -1185,16 +1402,20 @@ class YOLOv5LightningModule(pl.LightningModule):
         yolo_cfg = getattr(self.config.model, "yolov5", None)
         if yolo_cfg and hasattr(yolo_cfg, "optimizer"):
             opt_cfg = yolo_cfg.optimizer
-            self.print(f"🚀 Using YOLOv5-specific optimizer settings: {opt_cfg.type}, lr={opt_cfg.lr}")
+            self.print(
+                f"🚀 Using YOLOv5-specific optimizer settings: {opt_cfg.type}, lr={opt_cfg.lr}"
+            )
         else:
             opt_cfg = self.config.optimizer.optimizer
             self.print(f"🚀 Using global optimizer settings: lr={opt_cfg.lr}")
-            
+
         sch_cfg = self.config.scheduler
 
         params = [p for p in self.model.parameters() if p.requires_grad]
 
-        if getattr(opt_cfg, "type", "adamw").lower() == "sgd" or ("momentum" in opt_cfg and "nesterov" in opt_cfg):
+        if getattr(opt_cfg, "type", "adamw").lower() == "sgd" or (
+            "momentum" in opt_cfg and "nesterov" in opt_cfg
+        ):
             optimizer = torch.optim.SGD(
                 params,
                 lr=float(opt_cfg.lr),
@@ -1249,7 +1470,9 @@ class YOLOv5LightningModule(pl.LightningModule):
         This avoids stepping LR when AMP/overflow skips optimizer.step().
         """
         optimizer = getattr(scheduler, "optimizer", None)
-        optimizer_has_stepped = optimizer is None or getattr(optimizer, "_step_count", 0) > 0
+        optimizer_has_stepped = (
+            optimizer is None or getattr(optimizer, "_step_count", 0) > 0
+        )
         if not optimizer_has_stepped:
             return
 

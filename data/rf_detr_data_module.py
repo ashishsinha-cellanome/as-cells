@@ -75,7 +75,11 @@ class RFDETRDataModule(pl.LightningDataModule):
             else make_coco_transforms
         )
         # Non-square path in upstream library has no explicit "test" branch.
-        transform_image_set = image_set if bool(args.square_resize_div_64) else ("val" if image_set == "test" else image_set)
+        transform_image_set = (
+            image_set
+            if bool(args.square_resize_div_64)
+            else ("val" if image_set == "test" else image_set)
+        )
         return transform_fn(
             transform_image_set,
             args.resolution,
@@ -92,7 +96,11 @@ class RFDETRDataModule(pl.LightningDataModule):
         return CocoDetection(
             img_folder=image_root,
             ann_file=ann_path,
-            transforms=self._build_transforms("test" if split_name == self.config.test_name else ("val" if split_name == self.config.val_name else "train")),
+            transforms=self._build_transforms(
+                "test"
+                if split_name == self.config.test_name
+                else ("val" if split_name == self.config.val_name else "train")
+            ),
             include_masks=False,
         )
 

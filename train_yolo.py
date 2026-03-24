@@ -8,7 +8,10 @@ import pytorch_lightning as pl
 from pycocotools.coco import COCO
 from hydra.utils import to_absolute_path
 from omegaconf import DictConfig, OmegaConf
-OmegaConf.register_new_resolver("extract_name", lambda path: path.split("/")[-1], replace=True)
+
+OmegaConf.register_new_resolver(
+    "extract_name", lambda path: path.split("/")[-1], replace=True
+)
 OmegaConf.register_new_resolver("oc.eval", eval, replace=True)
 import hydra
 from hydra.core.hydra_config import HydraConfig
@@ -18,7 +21,12 @@ from utils.distributed_utils import setup_cluster_env, rank_zero_print
 from data.yolo_data_module import YOLOv5DataModule
 from models.yolo_lightning_module import YOLOv5LightningModule
 
-from pytorch_lightning.callbacks import EarlyStopping, LearningRateMonitor, ModelCheckpoint, ModelSummary
+from pytorch_lightning.callbacks import (
+    EarlyStopping,
+    LearningRateMonitor,
+    ModelCheckpoint,
+    ModelSummary,
+)
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.plugins.environments import SLURMEnvironment
 
@@ -34,8 +42,10 @@ from utils.test_only_checkpoint_restore import (
 
 import torch.distributed as dist
 import wandb
+
 # setup_cluster_env()  # Moved inside main()
 torch.set_float32_matmul_precision("medium")
+
 
 def setup_logger(config: DictConfig):
     wandb_cfg = config.logging.wandb
@@ -52,7 +62,7 @@ def setup_logger(config: DictConfig):
         config=cfg_for_log,
         save_dir=os.getcwd(),
         log_model=False,
-        reinit='finish_previous',
+        reinit="finish_previous",
     )
 
 
@@ -62,7 +72,9 @@ def setup_callbacks(config: DictConfig):
     callbacks = [
         ModelCheckpoint(
             dirpath=ckpt_dir,
-            filename="yolov5-regular-epoch-{epoch:02d}-val_map-{" + ckpt_cfg.monitor.replace("/", "_") + ":.4f}",
+            filename="yolov5-regular-epoch-{epoch:02d}-val_map-{"
+            + ckpt_cfg.monitor.replace("/", "_")
+            + ":.4f}",
             monitor=ckpt_cfg.monitor,
             mode=ckpt_cfg.mode,
             save_top_k=ckpt_cfg.save_top_k,
@@ -74,25 +86,35 @@ def setup_callbacks(config: DictConfig):
         LearningRateMonitor(logging_interval="step"),
         ModelSummary(max_depth=2),
         EarlyStopping(
-            monitor="val/map_ema" if hasattr(config.model, "ema") and config.model.ema.enabled else ckpt_cfg.monitor,
+            monitor="val/map_ema"
+            if hasattr(config.model, "ema") and config.model.ema.enabled
+            else ckpt_cfg.monitor,
             patience=10,
             mode=ckpt_cfg.mode,
             verbose=True,
         ),
     ]
-    
+
     # EMA Callback and Checkpoint (If enabled)
-    if hasattr(config.model, 'ema') and config.model.ema.enabled:
-        warmup_steps = config.model.ema.get('warmup_steps', 0)
-        tau = config.model.ema.get('tau', 2000)
-        rank_zero_print(f"💡 EMA enabled: Adding EMACallback with decay={config.model.ema.decay}, tau={tau}, warmup_steps={warmup_steps}")
-        callbacks.append(EMACallback(decay=config.model.ema.decay, tau=tau, warmup_steps=warmup_steps))
+    if hasattr(config.model, "ema") and config.model.ema.enabled:
+        warmup_steps = config.model.ema.get("warmup_steps", 0)
+        tau = config.model.ema.get("tau", 2000)
+        rank_zero_print(
+            f"💡 EMA enabled: Adding EMACallback with decay={config.model.ema.decay}, tau={tau}, warmup_steps={warmup_steps}"
+        )
+        callbacks.append(
+            EMACallback(
+                decay=config.model.ema.decay, tau=tau, warmup_steps=warmup_steps
+            )
+        )
 
         ema_monitor = "val/map_ema"
         callbacks.append(
             ModelCheckpoint(
                 dirpath=ckpt_dir,
-                filename="yolov5-ema-epoch-{epoch:02d}-val_map_ema-{" + ema_monitor.replace("/", "_") + ":.4f}",
+                filename="yolov5-ema-epoch-{epoch:02d}-val_map_ema-{"
+                + ema_monitor.replace("/", "_")
+                + ":.4f}",
                 monitor=ema_monitor,
                 mode=ckpt_cfg.mode,
                 save_top_k=ckpt_cfg.save_top_k,
@@ -102,11 +124,14 @@ def setup_callbacks(config: DictConfig):
                 verbose=True,
             )
         )
-        
+
     if "backup_dir" in ckpt_cfg and ckpt_cfg.backup_dir:
-        callbacks.append(BackupToNASCallback(backup_dir=to_absolute_path(ckpt_cfg.backup_dir)))
+        callbacks.append(
+            BackupToNASCallback(backup_dir=to_absolute_path(ckpt_cfg.backup_dir))
+        )
 
     return callbacks
+
 
 @hydra.main(config_path="configs", config_name="config.yaml", version_base=None)
 def main(config: DictConfig):
@@ -116,12 +141,12 @@ def main(config: DictConfig):
 
     pl.seed_everything(config.seed, workers=True)
     setup_cluster_env()
-    
+
     OmegaConf.set_struct(config, False)
     base_save_dir = hydra.utils.to_absolute_path(config.checkpointing.save_dir)
     run_save_dir = os.path.join(base_save_dir, config.run_name)
     config.checkpointing.save_dir = run_save_dir
-    
+
     if config.test_only:
         early_ckpt_path = _resolve_ckpt_path(config, run_save_dir=run_save_dir)
         if not early_ckpt_path:
@@ -134,17 +159,22 @@ def main(config: DictConfig):
         # Inject YOLO repo into sys.path so torch.load can deserialize native YOLO model classes
         import sys
         import importlib
+
         original_path = sys.path.copy()
         original_modules = {}
         try:
-            if hasattr(config, "model") and hasattr(config.model, "yolov5") and config.model.yolov5 is not None:
+            if (
+                hasattr(config, "model")
+                and hasattr(config.model, "yolov5")
+                and config.model.yolov5 is not None
+            ):
                 yolo_repo_path = to_absolute_path(config.model.yolov5.repo_path)
                 # Remove current directory and project paths from sys.path
                 sys.path = [p for p in sys.path if p not in ("", ".", str(os.getcwd()))]
                 if yolo_repo_path not in sys.path:
                     sys.path.insert(0, yolo_repo_path)
                     rank_zero_print(f"Injected YOLO repo path: {yolo_repo_path}")
-                    
+
                 for key in list(sys.modules.keys()):
                     if key.startswith(("models", "utils", "detect", "export")):
                         original_modules[key] = sys.modules.pop(key)
@@ -152,66 +182,75 @@ def main(config: DictConfig):
             rank_zero_print(f"Warning: Could not isolate YOLO repo path. {e}")
 
         test_only_checkpoint = _load_ckpt(early_ckpt_path)
-        
+
         # Restore sys.path
         sys.path = original_path
-        
+
         config = _merge_test_only_config_from_ckpt(config, test_only_checkpoint)
         OmegaConf.set_struct(config, False)
         config.initialization.load_from_checkpoint = early_ckpt_path
         config.checkpointing.save_dir = run_save_dir
 
         # Single selected-model evaluation in test_only mode (no EMA callback branch).
-        if hasattr(config, "model") and hasattr(config.model, "ema") and config.model.ema is not None:
+        if (
+            hasattr(config, "model")
+            and hasattr(config.model, "ema")
+            and config.model.ema is not None
+        ):
             config.model.ema.enabled = False
-            rank_zero_print("test_only: disabled EMA callback/branch for single selected-model evaluation.")
+            rank_zero_print(
+                "test_only: disabled EMA callback/branch for single selected-model evaluation."
+            )
 
-        test_only_weight_source = _select_eval_weights_source(early_ckpt_path, test_only_checkpoint, config)
-        rank_zero_print(f"test_only: selected checkpoint weight source = {test_only_weight_source.upper()}")
+        test_only_weight_source = _select_eval_weights_source(
+            early_ckpt_path, test_only_checkpoint, config
+        )
+        rank_zero_print(
+            f"test_only: selected checkpoint weight source = {test_only_weight_source.upper()}"
+        )
 
     ckpt_path = _resolve_ckpt_path(config, run_save_dir=run_save_dir)
     OmegaConf.set_struct(config, True)
-    
+
     data_path = hydra.utils.to_absolute_path(config.data.path)
-    val_json = os.path.join(data_path, f'{config.data.val_name}_annotations.json')
-    test_json = os.path.join(data_path, f'{config.data.test_name}_annotations.json')
-    
+    val_json = os.path.join(data_path, f"{config.data.val_name}_annotations.json")
+    test_json = os.path.join(data_path, f"{config.data.test_name}_annotations.json")
+
     val_coco_gt = COCO(val_json)
     test_coco_gt = COCO(test_json)
 
-    if 'info' not in val_coco_gt.dataset:
-        val_coco_gt.dataset['info'] = {}
-    if 'info' not in test_coco_gt.dataset:
-        test_coco_gt.dataset['info'] = {}
+    if "info" not in val_coco_gt.dataset:
+        val_coco_gt.dataset["info"] = {}
+    if "info" not in test_coco_gt.dataset:
+        test_coco_gt.dataset["info"] = {}
 
-
-    # Note: Map YOLO sequential IDs directly to your COCO Category IDs 
+    # Note: Map YOLO sequential IDs directly to your COCO Category IDs
     # Example: If YOLO class 0 is 'cell', and COCO uses ID 0 for 'cell', this map is {0:0, 1:1, etc.}
     # model_to_coco = {int(k): int(k) for k in config.model.label_map.keys()}
     # Dynamically build YOLO ID -> COCO ID mapping based on class names
     name_to_yolo_id = {v: int(k) for k, v in config.model.label_map.items()}
     model_to_coco = {}
-    
+
     for coco_cat_id, cat_info in val_coco_gt.cats.items():
-        cat_name = cat_info['name']
+        cat_name = cat_info["name"]
         if cat_name in name_to_yolo_id:
             yolo_id = name_to_yolo_id[cat_name]
             model_to_coco[yolo_id] = coco_cat_id
-            
+
     # Fallback just in case some classes aren't in the val set
     for yolo_id in config.model.label_map.keys():
         if int(yolo_id) not in model_to_coco:
             model_to_coco[int(yolo_id)] = int(yolo_id)
-            
+
     print(f"[INFO] YOLO to COCO ID Mapping: {model_to_coco}")
 
     data_module = YOLOv5DataModule(config)
     model = YOLOv5LightningModule(
-        config=config, 
+        config=config,
         yolo_repo_path=config.model.yolov5.repo_path,
         model_to_coco=model_to_coco,
-        val_coco_gt=val_coco_gt, 
-        test_coco_gt=test_coco_gt
+        val_coco_gt=val_coco_gt,
+        test_coco_gt=test_coco_gt,
     )
 
     logger = setup_logger(config)
@@ -220,6 +259,7 @@ def main(config: DictConfig):
     callbacks = setup_callbacks(config)
 
     import inspect
+
     trainer_kwargs = dict(
         accelerator=config.trainer.accelerator,
         devices=config.trainer.devices,
@@ -247,30 +287,44 @@ def main(config: DictConfig):
             trainer._data_connector._use_distributed_sampler = False
         if hasattr(trainer._data_connector, "_replace_sampler_ddp"):
             trainer._data_connector._replace_sampler_ddp = False
-    
+
     if config.get("test_only", False):
-        if not ckpt_path: raise ValueError("Must provide load_from_checkpoint for test-only.")
+        if not ckpt_path:
+            raise ValueError("Must provide load_from_checkpoint for test-only.")
         if test_only_checkpoint is None:
             test_only_checkpoint = _load_ckpt(ckpt_path)
         if test_only_weight_source is None:
-            test_only_weight_source = _select_eval_weights_source(ckpt_path, test_only_checkpoint)
+            test_only_weight_source = _select_eval_weights_source(
+                ckpt_path, test_only_checkpoint
+            )
 
-        rank_zero_print(f"Loading {test_only_weight_source.upper()} weights for test-only evaluation...")
+        rank_zero_print(
+            f"Loading {test_only_weight_source.upper()} weights for test-only evaluation..."
+        )
         missing_keys, unexpected_keys = _load_selected_weights(
             model, test_only_checkpoint, test_only_weight_source
         )
         if missing_keys:
-            rank_zero_print(f"⚠️  Missing keys during test-only load: {missing_keys[:10]} ...")
+            rank_zero_print(
+                f"⚠️  Missing keys during test-only load: {missing_keys[:10]} ..."
+            )
         if unexpected_keys:
-            rank_zero_print(f"⚠️  Unexpected keys during test-only load: {unexpected_keys[:10]} ...")
+            rank_zero_print(
+                f"⚠️  Unexpected keys during test-only load: {unexpected_keys[:10]} ..."
+            )
 
         # Manual weight loading above; do not ask Lightning to restore checkpoint again.
         trainer.test(model, datamodule=data_module)
     else:
-        trainer.fit(model, datamodule=data_module, ckpt_path=ckpt_path, weights_only=False)
+        trainer.fit(
+            model, datamodule=data_module, ckpt_path=ckpt_path, weights_only=False
+        )
         if torch.distributed.is_available() and torch.distributed.is_initialized():
             torch.distributed.barrier()
-        trainer.test(model, datamodule=data_module, ckpt_path="best", weights_only=False)
+        trainer.test(
+            model, datamodule=data_module, ckpt_path="best", weights_only=False
+        )
+
 
 if __name__ == "__main__":
     main()

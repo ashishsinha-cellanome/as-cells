@@ -46,10 +46,14 @@ def setup_cluster_env():
         try:
             node_list = os.environ["SLURM_NODELIST"]
             # Get hostnames from slurm nodelist
-            host_output = subprocess.check_output(
-                ["scontrol", "show", "hostnames", node_list],
-                stderr=subprocess.DEVNULL,
-            ).decode().splitlines()
+            host_output = (
+                subprocess.check_output(
+                    ["scontrol", "show", "hostnames", node_list],
+                    stderr=subprocess.DEVNULL,
+                )
+                .decode()
+                .splitlines()
+            )
             if host_output:
                 os.environ["MASTER_ADDR"] = host_output[0]
         except Exception:
@@ -79,6 +83,7 @@ def get_rank():
 def rank_zero_print(*args, **kwargs):
     if get_rank() == 0:
         print(*args, **kwargs)
+
 
 def rank_print(*args, **kwargs):
     """Print on all processes, prefixed with rank."""

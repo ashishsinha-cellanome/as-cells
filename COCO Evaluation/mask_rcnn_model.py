@@ -18,7 +18,9 @@ from torchvision.transforms import functional as F
 # MODEL_WEIGHTS_PATH: Final[str] = '/home/cellareye/Cellanome/dl-mehdi/Mask RCNN/checkpoints/cell_bead_cage_nucl_cyto_mix_crop_0p1_bbox_0p7_1_rs_0p25_blur_2_bs_8_epochs_2.pt'
 # MODEL_WEIGHTS_PATH: Final[str] = '/home/cellareye/Cellanome/dl-mehdi/Mask RCNN/checkpoints/cell_bead_cage_nucl_cyto_hela_mix_crop_0p1_bbox_0p7_1_rs_0p25_blur_2_bs_8_epochs_1cl_lrs.pt'
 # MODEL_WEIGHTS_PATH: Final[str] = '/home/cellareye/Cellanome/dl-mehdi/Mask RCNN/checkpoints/20240923_sets_1_2_3_6_to_38_0p1_bbox_0p7_1_rs_0p25_blur_2_bs_8_epochs_1cl_lrs.pt'
-MODEL_WEIGHTS_PATH: Final[str] = '/home/cellareye/Cellanome/dl-mehdi/Mask RCNN/checkpoints/preadipocytes_overlaid_with_nucleus_large.pt'
+MODEL_WEIGHTS_PATH: Final[str] = (
+    "/home/cellareye/Cellanome/dl-mehdi/Mask RCNN/checkpoints/preadipocytes_overlaid_with_nucleus_large.pt"
+)
 # MODEL_WEIGHTS_PATH: Final[str] = '/home/cellareye/Cellanome/dl-mehdi/Mask RCNN/checkpoints/20250109_sets_1_2_3_6_to_41_0p1_bbox_0p7_1_rs_0p25_blur_2_bs_8_epochs_1cl_lrs.pt'
 # MODEL_WEIGHTS_PATH: Final[str] = '/home/cellareye/Cellanome/dl-mehdi/Mask RCNN/checkpoints/nuclei_bf_crop_2_0p1_bbox_0p8_1_rs_0p25_blur_2_bs_14_epochs.pt'
 # MODEL_WEIGHTS_PATH: Final[str] = '/home/cellareye/Cellanome/dl-mehdi/Mask RCNN/checkpoints/nucl_cage_bf_crop_3_0p1_bbox_0p6_1_rs_0p25_blur_2_bs_14_epochs.pt'
@@ -28,7 +30,6 @@ DEFAULT_DETECTION_CONFIDENCE: Final[float] = 0.5
 DEFAULT_MASK_THRESHOLD_FOR_BBOX_EXPANSION: Final[float] = 0.1
 DEFAULT_BBOX_EXPANSION_FACTOR: Final[float] = 0.2
 MAX_BBOX_EXPANSION_FACTOR: Final[float] = 0.25
-
 
 
 # Utility functions
@@ -61,12 +62,15 @@ def iou_batch(bboxes1: np.ndarray, bboxes2: np.ndarray) -> np.ndarray:
     )  # pairwise union area NxM
     return inter_areas / union_areas  # pairwise intersection divided by union (iou) NxM
 
-def overlap_batch(bboxes1: np.ndarray, bboxes2: np.ndarray, ordered: bool = False) -> np.ndarray:
-    """Given Nx4 & Mx4 ndarrays of bounding boxes, compute pairwise overlaps defined as the intersection over 
+
+def overlap_batch(
+    bboxes1: np.ndarray, bboxes2: np.ndarray, ordered: bool = False
+) -> np.ndarray:
+    """Given Nx4 & Mx4 ndarrays of bounding boxes, compute pairwise overlaps defined as the intersection over
     the smallest box area (ordered set to False); a small box fully enclosed by a large box has an "overlap" of 1.
-    if ordered is set to 1, the overlap is the intersection over the area of the box from bboxes2 set. In this case, 
+    if ordered is set to 1, the overlap is the intersection over the area of the box from bboxes2 set. In this case,
     overlap is close to 1 only if the box from bboxes2 lies inside the box from bboxes1"""
-    
+
     # expand dims to allow computing pairwise overlap via outerproducts (creates NxM below)
     bboxes1 = np.expand_dims(bboxes1, 1)  # Nx1x4
     bboxes2 = np.expand_dims(bboxes2, 0)  # 1xMx4
@@ -76,31 +80,45 @@ def overlap_batch(bboxes1: np.ndarray, bboxes2: np.ndarray, ordered: bool = Fals
     inter_y1s = np.maximum(bboxes1[..., 1], bboxes2[..., 1])  # pairwise max NxM
     inter_x2s = np.minimum(bboxes1[..., 2], bboxes2[..., 2])  # pairwise min NxM
     inter_y2s = np.minimum(bboxes1[..., 3], bboxes2[..., 3])  # pairwise min NxM
-    inter_ws = np.maximum(0., inter_x2s - inter_x1s)  # pairwise width of intersection rectangle NxM
-    inter_hs = np.maximum(0., inter_y2s - inter_y1s)  # pairwise height of intersection rectangle NxM
+    inter_ws = np.maximum(
+        0.0, inter_x2s - inter_x1s
+    )  # pairwise width of intersection rectangle NxM
+    inter_hs = np.maximum(
+        0.0, inter_y2s - inter_y1s
+    )  # pairwise height of intersection rectangle NxM
     inter_areas = inter_ws * inter_hs  # pairwise intersection area NxM
     if ordered:
         # use the box area of bboxes2 as the denominator
-        smallest_bb_areas = (bboxes2[..., 2] - bboxes2[..., 0]) * (bboxes2[..., 3] - bboxes2[..., 1])
+        smallest_bb_areas = (bboxes2[..., 2] - bboxes2[..., 0]) * (
+            bboxes2[..., 3] - bboxes2[..., 1]
+        )
     else:
-        smallest_bb_areas = (np.minimum((bboxes1[..., 2] - bboxes1[..., 0])
-                                        * (bboxes1[..., 3] - bboxes1[..., 1]),
-                                        (bboxes2[..., 2] - bboxes2[..., 0])
-                                        * (bboxes2[..., 3] - bboxes2[..., 1]))
-                             + 1e-30)  # smallest bb area of each paired box NXM
-    return inter_areas / smallest_bb_areas  # pairwise intersection divided by smallest box (overlap) NxM
+        smallest_bb_areas = (
+            np.minimum(
+                (bboxes1[..., 2] - bboxes1[..., 0])
+                * (bboxes1[..., 3] - bboxes1[..., 1]),
+                (bboxes2[..., 2] - bboxes2[..., 0])
+                * (bboxes2[..., 3] - bboxes2[..., 1]),
+            )
+            + 1e-30
+        )  # smallest bb area of each paired box NXM
+    return (
+        inter_areas / smallest_bb_areas
+    )  # pairwise intersection divided by smallest box (overlap) NxM
 
 
-def iou_mask_pair(box1: np.ndarray, mask1: np.ndarray, box2: np.ndarray, mask2: np.ndarray) -> float:
+def iou_mask_pair(
+    box1: np.ndarray, mask1: np.ndarray, box2: np.ndarray, mask2: np.ndarray
+) -> float:
     """
-    Given two np.uint8 M1xN1 and M2xN2 numpy arrays (mask1, mask2) for two object masks and 
-    two (4,) (4-element) integer numpy arrays of the top-left/bottom-right corners of the 
-    bounding boxes around these objects (box1, box2), the code returns the IoU between the masks of the two objects. 
-    The passed masks should be defined within the passed bounding boxes, and should have 
-    values set to 1 for the object. The bounding boxes should be passed in xtl, ytl, xbr, ybr order, e.g.,  
+    Given two np.uint8 M1xN1 and M2xN2 numpy arrays (mask1, mask2) for two object masks and
+    two (4,) (4-element) integer numpy arrays of the top-left/bottom-right corners of the
+    bounding boxes around these objects (box1, box2), the code returns the IoU between the masks of the two objects.
+    The passed masks should be defined within the passed bounding boxes, and should have
+    values set to 1 for the object. The bounding boxes should be passed in xtl, ytl, xbr, ybr order, e.g.,
     if [xtl, ytl, xbr, ybr] are the passed integer values of the top-left and bottle-right corner of the bounding box
     for an object, the passed masks should be a numpy array of type np.uint8 and size (ybr - ytl, xbr - xtl)
-    with values set to 1 for the object. 
+    with values set to 1 for the object.
     """
     # union of the box coordinates, make sure the coordinates are integers
     xtl_1, ytl_1, xbr_1, ybr_1 = box1.astype(int)
@@ -111,13 +129,14 @@ def iou_mask_pair(box1: np.ndarray, mask1: np.ndarray, box2: np.ndarray, mask2: 
     xbr: int = max(xbr_1, xbr_2)
     ybr: int = max(ybr_1, ybr_2)
     union_mask_1: np.ndarray = np.zeros((ybr - ytl, xbr - xtl), np.uint8)
-    union_mask_1[(ytl_1 - ytl):(ybr_1 - ytl), (xtl_1 - xtl):(xbr_1 - xtl)] = mask1
+    union_mask_1[(ytl_1 - ytl) : (ybr_1 - ytl), (xtl_1 - xtl) : (xbr_1 - xtl)] = mask1
     union_mask_2: np.ndarray = np.zeros((ybr - ytl, xbr - xtl), np.uint8)
-    union_mask_2[(ytl_2 - ytl):(ybr_2 - ytl), (xtl_2 - xtl):(xbr_2 - xtl)] = mask2
+    union_mask_2[(ytl_2 - ytl) : (ybr_2 - ytl), (xtl_2 - xtl) : (xbr_2 - xtl)] = mask2
     union: int = cv2.bitwise_or(union_mask_1, union_mask_2).sum()
     intersection: int = cv2.bitwise_and(union_mask_1, union_mask_2).sum()
 
     return intersection / (float(union) + 1e-30)
+
 
 # a function to return the area of bounding box
 def box_area(box: np.array) -> float:
@@ -127,26 +146,34 @@ def box_area(box: np.array) -> float:
     Return the area.
     """
     return (box[3] - box[1]) * (box[2] - box[0])
-    
+
+
 def show_detections(input_image, predictions, label_map):
 
     # colors for displaying bounding boxes
-    COLORS = [(0, 0, 255), (255, 0, 0), (0, 255, 0), (255, 255, 0), (255, 0, 255), (0, 255, 255)]
-    
+    COLORS = [
+        (0, 0, 255),
+        (255, 0, 0),
+        (0, 255, 0),
+        (255, 255, 0),
+        (255, 0, 255),
+        (0, 255, 255),
+    ]
+
     class_ids = list(label_map.keys())
     if isinstance(input_image, np.ndarray):
         image = input_image.copy()
     else:
         # convert to a numpy array
         image = np.array(input_image)
-    
+
     # convert to 3-channels
     if len(image.shape) < 3:
         image = np.repeat(np.expand_dims(image, axis=2), 3, axis=2)
-    
-    boxes = predictions['boxes']
-    labels = predictions['labels']
-    masks = predictions['masks']
+
+    boxes = predictions["boxes"]
+    labels = predictions["labels"]
+    masks = predictions["masks"]
 
     for i in range(len(masks)):
         # the bounding box
@@ -158,7 +185,7 @@ def show_detections(input_image, predictions, label_map):
         else:
             color = COLORS[labels[i] % len(COLORS)]
             text = label_map[labels[i]]
-        
+
         color_mask = color * np.repeat(np.expand_dims(masks[i], axis=2), 3, axis=2)
         blended = 0.4 * color_mask
         blended[color_mask == 0] = image[ytl:ybr, xtl:xbr][color_mask == 0]
@@ -173,7 +200,8 @@ def show_detections(input_image, predictions, label_map):
             image, text, (xtl, ytl + 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1
         )
     return image
-    
+
+
 def get_crop_corners(
     image_width: int,
     image_height: int,
@@ -222,8 +250,9 @@ def get_crop_corners(
             crop_coords = [xc_tl, yc_tl, xc_br, yc_br]
             crop_corners.append(crop_coords)
 
-    return crop_corners   
-    
+    return crop_corners
+
+
 # A utility function
 def to_numpy(tensor):
     """
@@ -248,9 +277,13 @@ def get_image_sizes(images: torch.Tensor) -> List[Tuple[int, int]]:
         - image_sizes (list): List of image size tuples (e.g., [(h_1, w_1), (h_2, w_2), ...])
             corresponding to images in the list (all should be the same if a single tensor is passed)
     """
-    return [(image.shape[-2], image.shape[-1]) if isinstance(image, torch.Tensor) else (image.size[1], image.size[0])
-            for image in images]
-            
+    return [
+        (image.shape[-2], image.shape[-1])
+        if isinstance(image, torch.Tensor)
+        else (image.size[1], image.size[0])
+        for image in images
+    ]
+
 
 def get_instance_segmentation_model(
     num_classes: int = 2,
@@ -341,24 +374,24 @@ class MaskRCNNInstanceSegmentation:
         confidence: float = DEFAULT_DETECTION_CONFIDENCE,
         mask_threshold_for_bbox_expansion: float = DEFAULT_MASK_THRESHOLD_FOR_BBOX_EXPANSION,
     ):
-        
+
         self.model: torchvision.models.detection.mask_rcnn.MaskRCNN = None
         self._weights_path: str = str(weights_path)
         self._confidence: float = confidence
         self._mask_threshold_for_bbox_expansion: float = (
             mask_threshold_for_bbox_expansion
         )
-            
+
         # available device
         self.device = (
             torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
         )
-        
+
         # the state dictionary of the model to be read from the weights file
         model_state_dict: OrderedDict = None
         # the model's label map if available in the weight file
-        loaded_label_map: Dict[int, str] = None   
-        
+        loaded_label_map: Dict[int, str] = None
+
         anchor_sizes: Tuple[
             Tuple[int], Tuple[int], Tuple[int], Tuple[int], Tuple[int]
         ] = DEFAULT_ANCHOR_SIZES
@@ -463,33 +496,40 @@ class MaskRCNNInstanceSegmentation:
                 f"Failed to load Mask RCNN model. Likely the paths to model .pt weights "
                 f"{self._weights_path} is incorrect: {repr(ex)}."
             )
-        
+
         if label_map is None:
             if loaded_label_map is None:
                 logging.error(
                     "The mapping between the class IDs and class names is required for the model and is "
                     "neither provided during class instantiation nor available in the weights file! Returning ..."
                 )
-                return 
+                return
             else:
-                logging.info("Mapping between class IDs and class names is provided in the weights file.") 
+                logging.info(
+                    "Mapping between class IDs and class names is provided in the weights file."
+                )
                 self._label_map: Dict[int, str] = loaded_label_map
         else:
-            logging.info("Mapping between class IDs and class names is passed during class instantiation! "
-                        "It will overwrite the label map passed in the weights file (if provided).")        
+            logging.info(
+                "Mapping between class IDs and class names is passed during class instantiation! "
+                "It will overwrite the label map passed in the weights file (if provided)."
+            )
             self._label_map: Dict[int, str] = label_map
 
-        
-        logging.info(f"Mapping between class IDs and class names: {self._label_map}") 
+        logging.info(f"Mapping between class IDs and class names: {self._label_map}")
         self._reverse_label_map: Dict[str, int] = {
             value: key for key, value in self._label_map.items()
         }
-        
+
         if self._detected_class_names_remap is not None:
             # extract the classes that will be mapped to 'bg' and should be excluded from the detections
-            class_names_to_exclude_from_dets = [k for k, v in self._detected_class_names_remap.items() if v == 'bg']
+            class_names_to_exclude_from_dets = [
+                k for k, v in self._detected_class_names_remap.items() if v == "bg"
+            ]
             # update the passed mapping and removed the ones that are going to be mapped to 'bg' (should be excluded)
-            self._detected_class_names_remap = {k: v for k, v in self._detected_class_names_remap.items() if v != 'bg'}
+            self._detected_class_names_remap = {
+                k: v for k, v in self._detected_class_names_remap.items() if v != "bg"
+            }
             self._detected_class_ids_remap: Dict[int, int] = {}
             for k, v in self._detected_class_names_remap.items():
                 if k in self._reverse_label_map and v in self._reverse_label_map:
@@ -510,8 +550,7 @@ class MaskRCNNInstanceSegmentation:
 
         # Mask RCNN model
         self.model = get_instance_segmentation_model(
-            num_classes=len(self._label_map) + 1, 
-            anchor_sizes=anchor_sizes
+            num_classes=len(self._label_map) + 1, anchor_sizes=anchor_sizes
         )
 
         # loading the PyTorch model
@@ -521,11 +560,11 @@ class MaskRCNNInstanceSegmentation:
             self.model.eval()
 
         except Exception as ex:
-            logging.error(
-                f"Failed to load Mask RCNN model: {repr(ex)}."
-            )
-    
-    def model_and_features(self, image_tensors: torch.Tensor) -> Tuple[List, OrderedDict, List[Tuple[int, int]]]:
+            logging.error(f"Failed to load Mask RCNN model: {repr(ex)}.")
+
+    def model_and_features(
+        self, image_tensors: torch.Tensor
+    ) -> Tuple[List, OrderedDict, List[Tuple[int, int]]]:
         """
         Forward pass through the Mask R-CNN model, returning backbone feature map
         as well as the detections. Based on torchvision 0.5.0 GeneralizedFRCNN forward() implementation.
@@ -548,19 +587,25 @@ class MaskRCNNInstanceSegmentation:
         # if RPN is not used in backbone, reformat the features
         # to create a dictionary with feature map values
         if isinstance(features, torch.Tensor):
-            features: OrderedDict = OrderedDict([('0', features)])
+            features: OrderedDict = OrderedDict([("0", features)])
 
         proposals, _ = self.model.rpn(image_tensors, features)
-        detections, _ = self.model.roi_heads(features, proposals, image_tensors.image_sizes)
-        detections = self.model.transform.postprocess(detections, image_tensors.image_sizes, original_image_sizes)
+        detections, _ = self.model.roi_heads(
+            features, proposals, image_tensors.image_sizes
+        )
+        detections = self.model.transform.postprocess(
+            detections, image_tensors.image_sizes, original_image_sizes
+        )
 
         return detections, features, image_tensors.image_sizes
 
-    def extract_appearance_features(self,
-                                    roi_boxes: List[Union[np.ndarray, List[int], Tuple[int, int, int, int]]],
-                                    features: OrderedDict,
-                                    img_sizes: List[Tuple[int, int]],
-                                    orig_img_sizes: List[Tuple[int, int]]) -> List[torch.tensor]:
+    def extract_appearance_features(
+        self,
+        roi_boxes: List[Union[np.ndarray, List[int], Tuple[int, int, int, int]]],
+        features: OrderedDict,
+        img_sizes: List[Tuple[int, int]],
+        orig_img_sizes: List[Tuple[int, int]],
+    ) -> List[torch.tensor]:
         """
         A function to extract the appearance feature embeddings for provided
         RoI bounding boxes of interest using the Mask R-CNN backbone.
@@ -589,15 +634,27 @@ class MaskRCNNInstanceSegmentation:
         box_tensors: List[torch.tensor] = []
         for i, image_rois in enumerate(roi_boxes):
             if len(image_rois) > 0:
-                box_tensors.append(torch.tensor(
-                    [[crd * img_sizes[i][1] / orig_img_sizes[i][1] for crd in box] for box in image_rois],
-                    dtype=torch.float
-                ).to(self.device))
+                box_tensors.append(
+                    torch.tensor(
+                        [
+                            [
+                                crd * img_sizes[i][1] / orig_img_sizes[i][1]
+                                for crd in box
+                            ]
+                            for box in image_rois
+                        ],
+                        dtype=torch.float,
+                    ).to(self.device)
+                )
             else:
-                box_tensors.append(torch.tensor(np.zeros((0, 4), dtype=np.float32)).to(self.device))
+                box_tensors.append(
+                    torch.tensor(np.zeros((0, 4), dtype=np.float32)).to(self.device)
+                )
 
         # RoI Pooling (Align)
-        box_features: torch.tensor = self.model.roi_heads.box_roi_pool(features, box_tensors, img_sizes)
+        box_features: torch.tensor = self.model.roi_heads.box_roi_pool(
+            features, box_tensors, img_sizes
+        )
 
         # pass the RoI features (after RoI pool/align) through two FC layers to reduce
         # the dimensions (these are considered the appearance features, these are used before the classification heads)
@@ -610,18 +667,18 @@ class MaskRCNNInstanceSegmentation:
         roi_feature_tensors: List[torch.tensor] = []
         while i < num_images:
             num_boxes = len(roi_boxes[i])
-            roi_feature_tensors.append(box_features[j:num_boxes + j].clone().detach())
+            roi_feature_tensors.append(box_features[j : num_boxes + j].clone().detach())
             j += num_boxes
             i += 1
 
         return roi_feature_tensors
 
-
-    def detect(self,
-               img: Union[Image.Image, np.ndarray],
-               return_features: bool = False,
-               log_time: bool = False
-               ) -> Dict[str, list]:
+    def detect(
+        self,
+        img: Union[Image.Image, np.ndarray],
+        return_features: bool = False,
+        log_time: bool = False,
+    ) -> Dict[str, list]:
         """
         The main function to detect the bounding box and masks for objects in the input image.
 
@@ -651,9 +708,20 @@ class MaskRCNNInstanceSegmentation:
                 "Mask R-CNN model has not been initialized. Please initialize the class before detect()."
             )
             if return_features:
-                out: Dict[str, list] = {"boxes": [], "scores": [], "labels": [], "masks": [], "features": []}
+                out: Dict[str, list] = {
+                    "boxes": [],
+                    "scores": [],
+                    "labels": [],
+                    "masks": [],
+                    "features": [],
+                }
             else:
-                out: Dict[str, list] = {"boxes": [], "scores": [], "labels": [], "masks": []}
+                out: Dict[str, list] = {
+                    "boxes": [],
+                    "scores": [],
+                    "labels": [],
+                    "masks": [],
+                }
             return out
 
         start: float = time.time()
@@ -663,24 +731,33 @@ class MaskRCNNInstanceSegmentation:
         # convert the input images to tensors and scale them to [0, 1]
         # F.to_tensor takes care of it, however, make sure the passed images have bit-depth = 8
         # (is np.uint8 if numpy array)
-        img_tensor_list: List[torch.tensor] = [F.to_tensor(im).unsqueeze(0).to(self.device) for im in img_list]
+        img_tensor_list: List[torch.tensor] = [
+            F.to_tensor(im).unsqueeze(0).to(self.device) for im in img_list
+        ]
         img_tensors: torch.tensor = torch.cat(img_tensor_list, dim=0)
-        with torch.no_grad(), torch.amp.autocast('cuda'):
+        with torch.no_grad(), torch.amp.autocast("cuda"):
             if return_features:
                 predictions, features, img_sizes = self.model_and_features(img_tensors)
                 # list of predicted boxes
-                boxes: List[np.ndarray] = [to_numpy(results_per_image['boxes']) for results_per_image in predictions]
+                boxes: List[np.ndarray] = [
+                    to_numpy(results_per_image["boxes"])
+                    for results_per_image in predictions
+                ]
                 # extract the features
-                box_features = self.extract_appearance_features(boxes, features, img_sizes, get_image_sizes(img_tensors))
+                box_features = self.extract_appearance_features(
+                    boxes, features, img_sizes, get_image_sizes(img_tensors)
+                )
             else:
                 predictions = self.model(img_tensors)
 
         # predictions is a list of dictionaries of four keys, 'boxes', 'labels', 'scores' and 'masks', with
         # each element in the list corresponding to one input image
         # we have only one image here (hence index 0)
-        out: Dict[str, np.ndarray] = {"boxes": to_numpy(predictions[0]["boxes"]).astype(int),
-                                      "labels": to_numpy(predictions[0]["labels"]),
-                                      "scores": to_numpy(predictions[0]["scores"])}
+        out: Dict[str, np.ndarray] = {
+            "boxes": to_numpy(predictions[0]["boxes"]).astype(int),
+            "labels": to_numpy(predictions[0]["labels"]),
+            "scores": to_numpy(predictions[0]["scores"]),
+        }
 
         # remap the output class IDs if needed
         if self._detected_class_ids_remap is not None and len(out["labels"]):
@@ -731,14 +808,17 @@ class MaskRCNNInstanceSegmentation:
                 # TODO: Add this to the Mask R-CNN code when adding support for overlaid images
                 if pos[0].numel() == 0:
                     continue
-                    
+
                 xmin: int = pos[1].min().item()
                 xmax: int = pos[1].max().item()
                 ymin: int = pos[0].min().item()
                 ymax: int = pos[0].max().item()
                 # apply some sanity checks on the expanded bounding box coordinates to avoid over expanding
-                if (0 < (xmax - xmin) <= (1 + MAX_BBOX_EXPANSION_FACTOR) * (xbr - xtl) and
-                    0 < (ymax - ymin) <= (1 + MAX_BBOX_EXPANSION_FACTOR) * (ybr - ytl)):
+                if 0 < (xmax - xmin) <= (1 + MAX_BBOX_EXPANSION_FACTOR) * (
+                    xbr - xtl
+                ) and 0 < (ymax - ymin) <= (1 + MAX_BBOX_EXPANSION_FACTOR) * (
+                    ybr - ytl
+                ):
                     xtl = xmin
                     ytl = ymin
                     xbr = xmax
@@ -758,7 +838,9 @@ class MaskRCNNInstanceSegmentation:
             scores.append(out["scores"][i])
             # cast as float because with autocast, the masks will be float16, which may not
             # be supported by some OpenCV functions
-            masks.append(to_numpy(all_mask_tensors[i, 0, ytl:ybr, xtl:xbr]).astype(float))
+            masks.append(
+                to_numpy(all_mask_tensors[i, 0, ytl:ybr, xtl:xbr]).astype(float)
+            )
             if return_features:
                 appearance_features.append(out["features"][i])
 
@@ -766,16 +848,17 @@ class MaskRCNNInstanceSegmentation:
         if log_time:
             logging.info(f"Mask R-CNN instance segmentation took {elap:.4f} seconds")
 
-        out: Dict[str, List] = {"boxes": boxes,
-                                "scores" : scores,
-                                "labels": labels,
-                                "masks": masks}
+        out: Dict[str, List] = {
+            "boxes": boxes,
+            "scores": scores,
+            "labels": labels,
+            "masks": masks,
+        }
         if return_features:
             out["features"] = appearance_features
 
         return out
 
-    
     def _update_label_map_if_needed(self):
         if self._detected_class_names_remap is not None:
             # self._detected_class_ids_remap will also be not None
@@ -810,13 +893,13 @@ class MaskRCNNInstanceSegmentation:
         return self._resize_dict, self._crop_corners_dict
 
     def detect_by_cropping(
-            self,
-            img: Union[Image.Image, np.ndarray],
-            crop_corners: List[List[int]],
-            nms_threshold_for_combining_crop_results: float = 0.15,
-            classnames_to_return: Optional[List[str]] = None,
-            return_features: bool = False,
-            log_time=False,
+        self,
+        img: Union[Image.Image, np.ndarray],
+        crop_corners: List[List[int]],
+        nms_threshold_for_combining_crop_results: float = 0.15,
+        classnames_to_return: Optional[List[str]] = None,
+        return_features: bool = False,
+        log_time=False,
     ) -> Dict[str, List]:
         """
         A function to apply the model on a high resolution image. If the
@@ -859,7 +942,13 @@ class MaskRCNNInstanceSegmentation:
 
         # invalid output
         if return_features:
-            invalid_out: dict = {"boxes": [], "scores": [], "labels": [], "masks": [], "features": []}
+            invalid_out: dict = {
+                "boxes": [],
+                "scores": [],
+                "labels": [],
+                "masks": [],
+                "features": [],
+            }
         else:
             invalid_out: dict = {"boxes": [], "scores": [], "labels": [], "masks": []}
 
@@ -914,7 +1003,13 @@ class MaskRCNNInstanceSegmentation:
         # combine the results, filter them based on the score,
         # and update the coordinates of the bounding boxes
         # for applying NMS later
-        results: Dict = {"scores": [], "boxes": [], "labels": [], "masks": [], "features": []}
+        results: Dict = {
+            "scores": [],
+            "boxes": [],
+            "labels": [],
+            "masks": [],
+            "features": [],
+        }
 
         # a list to keep track of cropped sub-images with at least one object detection
         crop_ids_with_detection: List[int] = []
@@ -960,7 +1055,7 @@ class MaskRCNNInstanceSegmentation:
                 | (boxes[:, 1] < 4)
                 | (boxes[:, 2] > crop_width - 4)
                 | (boxes[:, 3] > crop_height - 4)
-                ] = self._confidence
+            ] = self._confidence
 
             crop_ids_with_detection.append(crop_id)
             results["scores"].append(scores)
@@ -1084,7 +1179,9 @@ class MaskRCNNInstanceSegmentation:
                         scores.append(crop_det_score)
                         masks.append(crop_masks[crop_class_idxs[0][i]])
                         if return_features:
-                            appearance_features.append(crop_features[crop_class_idxs[0][i]])
+                            appearance_features.append(
+                                crop_features[crop_class_idxs[0][i]]
+                            )
                     else:
                         # there is some boxes in the rest of the crops with IoU more than the threshold
                         # find the maximum detection scores among the objects with IoU more than the threshold
@@ -1100,7 +1197,9 @@ class MaskRCNNInstanceSegmentation:
                         rest_det_score = scores_to_check[max_index]
 
                         # areas of the matching boxes
-                        crop_box_area: float = box_area(crop_boxes[crop_class_idxs[0][i]])
+                        crop_box_area: float = box_area(
+                            crop_boxes[crop_class_idxs[0][i]]
+                        )
                         rest_box_area: float = box_area(
                             rest_boxes[rest_class_idxs[0][high_iou_idxs[max_index]]]
                         )
@@ -1110,8 +1209,8 @@ class MaskRCNNInstanceSegmentation:
                         # the image) of the crops (we reduce the scores for both to the threshold score and they become
                         # equal)
                         if crop_det_score > rest_det_score or (
-                                crop_det_score == rest_det_score
-                                and crop_box_area >= rest_box_area
+                            crop_det_score == rest_det_score
+                            and crop_box_area >= rest_box_area
                         ):
                             # keep this object as it has the highest score among all
                             boxes.append(crop_boxes[crop_class_idxs[0][i]])
@@ -1119,7 +1218,9 @@ class MaskRCNNInstanceSegmentation:
                             scores.append(crop_det_score)
                             masks.append(crop_masks[crop_class_idxs[0][i]])
                             if return_features:
-                                appearance_features.append(crop_features[crop_class_idxs[0][i]])
+                                appearance_features.append(
+                                    crop_features[crop_class_idxs[0][i]]
+                                )
                             if crop_det_score == rest_det_score:
                                 # this is added to break the tie if both areas are equal
                                 # so we will not add the same box twice when considering
@@ -1139,7 +1240,9 @@ class MaskRCNNInstanceSegmentation:
             scores: list = [scores[i] for i in detection_ids]
             masks: list = [masks[i] for i in detection_ids]
             if return_features:
-                appearance_features: list = [appearance_features[i] for i in detection_ids]
+                appearance_features: list = [
+                    appearance_features[i] for i in detection_ids
+                ]
 
         elap: float = time.time() - start
         if log_time:
@@ -1164,7 +1267,7 @@ class MaskRCNNInstanceSegmentation:
 
         return out
 
-        
+
 detector = MaskRCNNInstanceSegmentation(weights_path=MODEL_WEIGHTS_PATH)
 
 # A dictionary with keys as the input (original) image size (width, height) tuple and
@@ -1180,10 +1283,7 @@ RESIZE: Final[Dict[Tuple[int, int], Tuple[int, int]]] = {
 # to run YOLOv5 on each
 # note that the crop coordinates are with respect to resized image dimensions specified above
 CROP_CORNERS: Final[Dict[Tuple[int, int], List[List[int]]]] = {
-    (2000, 1600): [
-        [0, 0, 800, 1024],
-        [480, 0, 1280, 1024]
-    ],
+    (2000, 1600): [[0, 0, 800, 1024], [480, 0, 1280, 1024]],
     (4512, 4512): [
         [0, 0, 1200, 800],
         [0, 448, 1200, 1248],
@@ -1196,8 +1296,8 @@ CROP_CORNERS: Final[Dict[Tuple[int, int], List[List[int]]]] = {
         [944, 0, 2144, 800],
         [944, 448, 2144, 1248],
         [944, 896, 2144, 1696],
-        [944, 1344, 2144, 2144]
-    ]
+        [944, 1344, 2144, 2144],
+    ],
 }
 
 # threshold to apply on masks
@@ -1205,17 +1305,18 @@ MASK_THRESHOLD: Final[float] = 0.1
 # threshold for post-processing cells and remove the ones consisting of multiple smaller cells
 OVER_LAP_THRESHOLD: Final[float] = 0.75
 
+
 def run_mask_rcnn(
-    input_image: np.ndarray, 
-    overlaid_image: bool = False, 
-    normalize_image: bool = False, 
-    bit_depth: int = 8, 
-    crop: bool = True, 
-    classnames_mapping_dict = None,
-    post_process_class_names: List[str] = list(detector.get_label_map().values()), 
-    return_features: bool = False, 
-    plot_results: bool = False, 
-    detector: MaskRCNNInstanceSegmentation=detector,
+    input_image: np.ndarray,
+    overlaid_image: bool = False,
+    normalize_image: bool = False,
+    bit_depth: int = 8,
+    crop: bool = True,
+    classnames_mapping_dict=None,
+    post_process_class_names: List[str] = list(detector.get_label_map().values()),
+    return_features: bool = False,
+    plot_results: bool = False,
+    detector: MaskRCNNInstanceSegmentation = detector,
 ) -> Tuple[Dict[str, list], float, Optional[np.ndarray]]:
     # make a copy to not modify the input image
     img = input_image.copy()
@@ -1227,15 +1328,15 @@ def run_mask_rcnn(
             )
             img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-        img = (255 * img.astype(float) / (2 ** bit_depth - 1)).astype(np.uint8)
+        img = (255 * img.astype(float) / (2**bit_depth - 1)).astype(np.uint8)
 
         if normalize_image:
             img = cv2.normalize(img, img, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX)
     else:
         logging.warning(
-                "The model is run on an overlaid image! Make sure the image is already normalized. bit_depth and normalize_image flag will be ignored!"
-            )
-    
+            "The model is run on an overlaid image! Make sure the image is already normalized. bit_depth and normalize_image flag will be ignored!"
+        )
+
     image_height, image_width = img.shape[:2]
 
     # check if the model includes the resize and crop_corners dictionaries
@@ -1254,17 +1355,18 @@ def run_mask_rcnn(
         resize_dict = RESIZE
         crop_corners_dict = CROP_CORNERS
 
-
     if crop and (image_width, image_height) not in resize_dict:
         logging.error(
             "The input image size {} is not supported! Returning no cells!".format(
-                image_width, )
+                image_width,
+            )
         )
-        out = {'boxes': np.zeros((0, 4), dtype=int),
-               'labels': np.zeros((0,), dtype=int),
-               'scores': np.zeros((0,), dtype=float),
-               'masks': [],
-               }
+        out = {
+            "boxes": np.zeros((0, 4), dtype=int),
+            "labels": np.zeros((0,), dtype=int),
+            "scores": np.zeros((0,), dtype=float),
+            "masks": [],
+        }
         if plot_results:
             return (out, 0, np.zeros((image_height, image_width), dtype=np.uint8))
         else:
@@ -1280,7 +1382,10 @@ def run_mask_rcnn(
         scale_factor: float = max(smaller_side_size / 800.0, larger_side_size / 1333.0)
         # do not scale the image if the larger and the smaller sides are smaller than the model input sizes (1333, 800)
         scale_factor = max(1, scale_factor)
-        resized_width, resized_height = int(image_width / scale_factor), int(image_height / scale_factor)
+        resized_width, resized_height = (
+            int(image_width / scale_factor),
+            int(image_height / scale_factor),
+        )
 
     if scale_factor != 1:
         resized_img: np.ndarray = cv2.resize(
@@ -1297,36 +1402,50 @@ def run_mask_rcnn(
             img=resized_img, crop_corners=crop_corners, return_features=return_features
         )
     else:
-        out: Dict[str, list] = detector.detect(img=resized_img, return_features=return_features)
+        out: Dict[str, list] = detector.detect(
+            img=resized_img, return_features=return_features
+        )
 
     if scale_factor != 1:
         # scale the detections back to original image resolution
-        out['boxes'] = (scale_factor * np.array(out['boxes'])).astype(int)
+        out["boxes"] = (scale_factor * np.array(out["boxes"])).astype(int)
         # convert to a list to be consistent with the rest
-        out['boxes'] = [box for box in out['boxes']]
+        out["boxes"] = [box for box in out["boxes"]]
     else:
-        out['boxes'] = [np.array(box) for box in out['boxes']]   
+        out["boxes"] = [np.array(box) for box in out["boxes"]]
 
-    for idx in range(len(out['boxes'])):
+    for idx in range(len(out["boxes"])):
         if scale_factor != 1:
-            xtl, ytl, xbr, ybr = out['boxes'][idx]
+            xtl, ytl, xbr, ybr = out["boxes"][idx]
             # note that mask here is a probability mask and interpolation does not have to be nearest neighbor
-            out['masks'][idx] = cv2.resize(out['masks'][idx], (xbr - xtl, ybr - ytl), interpolation=cv2.INTER_LINEAR)
-        mask_this_cell: np.ndarray = np.zeros(out['masks'][idx].shape, dtype=np.uint8)
-        mask_this_cell[out['masks'][idx] >= MASK_THRESHOLD] = 1
-        out['masks'][idx] = mask_this_cell.astype(np.uint8)
+            out["masks"][idx] = cv2.resize(
+                out["masks"][idx],
+                (xbr - xtl, ybr - ytl),
+                interpolation=cv2.INTER_LINEAR,
+            )
+        mask_this_cell: np.ndarray = np.zeros(out["masks"][idx].shape, dtype=np.uint8)
+        mask_this_cell[out["masks"][idx] >= MASK_THRESHOLD] = 1
+        out["masks"][idx] = mask_this_cell.astype(np.uint8)
 
     if classnames_mapping_dict is not None:
-        classnames_to_exclude: List[str] = [name for name, mapped_name in classnames_mapping_dict.items() if mapped_name == 'bg']
-        class_ids_to_exclude: List [int] = [detector._reverse_label_map[name] for name in classnames_to_exclude]
-        class_ids_mapping_dict = {detector._reverse_label_map[name]: detector._reverse_label_map[mapped_name] 
-                                  for name, mapped_name in classnames_mapping_dict.items() if mapped_name != 'bg'}
-
+        classnames_to_exclude: List[str] = [
+            name
+            for name, mapped_name in classnames_mapping_dict.items()
+            if mapped_name == "bg"
+        ]
+        class_ids_to_exclude: List[int] = [
+            detector._reverse_label_map[name] for name in classnames_to_exclude
+        ]
+        class_ids_mapping_dict = {
+            detector._reverse_label_map[name]: detector._reverse_label_map[mapped_name]
+            for name, mapped_name in classnames_mapping_dict.items()
+            if mapped_name != "bg"
+        }
 
         labels: List[int] = []
         idxs_to_keep: List[int] = []
 
-        for idx, label in enumerate(out['labels']):
+        for idx, label in enumerate(out["labels"]):
             if label in class_ids_to_exclude:
                 continue
             if label in class_ids_mapping_dict:
@@ -1334,12 +1453,18 @@ def run_mask_rcnn(
             else:
                 labels.append(label)
             idxs_to_keep.append(idx)
-    
-        out['boxes'] = [box for idx, box in enumerate(out['boxes']) if idx in idxs_to_keep]
-        out['labels'] = labels
-        out['scores'] = [score for idx, score in enumerate(out['scores']) if idx in idxs_to_keep]
-        out['masks'] = [mask for idx, mask in enumerate(out['masks']) if idx in idxs_to_keep]
-    
+
+        out["boxes"] = [
+            box for idx, box in enumerate(out["boxes"]) if idx in idxs_to_keep
+        ]
+        out["labels"] = labels
+        out["scores"] = [
+            score for idx, score in enumerate(out["scores"]) if idx in idxs_to_keep
+        ]
+        out["masks"] = [
+            mask for idx, mask in enumerate(out["masks"]) if idx in idxs_to_keep
+        ]
+
     # post-process the results
     # in the following, "larger" objects that consist of a number of already detected smaller objects of the same type are invalidated
     # this can happen mainly for 'cell', 'nucleus' and 'cell-adhered'/'cytoplasm' classes
@@ -1347,26 +1472,33 @@ def run_mask_rcnn(
     post_process_class_idxs: Dict[str, List[int]] = {}
     # list of bounding boxes for each class name to be included in post processing
     post_process_class_boxes: Dict[str, List[np.ndarray]] = {}
-    for i, box in enumerate(out['boxes']):
+    for i, box in enumerate(out["boxes"]):
         for class_name in post_process_class_names:
-            if class_name in detector._reverse_label_map and out['labels'][i] == detector._reverse_label_map[class_name]:
+            if (
+                class_name in detector._reverse_label_map
+                and out["labels"][i] == detector._reverse_label_map[class_name]
+            ):
                 if class_name in post_process_class_idxs:
                     post_process_class_idxs[class_name].append(i)
                     post_process_class_boxes[class_name].append(box)
                 else:
                     post_process_class_idxs[class_name] = [i]
                     post_process_class_boxes[class_name] = [box]
-    
+
     # list of detection indexes to be excluded (this is with respect to all detected objects and not only the class under consideration)
-    obj_idxs_to_remove: List[int] = []                
+    obj_idxs_to_remove: List[int] = []
     for key in post_process_class_boxes:
         # convert to a numpy array
-        post_process_class_boxes[key]: np.ndarray = np.array(post_process_class_boxes[key])
-        
+        post_process_class_boxes[key]: np.ndarray = np.array(
+            post_process_class_boxes[key]
+        )
+
         if len(post_process_class_idxs[key]) == 0:
             continue
-        
-        overlap: np.ndarray = overlap_batch(post_process_class_boxes[key], post_process_class_boxes[key], True)
+
+        overlap: np.ndarray = overlap_batch(
+            post_process_class_boxes[key], post_process_class_boxes[key], True
+        )
         # remove diagonal elements (as each box has a complete overlap with itself)
         overlap = overlap - np.eye(len(post_process_class_boxes[key]))
         # index of larger objects (row indexes) covering some smaller already detected cells (column index)
@@ -1374,55 +1506,79 @@ def run_mask_rcnn(
         # these smaller objects are most probably redundant objects
         covering_obj_idxs, covered_obj_idxs = np.where(overlap > OVER_LAP_THRESHOLD)
         # now double-check the coverage using the masks
-        for (i, j) in zip(covering_obj_idxs, covered_obj_idxs):
+        for i, j in zip(covering_obj_idxs, covered_obj_idxs):
             large_obj_index: int = post_process_class_idxs[key][i]
             small_obj_index: int = post_process_class_idxs[key][j]
             # larger box coordinates
-            xl1, yl1, xl2, yl2 = out['boxes'][large_obj_index]
+            xl1, yl1, xl2, yl2 = out["boxes"][large_obj_index]
             # smaller box coordinates
-            xs1, ys1, xs2, ys2 = out['boxes'][small_obj_index]
+            xs1, ys1, xs2, ys2 = out["boxes"][small_obj_index]
             # union of the two boxes
             x1: int = min(xl1, xs1)
             y1: int = min(yl1, ys1)
             x2: int = max(xl2, xs2)
             y2: int = max(yl2, ys2)
             large_obj_mask: np.ndarray = np.zeros((y2 - y1, x2 - x1), np.uint8)
-            large_obj_mask[(yl1 - y1):(yl2 - y1), (xl1 - x1):(xl2 - x1)] = out['masks'][large_obj_index]
+            large_obj_mask[(yl1 - y1) : (yl2 - y1), (xl1 - x1) : (xl2 - x1)] = out[
+                "masks"
+            ][large_obj_index]
             small_obj_mask: np.ndarray = np.zeros((y2 - y1, x2 - x1), np.uint8)
-            small_obj_mask[(ys1 - y1):(ys2 - y1), (xs1 - x1):(xs2 - x1)] = out['masks'][small_obj_index]
-            
-            if np.sum(small_obj_mask * large_obj_mask) > OVER_LAP_THRESHOLD * np.sum(small_obj_mask):
+            small_obj_mask[(ys1 - y1) : (ys2 - y1), (xs1 - x1) : (xs2 - x1)] = out[
+                "masks"
+            ][small_obj_index]
+
+            if np.sum(small_obj_mask * large_obj_mask) > OVER_LAP_THRESHOLD * np.sum(
+                small_obj_mask
+            ):
                 # add row index i to the list of object indexes to be removed
                 if small_obj_index not in obj_idxs_to_remove:
                     obj_idxs_to_remove.append(small_obj_index)
-    
+
     if len(obj_idxs_to_remove) > 0:
-        out['boxes'] = [box for i, box in enumerate(out['boxes']) if i not in obj_idxs_to_remove]
-        out['labels'] = [label for i, label in enumerate(out['labels']) if i not in obj_idxs_to_remove]
-        out['scores'] = [score for i, score in enumerate(out['scores']) if i not in obj_idxs_to_remove]
-        out['masks'] = [mask for i, mask in enumerate(out['masks']) if i not in obj_idxs_to_remove]
+        out["boxes"] = [
+            box for i, box in enumerate(out["boxes"]) if i not in obj_idxs_to_remove
+        ]
+        out["labels"] = [
+            label
+            for i, label in enumerate(out["labels"])
+            if i not in obj_idxs_to_remove
+        ]
+        out["scores"] = [
+            score
+            for i, score in enumerate(out["scores"])
+            if i not in obj_idxs_to_remove
+        ]
+        out["masks"] = [
+            mask for i, mask in enumerate(out["masks"]) if i not in obj_idxs_to_remove
+        ]
         if return_features:
-            out['features'] = [box_features for i, box_features in enumerate(out['features']) if i not in obj_idxs_to_remove]
-        
-    
+            out["features"] = [
+                box_features
+                for i, box_features in enumerate(out["features"])
+                if i not in obj_idxs_to_remove
+            ]
+
     et = time.time()
 
     if plot_results:
         return out, et - st, show_detections(img, out, detector._label_map)
-    
+
     return out, et - st
 
+
 # a more generic function to do post-processing
-# this function accepts a list of "object type" groups (defined as a list of classnames) and applies post-processing on all 
+# this function accepts a list of "object type" groups (defined as a list of classnames) and applies post-processing on all
 # objects belonging to the same type group
-# a type group should contains objects that the model may confuse but in practice, differentiating them is not important; 
+# a type group should contains objects that the model may confuse but in practice, differentiating them is not important;
 # clearly a type group can be defined as a single class
-def post_process_detections(detections: Dict[str, np.ndarray], 
-                            post_process_type_groups: List[List[str]], 
-                            min_diam_in_pixels_dict: Dict[str, int], 
-                            label_map: Dict[int, str]):
+def post_process_detections(
+    detections: Dict[str, np.ndarray],
+    post_process_type_groups: List[List[str]],
+    min_diam_in_pixels_dict: Dict[str, int],
+    label_map: Dict[int, str],
+):
     # post-process the results
-    # in the following, "larger" objects that consist of a number of already detected smaller objects from the same "type" group are 
+    # in the following, "larger" objects that consist of a number of already detected smaller objects from the same "type" group are
     # invalidated
     # list of indexes of objects for each object type group to be included in post processing
     reverse_label_map: Dict[str, int] = {v: k for k, v in label_map.items()}
@@ -1431,38 +1587,46 @@ def post_process_detections(detections: Dict[str, np.ndarray],
     post_process_class_boxes: Dict[str, List[np.ndarray]] = {}
     # list of detection indexes to be excluded (this is with respect to all detected objects and not only the class under consideration)
     obj_idxs_to_remove: List[int] = []
-    for i, box in enumerate(detections['boxes']):
+    for i, box in enumerate(detections["boxes"]):
         # filter small objects
-        class_id = detections['labels'][i]
+        class_id = detections["labels"][i]
         if class_id not in label_map:
             # this should never happen
             obj_idxs_to_remove.append(i)
             continue
-        if label_map[class_id] in min_diam_in_pixels_dict and max(box[3] - box[1], box[2] - box[0]) < min_diam_in_pixels_dict[label_map[class_id]]:
+        if (
+            label_map[class_id] in min_diam_in_pixels_dict
+            and max(box[3] - box[1], box[2] - box[0])
+            < min_diam_in_pixels_dict[label_map[class_id]]
+        ):
             obj_idxs_to_remove.append(i)
             continue
         for type_group_class_names in post_process_type_groups:
             # an identifier for the type group formed by concatenating all the class names in the group
             type_group_id: str = "_".join(type_group_class_names)
             for class_name in type_group_class_names:
-                if class_name in reverse_label_map and detections['labels'][i] == reverse_label_map[class_name]:
+                if (
+                    class_name in reverse_label_map
+                    and detections["labels"][i] == reverse_label_map[class_name]
+                ):
                     if type_group_id in post_process_class_idxs:
                         post_process_class_idxs[type_group_id].append(i)
                         post_process_class_boxes[type_group_id].append(box)
                     else:
                         post_process_class_idxs[type_group_id] = [i]
                         post_process_class_boxes[type_group_id] = [box]
-    
-                    
+
     for key in post_process_class_boxes:
-        
         if len(post_process_class_idxs[key]) == 0:
             continue
         # convert to a numpy array
-        post_process_class_boxes[key]: np.ndarray = np.array(post_process_class_boxes[key])
-        
-        
-        overlap: np.ndarray = overlap_batch(post_process_class_boxes[key], post_process_class_boxes[key], True)
+        post_process_class_boxes[key]: np.ndarray = np.array(
+            post_process_class_boxes[key]
+        )
+
+        overlap: np.ndarray = overlap_batch(
+            post_process_class_boxes[key], post_process_class_boxes[key], True
+        )
         # remove diagonal elements (as each box has a complete overlap with itself)
         overlap = overlap - np.eye(len(post_process_class_boxes[key]))
         # index of larger objects (row indexes) covering some smaller already detected cells (column index)
@@ -1470,34 +1634,60 @@ def post_process_detections(detections: Dict[str, np.ndarray],
         # these smaller objects are most probably redundant objects
         covering_obj_idxs, covered_obj_idxs = np.where(overlap > OVER_LAP_THRESHOLD)
         # now double-check the coverage using the masks
-        for (i, j) in zip(covering_obj_idxs, covered_obj_idxs):
+        for i, j in zip(covering_obj_idxs, covered_obj_idxs):
             large_obj_index: int = post_process_class_idxs[key][i]
             small_obj_index: int = post_process_class_idxs[key][j]
             # larger box coordinates
-            xl1, yl1, xl2, yl2 = detections['boxes'][large_obj_index]
+            xl1, yl1, xl2, yl2 = detections["boxes"][large_obj_index]
             # smaller box coordinates
-            xs1, ys1, xs2, ys2 = detections['boxes'][small_obj_index]
+            xs1, ys1, xs2, ys2 = detections["boxes"][small_obj_index]
             # union of the two boxes
             x1: int = min(xl1, xs1)
             y1: int = min(yl1, ys1)
             x2: int = max(xl2, xs2)
             y2: int = max(yl2, ys2)
             large_obj_mask: np.ndarray = np.zeros((y2 - y1, x2 - x1), np.uint8)
-            large_obj_mask[(yl1 - y1):(yl2 - y1), (xl1 - x1):(xl2 - x1)] = detections['masks'][large_obj_index]
+            large_obj_mask[(yl1 - y1) : (yl2 - y1), (xl1 - x1) : (xl2 - x1)] = (
+                detections["masks"][large_obj_index]
+            )
             small_obj_mask: np.ndarray = np.zeros((y2 - y1, x2 - x1), np.uint8)
-            small_obj_mask[(ys1 - y1):(ys2 - y1), (xs1 - x1):(xs2 - x1)] = detections['masks'][small_obj_index]
-            
-            if np.sum(small_obj_mask * large_obj_mask) > OVER_LAP_THRESHOLD * np.sum(small_obj_mask):
+            small_obj_mask[(ys1 - y1) : (ys2 - y1), (xs1 - x1) : (xs2 - x1)] = (
+                detections["masks"][small_obj_index]
+            )
+
+            if np.sum(small_obj_mask * large_obj_mask) > OVER_LAP_THRESHOLD * np.sum(
+                small_obj_mask
+            ):
                 # add row index i to the list of object indexes to be removed
                 if small_obj_index not in obj_idxs_to_remove:
                     obj_idxs_to_remove.append(small_obj_index)
-    
+
     if len(obj_idxs_to_remove) > 0:
-        detections['boxes'] = [box for i, box in enumerate(detections['boxes']) if i not in obj_idxs_to_remove]
-        detections['labels'] = [label for i, label in enumerate(detections['labels']) if i not in obj_idxs_to_remove]
-        detections['scores'] = [score for i, score in enumerate(detections['scores']) if i not in obj_idxs_to_remove]
-        detections['masks'] = [mask for i, mask in enumerate(detections['masks']) if i not in obj_idxs_to_remove]
-        if 'features' in detections:
-            detections['features'] = [box_features for i, box_features in enumerate(detections['features']) if i not in obj_idxs_to_remove]
+        detections["boxes"] = [
+            box
+            for i, box in enumerate(detections["boxes"])
+            if i not in obj_idxs_to_remove
+        ]
+        detections["labels"] = [
+            label
+            for i, label in enumerate(detections["labels"])
+            if i not in obj_idxs_to_remove
+        ]
+        detections["scores"] = [
+            score
+            for i, score in enumerate(detections["scores"])
+            if i not in obj_idxs_to_remove
+        ]
+        detections["masks"] = [
+            mask
+            for i, mask in enumerate(detections["masks"])
+            if i not in obj_idxs_to_remove
+        ]
+        if "features" in detections:
+            detections["features"] = [
+                box_features
+                for i, box_features in enumerate(detections["features"])
+                if i not in obj_idxs_to_remove
+            ]
 
     return detections

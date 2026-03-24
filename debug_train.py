@@ -3,13 +3,17 @@
 DEBUGGing training script to check the impact of vfl_dn_2
 Training script for RT-DETR with DINOv2 backbone using PyTorch Lightning.
 Powered by Hydra for flexible configuration.
-uv run debug_train.py debug=True data=debug logging.wandb.project=DEBUG_VFL 
+uv run debug_train.py debug=True data=debug logging.wandb.project=DEBUG_VFL
 """
 
 import os
 import datetime
 import pytorch_lightning as pl
-from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor, ModelSummary
+from pytorch_lightning.callbacks import (
+    ModelCheckpoint,
+    LearningRateMonitor,
+    ModelSummary,
+)
 from pytorch_lightning.loggers import WandbLogger
 from lightning.pytorch.profilers import SimpleProfiler, AdvancedProfiler
 from transformers import RTDetrImageProcessor, RTDetrV2ForObjectDetection
@@ -24,36 +28,48 @@ import wandb
 
 from models.custom_rt_detr_with_dinov2_backbone import (
     RTDetrV2ForObjectDetectionWithCustomBackbone,
-    RTDetrV2ConfigWithCustomBackBone
+    RTDetrV2ConfigWithCustomBackBone,
 )
-from models.dinov2_backbone_with_fpn import Dinov2BackBoneWithFPN, Dinov2BackBoneWithFPNConfig
-from models.rt_detr_lightning_module import RTDETRLightningModuleDebug as RTDETRLightningModule
+from models.dinov2_backbone_with_fpn import (
+    Dinov2BackBoneWithFPN,
+    Dinov2BackBoneWithFPNConfig,
+)
+from models.rt_detr_lightning_module import (
+    RTDETRLightningModuleDebug as RTDETRLightningModule,
+)
 from data.coco_data_module import COCODataModule
+
 
 def create_initial_checkpoint(config: DictConfig) -> str:
     """
     Create initial RT-DETR checkpoint with DINOv2 backbone.
     (This function is now Hydra-aware)
     """
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("Creating initial RT-DETR checkpoint with DINOv2 backbone...")
-    print("="*80 + "\n")
-    
+    print("=" * 80 + "\n")
+
     model_config = config.model
     checkpoint_config = config.checkpointing
-    
+
     # --- Hydra Path Handling ---
     # Convert relative paths from config to absolute paths
-    backbone_checkpoint_path = hydra.utils.to_absolute_path(checkpoint_config.dinov2_backbone_checkpoint)
-    rtdetr_checkpoint_path = hydra.utils.to_absolute_path(checkpoint_config.rtdetr_initial_checkpoint)
+    backbone_checkpoint_path = hydra.utils.to_absolute_path(
+        checkpoint_config.dinov2_backbone_checkpoint
+    )
+    rtdetr_checkpoint_path = hydra.utils.to_absolute_path(
+        checkpoint_config.rtdetr_initial_checkpoint
+    )
     # breakpoint()
     # Step 1: Create DINOv2 backbone with FPN
-    if not os.path.exists(backbone_checkpoint_path) or  len(os.listdir(backbone_checkpoint_path)) == 0  :
+    if (
+        not os.path.exists(backbone_checkpoint_path)
+        or len(os.listdir(backbone_checkpoint_path)) == 0
+    ):
         print(f"Creating DINOv2 backbone checkpoint at: {backbone_checkpoint_path}")
         os.makedirs(backbone_checkpoint_path, exist_ok=True)
         output_indices = OmegaConf.to_container(
-            model_config.dinov2.output_indices_for_fpn, 
-            resolve=True
+            model_config.dinov2.output_indices_for_fpn, resolve=True
         )
         dinov2_backbone = Dinov2BackBoneWithFPN.from_pretrained(
             model_config.dinov2.pretrained_name_or_path,
@@ -62,16 +78,21 @@ def create_initial_checkpoint(config: DictConfig) -> str:
         dinov2_backbone.save_pretrained(backbone_checkpoint_path)
         print(f"✓ DINOv2 backbone saved to: {backbone_checkpoint_path}")
     else:
-        print(f"✓ DINOv2 backbone checkpoint already exists at: {backbone_checkpoint_path}")
-    
+        print(
+            f"✓ DINOv2 backbone checkpoint already exists at: {backbone_checkpoint_path}"
+        )
+
     # Step 2: Create RT-DETR with custom backbone
-    if not os.path.exists(rtdetr_checkpoint_path) or len(os.listdir(rtdetr_checkpoint_path)) == 0:
+    if (
+        not os.path.exists(rtdetr_checkpoint_path)
+        or len(os.listdir(rtdetr_checkpoint_path)) == 0
+    ):
         print(f"\nCreating RT-DETR with DINOv2 backbone at: {rtdetr_checkpoint_path}")
         os.makedirs(rtdetr_checkpoint_path, exist_ok=True)
-        
+
         id2label = {int(k): v for k, v in model_config.label_map.items()}
         label2id = {v: k for k, v in id2label.items()}
-        
+
         rtdetr_cfg = model_config.rtdetr
         overrides = OmegaConf.to_container(rtdetr_cfg, resolve=True) or {}
         print(f"Loading RT-DETR with overrides: {overrides}")
@@ -81,24 +102,30 @@ def create_initial_checkpoint(config: DictConfig) -> str:
             id2label=id2label,
             label2id=label2id,
             ignore_mismatched_sizes=True,
-            **overrides
+            **overrides,
         )
-        
-        dinov2_backbone_config = Dinov2BackBoneWithFPNConfig.from_pretrained(backbone_checkpoint_path)
-        dinov2_backbone = Dinov2BackBoneWithFPN.from_pretrained(backbone_checkpoint_path)
-        
+
+        dinov2_backbone_config = Dinov2BackBoneWithFPNConfig.from_pretrained(
+            backbone_checkpoint_path
+        )
+        dinov2_backbone = Dinov2BackBoneWithFPN.from_pretrained(
+            backbone_checkpoint_path
+        )
+
         pretrained_model_config_dict = pretrained_rt_detr.config.to_dict()
-        rt_detr_config = RTDetrV2ConfigWithCustomBackBone(**pretrained_model_config_dict)
+        rt_detr_config = RTDetrV2ConfigWithCustomBackBone(
+            **pretrained_model_config_dict
+        )
         rt_detr_config.backbone_config = dinov2_backbone_config
-        
+
         pretrained_rt_detr.config = rt_detr_config
         pretrained_rt_detr.model.backbone = dinov2_backbone
         pretrained_rt_detr.save_pretrained(rtdetr_checkpoint_path)
-        
+
         print(f"✓ RT-DETR with DINOv2 backbone saved to: {rtdetr_checkpoint_path}")
     else:
         print(f"✓ RT-DETR checkpoint already exists at: {rtdetr_checkpoint_path}")
-    
+
     return rtdetr_checkpoint_path
 
 
@@ -110,12 +137,14 @@ def setup_model(config: DictConfig) -> RTDETRLightningModule:
     if init_config.create_initial_checkpoint:
         model_checkpoint_path = create_initial_checkpoint(config)
     else:
-        model_checkpoint_path = hydra.utils.to_absolute_path(config.checkpointing.rtdetr_initial_checkpoint)
+        model_checkpoint_path = hydra.utils.to_absolute_path(
+            config.checkpointing.rtdetr_initial_checkpoint
+        )
         if not os.path.exists(model_checkpoint_path):
             print(f"WARNING: Checkpoint not found at {model_checkpoint_path}")
             print("Creating initial checkpoint...")
             model_checkpoint_path = create_initial_checkpoint(config)
-    
+
     print(f"\nLoading RT-DETR model from: {model_checkpoint_path}")
     model = RTDetrV2ForObjectDetectionWithCustomBackbone.from_pretrained(
         model_checkpoint_path,
@@ -136,8 +165,10 @@ def setup_model(config: DictConfig) -> RTDETRLightningModule:
                     print(f"  > Setting model.config.{key}: {current_value} -> {value}")
                     setattr(model.config, key, value)
             else:
-                print(f"  > WARNING: model.config has no attribute '{key}' (cannot set)")
-        
+                print(
+                    f"  > WARNING: model.config has no attribute '{key}' (cannot set)"
+                )
+
         if not changes_made:
             print("...Loaded model config already matches overrides.")
     # if rtdetr_overrides:
@@ -148,37 +179,43 @@ def setup_model(config: DictConfig) -> RTDETRLightningModule:
     #             setattr(model.config, key, value)
     #         else:
     #             print(f"  > WARNING: model.config has no attribute '{key}'")
-    
-    processor = RTDetrImageProcessor.from_pretrained(config.model.rtdetr.pretrained_name_or_path)
+
+    processor = RTDetrImageProcessor.from_pretrained(
+        config.model.rtdetr.pretrained_name_or_path
+    )
     processor.do_normalize = True
     processor.resample = 3
     processor.size = {
         "height": config.data.model_input_size,
-        "width": config.data.model_input_size
+        "width": config.data.model_input_size,
     }
-    
+
     # --- Hydra Path Handling ---
     data_path = hydra.utils.to_absolute_path(config.data.path)
-    val_annot_path = os.path.join(data_path, 'images', 'valid')
-    val_json_path = os.path.join(data_path, 'valid_annotations.json')
-    val_coco_dataset = CocoDetection(root=val_annot_path, annFile=val_json_path, transforms=None)
+    val_annot_path = os.path.join(data_path, "images", "valid")
+    val_json_path = os.path.join(data_path, "valid_annotations.json")
+    val_coco_dataset = CocoDetection(
+        root=val_annot_path, annFile=val_json_path, transforms=None
+    )
     val_coco_gt = val_coco_dataset.coco
-    val_coco_gt.dataset['info'] = {}
+    val_coco_gt.dataset["info"] = {}
 
-    test_annot_path = os.path.join(data_path, 'images', 'test')
-    test_json_path = os.path.join(data_path, 'test_annotations.json')
-    test_coco_dataset = CocoDetection(root=test_annot_path, annFile=test_json_path, transforms=None)
+    test_annot_path = os.path.join(data_path, "images", "test")
+    test_json_path = os.path.join(data_path, "test_annotations.json")
+    test_coco_dataset = CocoDetection(
+        root=test_annot_path, annFile=test_json_path, transforms=None
+    )
     test_coco_gt = test_coco_dataset.coco
-    test_coco_gt.dataset['info'] = {}
-    
+    test_coco_gt.dataset["info"] = {}
+
     lightning_model = RTDETRLightningModule(
         model=model,
         image_processor=processor,
-        config=config, # Pass the whole config
+        config=config,  # Pass the whole config
         val_coco_gt=val_coco_gt,
         test_coco_gt=val_coco_gt if config.debug else test_coco_gt,
     )
-    
+
     print("✓ Model loaded successfully")
     return lightning_model, processor
 
@@ -186,9 +223,11 @@ def setup_model(config: DictConfig) -> RTDETRLightningModule:
 def setup_data(config: DictConfig, processor) -> COCODataModule:
     """Setup the data module."""
     data_config = config.data
-    
+
     data_module = COCODataModule(
-        dataset_path=hydra.utils.to_absolute_path(data_config.path), # Use absolute path
+        dataset_path=hydra.utils.to_absolute_path(
+            data_config.path
+        ),  # Use absolute path
         processor=processor,
         batch_size=data_config.batch_size,
         num_workers=data_config.num_workers,
@@ -197,9 +236,9 @@ def setup_data(config: DictConfig, processor) -> COCODataModule:
         max_random_scale=data_config.max_random_scale,
         p_noise=data_config.p_noise,
         org_images_in_model_input_size=data_config.org_images_in_model_input_size,
-        config = config,
+        config=config,
     )
-    
+
     print(f"✓ Data module configured for: {data_config.path}")
     return data_module
 
@@ -207,24 +246,29 @@ def setup_data(config: DictConfig, processor) -> COCODataModule:
 def setup_profiler(config: DictConfig):
     # Note: Hydra changes CWD, profiler logs save to the hydra output dir
     profiler_config = config.training.profiler
-    dir_name = "profiler_logs" # Will be saved inside hydra's output dir
+    dir_name = "profiler_logs"  # Will be saved inside hydra's output dir
 
-    if profiler_config.type == 'simple':
+    if profiler_config.type == "simple":
         profiler = SimpleProfiler(dirpath=dir_name, filename="rtdetr_profile")
-    elif profiler_config.type == 'advanced':
+    elif profiler_config.type == "advanced":
         profiler = AdvancedProfiler(dirpath=dir_name, filename="rtdetr_profile")
     else:
         return None
     return profiler
 
+
 def setup_callbacks(config: DictConfig):
     """Setup training callbacks."""
     checkpoint_config = config.checkpointing
-    
+
     callbacks = [
         ModelCheckpoint(
-            dirpath=os.path.join(hydra.utils.to_absolute_path(checkpoint_config.save_dir), config.run_name, 'ckpts'), # Use absolute path
-            filename='rtdetr-{epoch:02d}-{val_map:.4f}',
+            dirpath=os.path.join(
+                hydra.utils.to_absolute_path(checkpoint_config.save_dir),
+                config.run_name,
+                "ckpts",
+            ),  # Use absolute path
+            filename="rtdetr-{epoch:02d}-{val_map:.4f}",
             monitor=checkpoint_config.monitor,
             mode=checkpoint_config.mode,
             save_top_k=checkpoint_config.save_top_k,
@@ -232,36 +276,37 @@ def setup_callbacks(config: DictConfig):
             every_n_epochs=checkpoint_config.every_n_epochs,
             verbose=True,
         ),
-        LearningRateMonitor(logging_interval='epoch'),
+        LearningRateMonitor(logging_interval="epoch"),
         ModelSummary(max_depth=2),
     ]
-    
+
     print("✓ Callbacks configured")
     return callbacks
+
 
 def setup_logger(config: DictConfig):
     """Setup WandB logger."""
     wandb_config = config.logging.wandb
-    
+
     if not wandb_config.enabled:
         print("✓ WandB logging disabled")
         return None
-    
+
     logger = WandbLogger(
         project=wandb_config.project,
         name=config.run_name,
-        tags=list(wandb_config.tags), # Convert OmegaConf list to plain list
+        tags=list(wandb_config.tags),  # Convert OmegaConf list to plain list
         notes=wandb_config.notes,
         group=wandb_config.get("group"),
-        config=OmegaConf.to_container(config, resolve=True), # Log full config
+        config=OmegaConf.to_container(config, resolve=True),  # Log full config
         # Hydra changes CWD, so we save logs to the new CWD
-        save_dir=os.getcwd(), 
+        save_dir=os.getcwd(),
         reinit=True,
-        
     )
-    
+
     print(f"✓ WandB logger configured - Project: {wandb_config.project}")
     return logger
+
 
 # --- THIS IS THE NEW MAIN FUNCTION ---
 @hydra.main(config_path="configs", config_name="config.yaml", version_base=None)
@@ -271,12 +316,12 @@ def main(config: DictConfig):
     OmegaConf.set_struct(config, False)
 
     # --- 1. Handle Run Naming (Datetime) ---
-    # We regenerate the timestamp here so that EVERY job in the sweep 
+    # We regenerate the timestamp here so that EVERY job in the sweep
     # gets its own unique time-based ID (e.g., job 1 starts at :01, job 2 at :05)
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    
+
     # If the user didn't provide a specific name in CLI, use the timestamp format
-    if config.run_name.startswith("rtdetr_dinov2_"): 
+    if config.run_name.startswith("rtdetr_dinov2_"):
         config.run_name = f"rtdetr_dinov2_{timestamp}"
     else:
         # If user passed a custom name (e.g. "my_sweep"), append timestamp to keep it unique
@@ -284,10 +329,10 @@ def main(config: DictConfig):
 
     # --- 2. Handle Hydra Sweep Logic ---
     hydra_cfg = HydraConfig.get()
-    
+
     if hydra_cfg.mode == RunMode.MULTIRUN:
         print(f"🚀 Detected Hydra Sweep (Job {hydra_cfg.job.num})")
-        
+
         # A. Set WandB Group
         # We group by the directory name Hydra created for this sweep (shared by all jobs)
         # or you can use a static string like "Sweep_Nov17"
@@ -300,50 +345,50 @@ def main(config: DictConfig):
         # B. Convert Overrides to Tags
         # Get list of overrides for this specific job (e.g. ["model.x=1", "data.y=2"])
         job_overrides = hydra_cfg.overrides.task
-        
+
         for override in job_overrides:
             # Split "key=value"
             if "=" in override:
                 key, value = override.split("=", 1)
                 # Shorten the key (e.g. "model.rtdetr.config_overrides.aux_loss" -> "aux_loss")
-                short_key = key.split(".")[-1] 
+                short_key = key.split(".")[-1]
                 tag = f"{short_key}={value}"
-                
+
                 # Add to WandB tags
                 config.logging.wandb.tags.append(tag)
                 print(f"   -> Added WandB tag: {tag}")
 
     # --- Hydra handles all config loading and merging ---
     # The 'config' object is already the final, merged config
-    
+
     if config.debug:
-        print ('Running in DEBUG mode')
-        OmegaConf.set_struct(config, False) # Unlock config
+        print("Running in DEBUG mode")
+        OmegaConf.set_struct(config, False)  # Unlock config
         # Apply debug settings
         config.trainer.num_overfit_samples = 10
         config.run_name = f"DEBUG_{config.run_name}"
         config.logging.wandb.project = f"{config.logging.wandb.project}"
         # config.checkpointing.save_dir = os.path.join({config.checkpointing.save_dir}, config.run_name)
-        OmegaConf.set_struct(config, True) # Re-lock config
+        OmegaConf.set_struct(config, True)  # Re-lock config
 
-    OmegaConf.set_struct(config, True) # Re-lock config
+    OmegaConf.set_struct(config, True)  # Re-lock config
     # Set dynamic save_dir (relative to hydra's CWD)
     # This is now handled by ModelCheckpoint's dirpath
-    
-    print("\n" + "="*80)
+
+    print("\n" + "=" * 80)
     print("RT-DETR Training with DINOv2 Backbone (Hydra Edition)")
-    print("="*80 + "\n")
-    
+    print("=" * 80 + "\n")
+
     print("--- CWD (Hydra Output Dir) ---")
     print(f"{os.getcwd()}\n")
-    
+
     print("--- Final Configuration ---")
     print(OmegaConf.to_yaml(config))
     print("---------------------------")
-    
+
     # Set seed
     pl.seed_everything(config.seed, workers=True)
-    
+
     # Setup components
     model, processor = setup_model(config)
     data_module = setup_data(config, processor)
@@ -355,7 +400,7 @@ def main(config: DictConfig):
     # Create trainer
     trainer_config = config.trainer
     data_config = config.data
-    
+
     trainer = pl.Trainer(
         accelerator=trainer_config.accelerator,
         devices=trainer_config.devices,
@@ -371,13 +416,13 @@ def main(config: DictConfig):
         benchmark=trainer_config.benchmark,
         callbacks=callbacks,
         logger=logger,
-        overfit_batches = trainer_config.num_overfit_samples,
-        limit_test_batches = data_config.limit_test_batches,
-        limit_train_batches = data_config.limit_train_batches,
-        limit_val_batches = data_config.limit_val_batches,
-        profiler = None if config.debug else profiler,
+        overfit_batches=trainer_config.num_overfit_samples,
+        limit_test_batches=data_config.limit_test_batches,
+        limit_train_batches=data_config.limit_train_batches,
+        limit_val_batches=data_config.limit_val_batches,
+        profiler=None if config.debug else profiler,
     )
-    
+
     # Handle checkpoint path (must be absolute)
     ckpt_path = config.initialization.load_from_checkpoint
     if ckpt_path:
@@ -385,36 +430,39 @@ def main(config: DictConfig):
         if not os.path.exists(ckpt_path):
             print(f"WARNING: Checkpoint path not found: {ckpt_path}")
             ckpt_path = None
-    
+
     if config.test_only:
-        print("\n" + "="*80)
+        print("\n" + "=" * 80)
         print("Running in TEST-ONLY mode")
-        print("="*80 + "\n")
+        print("=" * 80 + "\n")
         if not ckpt_path:
-            raise ValueError("Must provide a checkpoint path via 'initialization.load_from_checkpoint' for test-only mode.")
-        
+            raise ValueError(
+                "Must provide a checkpoint path via 'initialization.load_from_checkpoint' for test-only mode."
+            )
+
         trainer.test(model, datamodule=data_module, ckpt_path=ckpt_path)
     else:
-        print("\n" + "="*80)
+        print("\n" + "=" * 80)
         print("Starting Training")
-        print("="*80 + "\n")
+        print("=" * 80 + "\n")
 
         trainer.fit(model, datamodule=data_module, ckpt_path=ckpt_path)
-        
-        print("\n" + "="*80)
+
+        print("\n" + "=" * 80)
         print("Training Complete!")
-        print("="*80 + "\n")
-        
+        print("=" * 80 + "\n")
+
         # Test the best model
         if trainer.checkpoint_callback.best_model_path:
             print(f"Best model: {trainer.checkpoint_callback.best_model_path}")
             print(f"Best val_map: {trainer.checkpoint_callback.best_model_score:.4f}")
             print("\nRunning test evaluation on BEST checkpoint...")
-            trainer.test(model, datamodule=data_module, ckpt_path='best')
+            trainer.test(model, datamodule=data_module, ckpt_path="best")
         else:
             print("\nNo best model found. Testing disabled.")
-    
+
     wandb.finish()
+
 
 if __name__ == "__main__":
     main()

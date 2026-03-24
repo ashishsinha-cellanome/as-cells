@@ -6,8 +6,12 @@ import logging
 import onnxruntime
 from typing import Tuple, List, Final, Optional, Dict, Union
 
-MODEL_WEIGHTS_PATH: Final[str] = '/home/cellareye/Cellanome/dl-mehdi/runs/segment/batch_1_batch_2_batch_3_images_seg_10_epochs/weights/batch_1_batch_2_batch_3_images_seg_10_epochs.onnx'
-CLASS_NAMES_PATH: Final[str] = '/home/cellareye/Cellanome/dl-mehdi/runs/segment/batch_1_batch_2_batch_3_images_seg_10_epochs/weights/caging_analysis_cells_seg.names'
+MODEL_WEIGHTS_PATH: Final[str] = (
+    "/home/cellareye/Cellanome/dl-mehdi/runs/segment/batch_1_batch_2_batch_3_images_seg_10_epochs/weights/batch_1_batch_2_batch_3_images_seg_10_epochs.onnx"
+)
+CLASS_NAMES_PATH: Final[str] = (
+    "/home/cellareye/Cellanome/dl-mehdi/runs/segment/batch_1_batch_2_batch_3_images_seg_10_epochs/weights/caging_analysis_cells_seg.names"
+)
 
 
 DEFAULT_DETECTION_CONFIDENCE: Final[float] = 0.4
@@ -68,21 +72,21 @@ def show_detections(input_image, predictions, label_map):
         (0, 255, 255),
         (255, 255, 0),
     ]
-    
+
     class_ids = list(label_map.keys())
     if isinstance(input_image, np.ndarray):
         image = input_image.copy()
     else:
         # convert to a numpy array
         image = np.array(input_image)
-    
+
     # convert to 3-channels
     if len(image.shape) < 3:
         image = np.repeat(np.expand_dims(image, axis=2), 3, axis=2)
-    
-    boxes = predictions['boxes']
-    labels = predictions['labels']
-    masks = predictions['masks']
+
+    boxes = predictions["boxes"]
+    labels = predictions["labels"]
+    masks = predictions["masks"]
 
     for i in range(len(masks)):
         # the bounding box
@@ -94,7 +98,7 @@ def show_detections(input_image, predictions, label_map):
         else:
             color = COLORS[labels[i] % len(COLORS)]
             text = label_map[labels[i]]
-        
+
         color_mask = color * np.repeat(np.expand_dims(masks[i], axis=2), 3, axis=2)
         blended = 0.4 * color_mask
         blended[color_mask == 0] = image[ytl:ybr, xtl:xbr][color_mask == 0]
@@ -171,19 +175,21 @@ def to_numpy(tensor):
     Returns:
         Converted to numpy array.
     """
-    return tensor.detach().cpu().numpy() if tensor.requires_grad else tensor.cpu().numpy()
+    return (
+        tensor.detach().cpu().numpy() if tensor.requires_grad else tensor.cpu().numpy()
+    )
 
 
 # YOLOv8 (Yolact) instance segmentation class
 class Yolov8InstanceSegmentation:
     def __init__(
-            self,
-            weights_path: Optional[str] = MODEL_WEIGHTS_PATH,
-            names_path: Optional[str] = CLASS_NAMES_PATH,
-            model_input_size: Tuple[int, int] = INPUT_IMAGE_SIZE,
-            confidence: float = DEFAULT_DETECTION_CONFIDENCE,
-            nms_threshold: float = DEFAULT_NMS_THRESHOLD,
-            use_onnx_runtime: bool = True
+        self,
+        weights_path: Optional[str] = MODEL_WEIGHTS_PATH,
+        names_path: Optional[str] = CLASS_NAMES_PATH,
+        model_input_size: Tuple[int, int] = INPUT_IMAGE_SIZE,
+        confidence: float = DEFAULT_DETECTION_CONFIDENCE,
+        nms_threshold: float = DEFAULT_NMS_THRESHOLD,
+        use_onnx_runtime: bool = True,
     ):
 
         self._net = None
@@ -202,7 +208,7 @@ class Yolov8InstanceSegmentation:
         # read class names and create the label map
         try:
             with open(
-                    self._names_path, "r"
+                self._names_path, "r"
             ) as f:  # if fails to read then blow with error
                 class_names: List[str] = [cname.strip() for cname in f.readlines()]
 
@@ -220,18 +226,16 @@ class Yolov8InstanceSegmentation:
         logging.info("Class names were successfully loaded")
 
         # loading the ONNX model
-        logging.info(
-            f"Loading YOLOv8 ONNX weights from {self._weights_path}."
-        )
+        logging.info(f"Loading YOLOv8 ONNX weights from {self._weights_path}.")
         try:
             if self._use_onnx_runtime:
-                logging.info(
-                    "Using ONNX Runtime for running the model."
-                )
+                logging.info("Using ONNX Runtime for running the model.")
 
-                self._net = onnxruntime.InferenceSession(self._weights_path,
-                                                         providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
-                if 'CUDAExecutionProvider' not in onnxruntime.get_available_providers():
+                self._net = onnxruntime.InferenceSession(
+                    self._weights_path,
+                    providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
+                )
+                if "CUDAExecutionProvider" not in onnxruntime.get_available_providers():
                     logging.warning(
                         "CUDAExecutionProvider is not available in ONNX Runtime! The model will be run on CPU."
                     )
@@ -260,7 +264,7 @@ class Yolov8InstanceSegmentation:
     # cv2.imread(img_path, cv2.IMREAD_UNCHANGED), it does not necessarily have to be a PIL image
     # in fact OpenCV is slightly more efficient in reading the images
     def detect(
-            self, image: np.ndarray, log_time=False
+        self, image: np.ndarray, log_time=False
     ) -> Tuple[np.array, np.array, np.array, List[np.ndarray]]:
         """
         The main function to detect the bounding box and masks for persons in the input image.
@@ -281,7 +285,10 @@ class Yolov8InstanceSegmentation:
         image_height, image_width = image.shape[:2]
 
         # the ONNX model expects input images of exactly specified sizes
-        if image_height != self._model_input_size[1] or image_width != self._model_input_size[0]:
+        if (
+            image_height != self._model_input_size[1]
+            or image_width != self._model_input_size[0]
+        ):
             logging.error(
                 f"Incorrect input image size {(image_width, image_height)}! The input image should be  "
                 f"of size {self._model_input_size}"
@@ -290,7 +297,7 @@ class Yolov8InstanceSegmentation:
                 np.zeros((0, 4), dtype=int),
                 np.zeros((0,), dtype=int),
                 np.zeros((0,), dtype=float),
-                []
+                [],
             )
 
         # prepare input blob and perform inference; the model expect the image in 3 channel format
@@ -304,7 +311,9 @@ class Yolov8InstanceSegmentation:
             # transpose the input image to C x H x W and add batch dimension
             input_image = np.expand_dims(np.transpose(input_image, (2, 0, 1)), axis=0)
             # construct the input dictionary
-            ort_inputs: dict = {self._net.get_inputs()[0].name: input_image.astype(np.float32) / 255.0}
+            ort_inputs: dict = {
+                self._net.get_inputs()[0].name: input_image.astype(np.float32) / 255.0
+            }
             # run the forward pass to get output
             outputs: np.array = self._net.run(None, ort_inputs)
         else:
@@ -340,7 +349,7 @@ class Yolov8InstanceSegmentation:
         self._nms_threshold = threshold
 
     def _post_process(
-            self, outputs: np.ndarray
+        self, outputs: np.ndarray
     ) -> Tuple[np.array, np.array, np.array, List[np.ndarray]]:
         """Post process outputs, discarding unreliable detections & performing NMS"""
 
@@ -355,10 +364,10 @@ class Yolov8InstanceSegmentation:
         # number of classes
         num_classes: int = len(self._label_map)
         # score for all classes
-        scores_all_classes: np.ndarray = preds[:, 4:4 + num_classes]
+        scores_all_classes: np.ndarray = preds[:, 4 : 4 + num_classes]
         # bounding boxes and masks after transposing the matrix
         boxes: np.ndarray = preds[:, :4]
-        masks: np.ndarray = preds[:, 4 + num_classes:]
+        masks: np.ndarray = preds[:, 4 + num_classes :]
         # find the score of the most probable class for each detection (row) across the classes (columns)
         # to filter out unreliable detections (rows) before running NMS
         scores: np.ndarray = np.max(scores_all_classes, axis=1)
@@ -428,10 +437,17 @@ class Yolov8InstanceSegmentation:
             # get the probability map
             actual_mask = 1 / (1 + np.exp(-np.sum(protos * mask, axis=2)))
             # resize it to the input image, also scale it to [0, 255] to be able to resize
-            actual_mask = cv2.resize((actual_mask * 255).astype(np.uint8),
-                                     dsize=(self._model_input_size[0], self._model_input_size[1]))
+            actual_mask = cv2.resize(
+                (actual_mask * 255).astype(np.uint8),
+                dsize=(self._model_input_size[0], self._model_input_size[1]),
+            )
             # confine it to the bounding box for the detection, convert to a probability between [0, 1]
-            actual_mask = actual_mask[boxes[i, 1]: boxes[i, 3], boxes[i, 0]: boxes[i, 2]].astype(float) / 255.0
+            actual_mask = (
+                actual_mask[
+                    boxes[i, 1] : boxes[i, 3], boxes[i, 0] : boxes[i, 2]
+                ].astype(float)
+                / 255.0
+            )
             # threshold the mask to obtain a binary mask
             # actual_mask = cv2.threshold(actual_mask / 255.0, self.mask_threshold, 1.0, cv2.THRESH_BINARY)[1]
             actual_masks.append(actual_mask)
@@ -439,14 +455,13 @@ class Yolov8InstanceSegmentation:
         return boxes, labels, scores, actual_masks
 
     def detect_by_cropping(
-            self,
-            image: Union[Image.Image, np.ndarray],
-            crop_corners: List[List[int]],
-            nms_threshold_for_combining_crop_results: float = 0.15,
-            only_report_cells: bool = False,
-            log_time=False,
+        self,
+        image: Union[Image.Image, np.ndarray],
+        crop_corners: List[List[int]],
+        nms_threshold_for_combining_crop_results: float = 0.15,
+        only_report_cells: bool = False,
+        log_time=False,
     ) -> Dict[str, List]:
-
         """
         A function to apply the model on a high resolution image. If the
         image is high resolution with many objects, after resizing the image
@@ -486,14 +501,14 @@ class Yolov8InstanceSegmentation:
                 "No crop corners are provided for running YOLOv8 model on sub-images. "
                 "Returning no detections"
             )
-            out: dict = {'boxes': [], 'scores': [], 'labels': [], 'masks': []}
+            out: dict = {"boxes": [], "scores": [], "labels": [], "masks": []}
             return out
 
         if only_report_cells and "cell" not in self._reverse_label_map:
             logging.error(
                 "'cell' classname is not included in the model label map. Returning no detections"
             )
-            out: dict = {'boxes': [], 'scores': [], 'labels': [], 'masks': []}
+            out: dict = {"boxes": [], "scores": [], "labels": [], "masks": []}
             return out
 
         H, W = image.shape[:2]
@@ -508,7 +523,7 @@ class Yolov8InstanceSegmentation:
                 "Incorrect corners are provided for running YOLOv8 model on sub-images. "
                 "Returning no detections"
             )
-            out: dict = {'boxes': [], 'scores': [], 'labels': [], 'masks': []}
+            out: dict = {"boxes": [], "scores": [], "labels": [], "masks": []}
             return out
 
         crop_width: int = max(crop_widths)
@@ -550,7 +565,7 @@ class Yolov8InstanceSegmentation:
                 | (boxes[:, 1] < 4)
                 | (boxes[:, 2] > crop_width - 4)
                 | (boxes[:, 3] > crop_height - 4)
-                ] = self._confidence
+            ] = self._confidence
 
             crop_ids_with_detection.append(crop_id)
             results["scores"].append(scores)
@@ -560,7 +575,7 @@ class Yolov8InstanceSegmentation:
 
         # no object detected, return
         if len(crop_ids_with_detection) == 0:
-            out: dict = {'boxes': [], 'scores': [], 'labels': [], 'masks': []}
+            out: dict = {"boxes": [], "scores": [], "labels": [], "masks": []}
             return out
 
         # list to contain the detections
@@ -581,7 +596,6 @@ class Yolov8InstanceSegmentation:
         # we also keep objects with IoU > nms_threshold_for_combining_crop_results, if the detection
         # score for the object in the crop is higher than the objects in the other crops
         for idx, crop_id in enumerate(crop_ids_with_detection):
-
             crop_labels: np.array = results["labels"][idx]
             crop_scores: np.array = results["scores"][idx]
             crop_boxes: np.array = results["boxes"][idx]
@@ -634,7 +648,6 @@ class Yolov8InstanceSegmentation:
             ]
 
             for label in set(list(crop_labels) + list(rest_labels)):
-
                 # the indexes of detections of the same label in each crop and rest set
                 crop_class_idxs: np.array = np.where(crop_labels == label)
                 rest_class_idxs: np.array = np.where(rest_labels == label)
@@ -648,7 +661,6 @@ class Yolov8InstanceSegmentation:
                         [i for i in range(len(crop_class_idxs[0]))], dtype=int
                     )
                 else:
-
                     # compute the IoU matrix, use torchvision implementation for efficiency
                     iou_matrix: np.array = iou_batch(
                         crop_boxes[crop_class_idxs], rest_boxes[rest_class_idxs]
@@ -699,8 +711,8 @@ class Yolov8InstanceSegmentation:
                         # the image) of the crops (we reduce the scores for both to the threshold score and they become
                         # equal)
                         if crop_det_score > rest_det_score or (
-                                crop_det_score == rest_det_score
-                                and crop_box_area >= rest_box_area
+                            crop_det_score == rest_det_score
+                            and crop_box_area >= rest_box_area
                         ):
                             # keep this object as it has the highest score among all
                             boxes.append(crop_boxes[crop_class_idxs[0][i]])
@@ -735,11 +747,17 @@ class Yolov8InstanceSegmentation:
                 )
             )
 
-        out: dict = {'boxes': [[box[0], box[1], box[2], box[3]] for box in boxes],  # convert to list
-                     'scores': scores, 'labels': labels, 'masks': masks}
+        out: dict = {
+            "boxes": [
+                [box[0], box[1], box[2], box[3]] for box in boxes
+            ],  # convert to list
+            "scores": scores,
+            "labels": labels,
+            "masks": masks,
+        }
         return out
-    
-    
+
+
 detector = Yolov8InstanceSegmentation(use_onnx_runtime=True)
 
 RESIZE: Final[Dict[Tuple[int, int], Tuple[int, int]]] = {
@@ -752,20 +770,19 @@ RESIZE: Final[Dict[Tuple[int, int], Tuple[int, int]]] = {
 # note that the crop coordinates are with respect to resized image dimensions specified above
 CROP_CORNERS: Final[Dict[Tuple[int, int], List[List[int]]]] = {
     (2000, 1600): [
-         [0, 0, 640, 640],
-         [0, 480, 640, 1120],
-         [0, 960, 640, 1600],
-         [454, 0, 1094, 640],
-         [454, 480, 1094, 1120],
-         [454, 960, 1094, 1600],
-         [908, 0, 1548, 640],
-         [908, 480, 1548, 1120],
-         [908, 960, 1548, 1600],
-         [1360, 0, 2000, 640],
-         [1360, 480, 2000, 1120],
-         [1360, 960, 2000, 1600],
+        [0, 0, 640, 640],
+        [0, 480, 640, 1120],
+        [0, 960, 640, 1600],
+        [454, 0, 1094, 640],
+        [454, 480, 1094, 1120],
+        [454, 960, 1094, 1600],
+        [908, 0, 1548, 640],
+        [908, 480, 1548, 1120],
+        [908, 960, 1548, 1600],
+        [1360, 0, 2000, 640],
+        [1360, 480, 2000, 1120],
+        [1360, 960, 2000, 1600],
     ],
-    
     (4512, 4512): [
         [0, 0, 640, 640],
         [0, 374, 640, 1014],
@@ -819,12 +836,14 @@ CROP_CORNERS: Final[Dict[Tuple[int, int], List[List[int]]]] = {
     ],
 }
 
-def run_yolo_v8(input_image: np.ndarray, 
-                normalize_image: bool = True, 
-                bit_depth: int = 8, 
-                plot_results: bool = False, 
+
+def run_yolo_v8(
+    input_image: np.ndarray,
+    normalize_image: bool = True,
+    bit_depth: int = 8,
+    plot_results: bool = False,
 ) -> Tuple[Dict[str, list], float, Optional[np.ndarray]]:
-    
+
     # make a copy to not modify the input image
     img = input_image.copy()
 
@@ -833,8 +852,8 @@ def run_yolo_v8(input_image: np.ndarray,
             "Warning YOLO model may suffer loss in precision due to conversion from RGB to grayscale"
         )
         img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        
-    img = (255 * img.astype(float) / (2 ** bit_depth - 1)).astype(np.uint8)
+
+    img = (255 * img.astype(float) / (2**bit_depth - 1)).astype(np.uint8)
 
     if normalize_image:
         img = cv2.normalize(img, img, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX)
@@ -844,13 +863,15 @@ def run_yolo_v8(input_image: np.ndarray,
     if (image_width, image_height) not in RESIZE:
         logging.error(
             "The input image size {} is not supported! Returning no cells!".format(
-                image_width, )
+                image_width,
+            )
         )
-        out = {'boxes': [],
-               'labels': [],
-               'scores': [],
-               'masks': [],
-               }
+        out = {
+            "boxes": [],
+            "labels": [],
+            "scores": [],
+            "masks": [],
+        }
         if plot_results:
             return (out, 0, np.zeros((image_height, image_width), dtype=np.uint8))
         else:
@@ -861,30 +882,35 @@ def run_yolo_v8(input_image: np.ndarray,
     resized_img: np.ndarray = cv2.resize(
         img, RESIZE[(image_width, image_height)], interpolation=cv2.INTER_AREA
     )
-    
+
     st = time.time()
     crop_corners: List[List[int]] = CROP_CORNERS[(image_width, image_height)]
     out: Dict[str, list] = detector.detect_by_cropping(
-            resized_img, crop_corners, only_report_cells=False)
+        resized_img, crop_corners, only_report_cells=False
+    )
 
     if scale_factor != 1:
         # scale the detections back to original image resolution
-        out['boxes'] = (scale_factor * np.array(out['boxes'])).astype(int)
+        out["boxes"] = (scale_factor * np.array(out["boxes"])).astype(int)
         # convert to a list to be consistent with the rest
-        out['boxes'] = [box for box in out['boxes']]
-        
-    for idx in range(len(out['boxes'])):
+        out["boxes"] = [box for box in out["boxes"]]
+
+    for idx in range(len(out["boxes"])):
         if scale_factor != 1:
-            xtl, ytl, xbr, ybr = out['boxes'][idx]
+            xtl, ytl, xbr, ybr = out["boxes"][idx]
             # note that mask here is a probability mask and interpolation does not have to be nearest neighbor
-            out['masks'][idx] = cv2.resize(out['masks'][idx], (xbr - xtl, ybr - ytl), interpolation=cv2.INTER_LINEAR)
-        mask_this_cell: np.ndarray = np.zeros(out['masks'][idx].shape, dtype=np.uint8)
-        mask_this_cell[out['masks'][idx] >= MASK_THRESHOLD] = 1
-        out['masks'][idx] = mask_this_cell.astype(np.uint8)
+            out["masks"][idx] = cv2.resize(
+                out["masks"][idx],
+                (xbr - xtl, ybr - ytl),
+                interpolation=cv2.INTER_LINEAR,
+            )
+        mask_this_cell: np.ndarray = np.zeros(out["masks"][idx].shape, dtype=np.uint8)
+        mask_this_cell[out["masks"][idx] >= MASK_THRESHOLD] = 1
+        out["masks"][idx] = mask_this_cell.astype(np.uint8)
 
     et = time.time()
 
     if plot_results:
         return out, et - st, show_detections(img, out, detector._label_map)
-    
+
     return out, et - st

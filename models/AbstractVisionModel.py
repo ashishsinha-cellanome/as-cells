@@ -13,7 +13,6 @@ from typing import Any, Dict, List, Tuple, Optional, Union, Final
 from .model_utils import iou_batch, overlap_batch, box_area, show_detections
 
 
-
 # threshold on the proximity of the bounding box corners to the crop boundaries to declare the
 # detected object is potentially cropped between the two
 PROXIMITY_TO_CROP_BOUNDARIES_TO_DECLARE_CROPPED_DETECTIONS_IN_PIXEL: Final[int] = 4
@@ -21,6 +20,7 @@ PROXIMITY_TO_CROP_BOUNDARIES_TO_DECLARE_CROPPED_DETECTIONS_IN_PIXEL: Final[int] 
 OVER_LAP_THRESHOLD: Final[float] = 0.75
 # the default detection threshold
 DEFAULT_DETECTION_CONFIDENCE: Final[float] = 0.5
+
 
 class VisionModel(ABC):
     """
@@ -32,16 +32,18 @@ class VisionModel(ABC):
     def __init__(
         self,
         weights_path: str,
-        model_name: str, 
+        model_name: str,
         label_map: Optional[Dict[int, str]] = None,
-        model_input_size: Optional[Tuple[int, int]] = None, 
+        model_input_size: Optional[Tuple[int, int]] = None,
         confidence: float = DEFAULT_DETECTION_CONFIDENCE,
-        device: torch.device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu"),
+        device: torch.device = torch.device("cuda")
+        if torch.cuda.is_available()
+        else torch.device("cpu"),
     ):
         self._model_name: str = model_name
         self._loaded: bool = False
         self._model: Any = None
-        
+
         # the model input size in (width, height) if the model expect a fixed input size
         # this can be passed or included in the weights file
         self._model_input_size: Tuple[int, int] = None
@@ -49,8 +51,8 @@ class VisionModel(ABC):
         # resize and crop corners can be included in the model file and can be loaded below
         self._resize_dict: Dict[Tuple[int, int], Tuple[int, int]] | None = None
         self._crop_corners_dict: Dict[Tuple[int, int], List[List[int]]] | None = None
-        
-        # the model file usually includes the class ID to class name mapping, but it can be overwritten by 
+
+        # the model file usually includes the class ID to class name mapping, but it can be overwritten by
         # the passed label_map above
         self._label_map: Dict[int, str] | None = None
         self._reverse_label_map: Dict[str, int] | None = None
@@ -59,23 +61,22 @@ class VisionModel(ABC):
         self._detected_class_names_remap: Dict[str, str] | None = None
         self._class_ids_to_exclude_from_dets: List[int] = []
 
-        
         self._weights_path = weights_path
         self._model_name = model_name
         self._confidence = confidence
         self._device = device
-        
+
         # a dictionary with some details about the model that is populated by self.load()
         # for now use some default values
         self._metadata: dict = {
-            'predict_masks': True, 
-            'magnification': '10x',
+            "predict_masks": True,
+            "magnification": "10x",
         }
-        
+
         # the state dictionary of the model to be read from the weights file
         self._model_state_dict: OrderedDict = None
         # the model's label map if available in the weight file
-        loaded_label_map: Dict[int, str] = None   
+        loaded_label_map: Dict[int, str] = None
         # import pdb; pdb.set_trace()
         # loading the PyTorch weights and the label map
         try:
@@ -88,7 +89,10 @@ class VisionModel(ABC):
                 self._weights_path, map_location=self._device
             )
             # print ('torch load works', type(saved_model_param))
-            if (isinstance(saved_model_param, dict) and "model_state_dict" in saved_model_param):
+            if (
+                isinstance(saved_model_param, dict)
+                and "model_state_dict" in saved_model_param
+            ):
                 # the weights file contains the model state dictionary (the weights) and the label map (both are
                 # mandatory) and potentially other model related configs
                 # in case a dictionary is provided, the keys and values are as following:
@@ -114,8 +118,11 @@ class VisionModel(ABC):
                         "The model input size is also provided in the weights file."
                     )
                     self._model_input_size = saved_model_param["model_input_size"]
-                    
-                if ("resize_dict" in saved_model_param and "crop_corners_dict" in saved_model_param):
+
+                if (
+                    "resize_dict" in saved_model_param
+                    and "crop_corners_dict" in saved_model_param
+                ):
                     # resize and crop corners are also provided in the weights file
                     logging.info(
                         "The resize and crop_corners dictionary are also provided in the weights file."
@@ -146,12 +153,11 @@ class VisionModel(ABC):
         if model_input_size is not None:
             if self._model_input_size is not None:
                 logging.warning(
-                        f"The model input size from the weights file {self._model_input_size} is overwritten by "
-                        f"{model_input_size} during class instantiation! Make sure this replacement is intentional."
-                    )    
+                    f"The model input size from the weights file {self._model_input_size} is overwritten by "
+                    f"{model_input_size} during class instantiation! Make sure this replacement is intentional."
+                )
             self._model_input_size = model_input_size
-            
-        
+
         # take care of the mapping between class IDs and class names
         if label_map is None:
             # check if the label map is provided in the model file
@@ -161,30 +167,44 @@ class VisionModel(ABC):
                     "neither provided during class instantiation nor available in the weights file! Returning ..."
                 )
             else:
-                logging.info("The mapping between class IDs and class names is provided in the weights file.")
+                logging.info(
+                    "The mapping between class IDs and class names is provided in the weights file."
+                )
                 self._label_map: Dict[int, str] = loaded_label_map
         else:
-            logging.info("The mapping between class IDs and class names is passed during class instantiation! "
-                        "It will overwrite the label map passed in the weights file (if provided).")        
+            logging.info(
+                "The mapping between class IDs and class names is passed during class instantiation! "
+                "It will overwrite the label map passed in the weights file (if provided)."
+            )
             self._label_map: Dict[int, str] = label_map
 
         # load the model
-        if self._label_map is not None: # no need to check for self._model_state_dict as if None, self.load() below returns self._loaded False
-            # load the model, we need the label map to define/load the model, if self._load() succeeds, it sets self._loaded to True 
+        if (
+            self._label_map is not None
+        ):  # no need to check for self._model_state_dict as if None, self.load() below returns self._loaded False
+            # load the model, we need the label map to define/load the model, if self._load() succeeds, it sets self._loaded to True
             self.load()
-        
+
         # proceed with the rest
         if self._loaded:
-            logging.info(f"The mapping between class IDs and class names: {self._label_map}") 
+            logging.info(
+                f"The mapping between class IDs and class names: {self._label_map}"
+            )
             self._reverse_label_map: Dict[str, int] = {
                 value: key for key, value in self._label_map.items()
             }
-        
+
             if self._detected_class_names_remap is not None:
                 # extract the classes that will be mapped to 'bg' and should be excluded from the detections
-                class_names_to_exclude_from_dets = [k for k, v in self._detected_class_names_remap.items() if v == 'bg']
+                class_names_to_exclude_from_dets = [
+                    k for k, v in self._detected_class_names_remap.items() if v == "bg"
+                ]
                 # update the passed mapping and removed the ones that are going to be mapped to 'bg' (should be excluded)
-                self._detected_class_names_remap = {k: v for k, v in self._detected_class_names_remap.items() if v != 'bg'}
+                self._detected_class_names_remap = {
+                    k: v
+                    for k, v in self._detected_class_names_remap.items()
+                    if v != "bg"
+                }
                 self._detected_class_ids_remap: Dict[int, int] = {}
                 for k, v in self._detected_class_names_remap.items():
                     if k in self._reverse_label_map and v in self._reverse_label_map:
@@ -202,7 +222,6 @@ class VisionModel(ABC):
                     f"The following class names will be excluded from detections (mapped to 'bg' in the passed mapping): "
                     f"{class_names_to_exclude_from_dets}"
                 )
-        
 
     # abtract method to be overwritten for specific models
 
@@ -212,18 +231,17 @@ class VisionModel(ABC):
         Load the model weights from the self._model_state_dict and specific model implementation, modifies self._model
         """
 
-
     @abstractmethod
     def detect_batch(
         self,
         input_images_list: List[Union[PIL.Image, np.ndarray]],
     ) -> List[Dict[str, list]]:
         """
-        The main function to detect the bounding box and masks for objects in a list of inputs images (batch processing). 
+        The main function to detect the bounding box and masks for objects in a list of inputs images (batch processing).
 
         Args:
-            input_images_list (list of PIL.Image or numpy arrays): Input images, each should have 8 bits per channel bit-depth 
-            (np.uint8 numpy array). 
+            input_images_list (list of PIL.Image or numpy arrays): Input images, each should have 8 bits per channel bit-depth
+            (np.uint8 numpy array).
 
         Returns:
             A list of dictionaries with keys and values as below:
@@ -233,7 +251,7 @@ class VisionModel(ABC):
                 "scores": List of float detection scores, after applying the threshold self._confidence.
                 "masks": Optional list of bindary masks (not probability) for the detected objects. Each mask is a numpy array of the same size
                     as the bounding box with width and height (xbr - xtl, ybr - ytl). This key will not be included in the results for
-                    object detection models. 
+                    object detection models.
         """
 
     @abstractmethod
@@ -241,7 +259,7 @@ class VisionModel(ABC):
         """
         post-processing the results
         """
-    
+
     def detect(
         self,
         img: Union[Image.Image, np.ndarray],
@@ -250,7 +268,7 @@ class VisionModel(ABC):
         The main function to detect the bounding box and masks for objects in the input image.
 
         Args:
-            img (PIL.Image or numpy array): Input image, should have 8 bits per channel bit-depth (np.uint8 numpy array). 
+            img (PIL.Image or numpy array): Input image, should have 8 bits per channel bit-depth (np.uint8 numpy array).
 
         Returns:
             A dictionary with keys and values as below:
@@ -260,10 +278,10 @@ class VisionModel(ABC):
                 "scores": List of float detection scores, after applying the threshold self._confidence.
                 "masks": Optional list of bindary masks (not probability) for the detected objects. Each mask is a numpy array of the same size
                     as the bounding box with width and height (xbr - xtl, ybr - ytl). This key will not be included in the results for
-                    object detection models. 
+                    object detection models.
         """
         return self.detect_batch(input_images_list=[img])[0]
-    
+
     def _update_label_map_if_needed(self):
         if self._detected_class_names_remap is not None:
             # self._detected_class_ids_remap will also be not None
@@ -304,12 +322,12 @@ class VisionModel(ABC):
         return self._metadata
 
     def detect_by_cropping(
-            self,
-            img: Union[Image.Image, np.ndarray],
-            crop_corners: List[List[int]],
-            nms_threshold_for_combining_crop_results: float = 0.15,
-            classnames_to_return: Optional[List[str]] = None,
-            log_time=False,
+        self,
+        img: Union[Image.Image, np.ndarray],
+        crop_corners: List[List[int]],
+        nms_threshold_for_combining_crop_results: float = 0.15,
+        classnames_to_return: Optional[List[str]] = None,
+        log_time=False,
     ) -> Dict[str, List]:
         """
         A function to apply the model on a high resolution image. If the
@@ -342,13 +360,18 @@ class VisionModel(ABC):
                 "scores": List of float detection scores, after applying the threshold self._confidence.
                 "masks": Optional list of bindary masks (not probability) for the detected objects. Each mask is a numpy array of the same size
                     as the bounding box with width and height (xbr - xtl, ybr - ytl). This key will not be included in the results for
-                    object detection models. 
+                    object detection models.
         """
 
         start = time.time()
 
-        if self._metadata['predict_masks']:
-            invalid_out: Dict[str, list] = {"boxes": [], "scores": [], "labels": [], "masks": []}
+        if self._metadata["predict_masks"]:
+            invalid_out: Dict[str, list] = {
+                "boxes": [],
+                "scores": [],
+                "labels": [],
+                "masks": [],
+            }
         else:
             invalid_out: Dict[str, list] = {"boxes": [], "scores": [], "labels": []}
 
@@ -403,12 +426,16 @@ class VisionModel(ABC):
         # combine the results, filter them based on the score,
         # and update the coordinates of the bounding boxes
         # for applying NMS later
-        if self._metadata['predict_masks']:
-            results: Dict = {"scores": [], "boxes": [], "labels": [], "masks": [],}
+        if self._metadata["predict_masks"]:
+            results: Dict = {
+                "scores": [],
+                "boxes": [],
+                "labels": [],
+                "masks": [],
+            }
         else:
             results: Dict = {"scores": [], "boxes": [], "labels": []}
-            
-            
+
         # a list to keep track of cropped sub-images with at least one object detection
         crop_ids_with_detection: List[int] = []
 
@@ -431,7 +458,7 @@ class VisionModel(ABC):
             labels: np.ndarray = np.array(preds["labels"])
             scores: np.ndarray = np.array(preds["scores"])
             # we leave the masks as a list of mask numpy arrays as each mask has different sizes below
-            if self._metadata['predict_masks']:
+            if self._metadata["predict_masks"]:
                 masks: List[np.ndarray] = preds["masks"]
 
             # combine the detection results
@@ -449,17 +476,31 @@ class VisionModel(ABC):
             # of cropped images are combined
 
             scores[
-                (boxes[:, 0] < PROXIMITY_TO_CROP_BOUNDARIES_TO_DECLARE_CROPPED_DETECTIONS_IN_PIXEL)
-                | (boxes[:, 1] < PROXIMITY_TO_CROP_BOUNDARIES_TO_DECLARE_CROPPED_DETECTIONS_IN_PIXEL)
-                | (boxes[:, 2] >= crop_width - PROXIMITY_TO_CROP_BOUNDARIES_TO_DECLARE_CROPPED_DETECTIONS_IN_PIXEL)
-                | (boxes[:, 3] >= crop_height - PROXIMITY_TO_CROP_BOUNDARIES_TO_DECLARE_CROPPED_DETECTIONS_IN_PIXEL)
-                ] = self._confidence
+                (
+                    boxes[:, 0]
+                    < PROXIMITY_TO_CROP_BOUNDARIES_TO_DECLARE_CROPPED_DETECTIONS_IN_PIXEL
+                )
+                | (
+                    boxes[:, 1]
+                    < PROXIMITY_TO_CROP_BOUNDARIES_TO_DECLARE_CROPPED_DETECTIONS_IN_PIXEL
+                )
+                | (
+                    boxes[:, 2]
+                    >= crop_width
+                    - PROXIMITY_TO_CROP_BOUNDARIES_TO_DECLARE_CROPPED_DETECTIONS_IN_PIXEL
+                )
+                | (
+                    boxes[:, 3]
+                    >= crop_height
+                    - PROXIMITY_TO_CROP_BOUNDARIES_TO_DECLARE_CROPPED_DETECTIONS_IN_PIXEL
+                )
+            ] = self._confidence
 
             crop_ids_with_detection.append(crop_id)
             results["scores"].append(scores)
             results["boxes"].append(boxes + np.array([x1c, y1c, x1c, y1c], dtype=int))
             results["labels"].append(labels)
-            if self._metadata['predict_masks']:
+            if self._metadata["predict_masks"]:
                 results["masks"].append(masks)
 
         # no object detected, return
@@ -470,7 +511,7 @@ class VisionModel(ABC):
         boxes: list = []
         labels: list = []
         scores: list = []
-        if self._metadata['predict_masks']:
+        if self._metadata["predict_masks"]:
             masks: list = []
 
         # now compare the detection results of one crop with the detections in the
@@ -491,7 +532,7 @@ class VisionModel(ABC):
             crop_labels: np.ndarray = results["labels"][idx]
             crop_scores: np.ndarray = results["scores"][idx]
             crop_boxes: np.ndarray = results["boxes"][idx]
-            if self._metadata['predict_masks']:
+            if self._metadata["predict_masks"]:
                 crop_masks: List[np.ndarray] = results["masks"][idx]
 
             num_detections_in_rest = 0
@@ -505,7 +546,7 @@ class VisionModel(ABC):
                     boxes.append(crop_boxes[i])
                     labels.append(label)
                     scores.append(crop_scores[i])
-                    if self._metadata['predict_masks']:
+                    if self._metadata["predict_masks"]:
                         masks.append(crop_masks[i])
                 continue
 
@@ -572,7 +613,7 @@ class VisionModel(ABC):
                         boxes.append(crop_boxes[crop_class_idxs[0][i]])
                         labels.append(crop_labels[crop_class_idxs[0][i]])
                         scores.append(crop_det_score)
-                        if self._metadata['predict_masks']:
+                        if self._metadata["predict_masks"]:
                             masks.append(crop_masks[crop_class_idxs[0][i]])
                     else:
                         # there is some boxes in the rest of the crops with IoU more than the threshold
@@ -589,7 +630,9 @@ class VisionModel(ABC):
                         rest_det_score = scores_to_check[max_index]
 
                         # areas of the matching boxes
-                        crop_box_area: float = box_area(crop_boxes[crop_class_idxs[0][i]])
+                        crop_box_area: float = box_area(
+                            crop_boxes[crop_class_idxs[0][i]]
+                        )
                         rest_box_area: float = box_area(
                             rest_boxes[rest_class_idxs[0][high_iou_idxs[max_index]]]
                         )
@@ -599,14 +642,14 @@ class VisionModel(ABC):
                         # the image) of the crops (we reduce the scores for both to the threshold score and they become
                         # equal)
                         if crop_det_score > rest_det_score or (
-                                crop_det_score == rest_det_score
-                                and crop_box_area >= rest_box_area
+                            crop_det_score == rest_det_score
+                            and crop_box_area >= rest_box_area
                         ):
                             # keep this object as it has the highest score among all
                             boxes.append(crop_boxes[crop_class_idxs[0][i]])
                             labels.append(crop_labels[crop_class_idxs[0][i]])
                             scores.append(crop_det_score)
-                            if self._metadata['predict_masks']:
+                            if self._metadata["predict_masks"]:
                                 masks.append(crop_masks[crop_class_idxs[0][i]])
                             if crop_det_score == rest_det_score:
                                 # this is added to break the tie if both areas are equal
@@ -625,9 +668,9 @@ class VisionModel(ABC):
             boxes: list = [boxes[i] for i in detection_ids]
             labels: list = [labels[i] for i in detection_ids]
             scores: list = [scores[i] for i in detection_ids]
-            if self._metadata['predict_masks']:
+            if self._metadata["predict_masks"]:
                 masks: list = [masks[i] for i in detection_ids]
-        
+
         elap: float = time.time() - start
         if log_time:
             logging.info(
@@ -644,46 +687,52 @@ class VisionModel(ABC):
             "scores": scores,
             "labels": labels,
         }
-        
-        if self._metadata['predict_masks']:
+
+        if self._metadata["predict_masks"]:
             out["masks"] = masks
 
         return out
 
+
 # end of class definition
 
-   
+
 def post_process_detections(
-    detections: List[str, list], 
-    post_process_class_names: List[str], 
-    classnames_to_class_ids_map: Dict[str, int], 
+    detections: List[str, list],
+    post_process_class_names: List[str],
+    classnames_to_class_ids_map: Dict[str, int],
     overlap_threshold: float,
 ):
     """
     in this function, "smaller" detections that are part of larger objects of the same type are detected, and invalidated
     this can happen mainly for 'cell', 'nucleus' and 'cell-adhered'/'cytoplasm' classes
     """
-    predict_masks: bool = 'masks' in detections
+    predict_masks: bool = "masks" in detections
     # list of indexes of objects for each class name to be included in post processing
     post_process_class_idxs: Dict[str, List[int]] = {}
     # list of bounding boxes for each class name to be included in post processing
     post_process_class_boxes: Dict[str, List[np.ndarray]] = {}
-    for i, box in enumerate(detections['boxes']):
+    for i, box in enumerate(detections["boxes"]):
         for class_name in post_process_class_names:
-            if class_name in classnames_to_class_ids_map and detections['labels'][i] == classnames_to_class_ids_map[class_name]:
+            if (
+                class_name in classnames_to_class_ids_map
+                and detections["labels"][i] == classnames_to_class_ids_map[class_name]
+            ):
                 if class_name in post_process_class_idxs:
                     post_process_class_idxs[class_name].append(i)
                     post_process_class_boxes[class_name].append(box)
                 else:
                     post_process_class_idxs[class_name] = [i]
                     post_process_class_boxes[class_name] = [box]
-    
+
     # list of detection indexes to be excluded (this is with respect to all detected objects and not only the class under consideration)
-    obj_idxs_to_remove: List[int] = []                
+    obj_idxs_to_remove: List[int] = []
     for key in post_process_class_boxes:
         # convert to a numpy array
-        post_process_class_boxes[key]: np.ndarray = np.array(post_process_class_boxes[key])
-        
+        post_process_class_boxes[key]: np.ndarray = np.array(
+            post_process_class_boxes[key]
+        )
+
         if len(post_process_class_idxs[key]) == 0:
             continue
 
@@ -693,24 +742,30 @@ def post_process_detections(
         # - a large overlap[i, j] but small overlap[j, i] indicate that object i is larger than object j and is mostly covering it
         # - large overlap[i, j] and overlap[j, i] indicates both objects have high IoU (for an overlap threshold of 0.75, the IoU will be
         #   at least 0.6)
-        overlap: np.ndarray = overlap_batch(post_process_class_boxes[key], post_process_class_boxes[key], True)
+        overlap: np.ndarray = overlap_batch(
+            post_process_class_boxes[key], post_process_class_boxes[key], True
+        )
         # remove diagonal elements (as each box has a complete overlap with itself)
         overlap = overlap - np.eye(len(post_process_class_boxes[key]))
-        
+
         # index of larger objects (row indexes) covering some smaller already detected cells (column index)
         # by more than OVER_LAP_THRESHOLD
         # these smaller objects are most probably redundant objects
         covering_obj_idxs, covered_obj_idxs = np.where(overlap > overlap_threshold)
         # now double-check the coverage using the masks
-        for (i, j) in zip(covering_obj_idxs, covered_obj_idxs):
+        for i, j in zip(covering_obj_idxs, covered_obj_idxs):
             # index with respect to all detected and not object of class key
             large_obj_index: int = post_process_class_idxs[key][i]
             small_obj_index: int = post_process_class_idxs[key][j]
             if predict_masks:
                 # larger box coordinates
-                xl1, yl1, xl2, yl2 = detections['boxes'][large_obj_index] # the same as post_process_class_boxes[key][i]
+                xl1, yl1, xl2, yl2 = detections["boxes"][
+                    large_obj_index
+                ]  # the same as post_process_class_boxes[key][i]
                 # smaller box coordinates
-                xs1, ys1, xs2, ys2 = detections['boxes'][small_obj_index] # the same as post_process_class_boxes[key][j]
+                xs1, ys1, xs2, ys2 = detections["boxes"][
+                    small_obj_index
+                ]  # the same as post_process_class_boxes[key][j]
                 # union of the two boxes, needed to compute the masks intersection efficiently within this union
                 # as the masks are defined within the boxes
                 x1: int = min(xl1, xs1)
@@ -718,13 +773,19 @@ def post_process_detections(
                 x2: int = max(xl2, xs2)
                 y2: int = max(yl2, ys2)
                 large_obj_mask: np.ndarray = np.zeros((y2 - y1, x2 - x1), np.uint8)
-                large_obj_mask[(yl1 - y1):(yl2 - y1), (xl1 - x1):(xl2 - x1)] = detections['masks'][large_obj_index]
+                large_obj_mask[(yl1 - y1) : (yl2 - y1), (xl1 - x1) : (xl2 - x1)] = (
+                    detections["masks"][large_obj_index]
+                )
                 small_obj_mask: np.ndarray = np.zeros((y2 - y1, x2 - x1), np.uint8)
-                small_obj_mask[(ys1 - y1):(ys2 - y1), (xs1 - x1):(xs2 - x1)] = detections['masks'][small_obj_index]
+                small_obj_mask[(ys1 - y1) : (ys2 - y1), (xs1 - x1) : (xs2 - x1)] = (
+                    detections["masks"][small_obj_index]
+                )
 
-                # check if the intersection of the masks are larger than the threshold, the box check and mask check allows us 
-                # to run this code more efficiently 
-                if np.sum(small_obj_mask * large_obj_mask) > overlap_threshold * np.sum(small_obj_mask):
+                # check if the intersection of the masks are larger than the threshold, the box check and mask check allows us
+                # to run this code more efficiently
+                if np.sum(small_obj_mask * large_obj_mask) > overlap_threshold * np.sum(
+                    small_obj_mask
+                ):
                     # add column index j to the list of object indexes to be removed
                     if small_obj_index not in obj_idxs_to_remove:
                         obj_idxs_to_remove.append(small_obj_index)
@@ -733,14 +794,29 @@ def post_process_detections(
                 # available
                 if small_obj_index not in obj_idxs_to_remove:
                     obj_idxs_to_remove.append(small_obj_index)
-                    
-   
+
     if len(obj_idxs_to_remove) > 0:
-        detections['boxes'] = [box for i, box in enumerate(detections['boxes']) if i not in obj_idxs_to_remove]
-        detections['labels'] = [label for i, label in enumerate(detections['labels']) if i not in obj_idxs_to_remove]
-        detections['scores'] = [score for i, score in enumerate(detections['scores']) if i not in obj_idxs_to_remove]
+        detections["boxes"] = [
+            box
+            for i, box in enumerate(detections["boxes"])
+            if i not in obj_idxs_to_remove
+        ]
+        detections["labels"] = [
+            label
+            for i, label in enumerate(detections["labels"])
+            if i not in obj_idxs_to_remove
+        ]
+        detections["scores"] = [
+            score
+            for i, score in enumerate(detections["scores"])
+            if i not in obj_idxs_to_remove
+        ]
         if predict_masks:
-            detections['masks'] = [mask for i, mask in enumerate(detections['masks']) if i not in obj_idxs_to_remove] 
+            detections["masks"] = [
+                mask
+                for i, mask in enumerate(detections["masks"])
+                if i not in obj_idxs_to_remove
+            ]
 
     return detections
 
@@ -748,21 +824,20 @@ def post_process_detections(
 def run_model(
     detector: VisionModel,
     input_image: np.ndarray,
-    input_resize: Dict[Tuple[int, int], Tuple[int, int]] | None = None, 
+    input_resize: Dict[Tuple[int, int], Tuple[int, int]] | None = None,
     input_crop_corners: Dict[Tuple[int, int], List[List[int]]] | None = None,
-    normalize_image: bool = False, 
-    bit_depth: int = 8, 
-    crop: bool = True, 
-    post_process_class_names: List[str] | None = None, 
+    normalize_image: bool = False,
+    bit_depth: int = 8,
+    crop: bool = True,
+    post_process_class_names: List[str] | None = None,
     overlap_threshold: float = OVER_LAP_THRESHOLD,
-    plot_results: bool = False, 
+    plot_results: bool = False,
 ) -> Tuple[Dict[str, list], float, Optional[np.ndarray]]:
-
     """
     The wrapper function
     """
 
-    predict_masks: bool = detector.get_metadata()['predict_masks']
+    predict_masks: bool = detector.get_metadata()["predict_masks"]
     # make a copy to not modify the input image
     img = input_image.copy()
 
@@ -773,7 +848,7 @@ def run_model(
         img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
     if bit_depth != 8:
-        img = (255.0 * img.astype(float) / (2 ** bit_depth - 1)).astype(np.uint8)
+        img = (255.0 * img.astype(float) / (2**bit_depth - 1)).astype(np.uint8)
 
     if normalize_image:
         img = cv2.normalize(img, img, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX)
@@ -790,7 +865,7 @@ def run_model(
         logging.info(
             f"{detector.__class__.__name__} class does not implement get_cropping_info(): {repr(ex)}"
         )
-        
+
     if input_resize is not None and input_crop_corners is not None:
         # use the passed values is provided (they will overwrite if the model class also includes them), first warn the user
         if resize_dict is not None and crop_corners_dict is not None:
@@ -802,31 +877,33 @@ def run_model(
 
     if crop and (resize_dict is None or crop_corners_dict is None):
         logging.error("No cropping information to run! Unable to detect any objects")
-        out = {'boxes': np.zeros((0, 4), dtype=int),
-               'labels': np.zeros((0,), dtype=int),
-               'scores': np.zeros((0,), dtype=float),
-               }
+        out = {
+            "boxes": np.zeros((0, 4), dtype=int),
+            "labels": np.zeros((0,), dtype=int),
+            "scores": np.zeros((0,), dtype=float),
+        }
         if predict_masks:
-           out['masks'] = []
-        
+            out["masks"] = []
+
         if plot_results:
             return (out, 0, np.zeros((image_height, image_width), dtype=np.uint8))
         else:
             return (out, 0)
 
-
     if crop and (image_width, image_height) not in resize_dict:
         logging.error(
             "The input image size {} is not supported! Returning no cells!".format(
-                image_width, )
+                image_width,
+            )
         )
-        out = {'boxes': np.zeros((0, 4), dtype=int),
-               'labels': np.zeros((0,), dtype=int),
-               'scores': np.zeros((0,), dtype=float),
-               }
+        out = {
+            "boxes": np.zeros((0, 4), dtype=int),
+            "labels": np.zeros((0,), dtype=int),
+            "scores": np.zeros((0,), dtype=float),
+        }
         if predict_masks:
-           out['masks'] = []
-            
+            out["masks"] = []
+
         if plot_results:
             return (out, 0, np.zeros((image_height, image_width), dtype=np.uint8))
         else:
@@ -842,7 +919,10 @@ def run_model(
         scale_factor: float = max(smaller_side_size / 800.0, larger_side_size / 1333.0)
         # do not scale the image if the larger and the smaller sides are smaller than the model input sizes (1333, 800)
         scale_factor = max(1, scale_factor)
-        resized_width, resized_height = int(image_width / scale_factor), int(image_height / scale_factor)
+        resized_width, resized_height = (
+            int(image_width / scale_factor),
+            int(image_height / scale_factor),
+        )
 
     if scale_factor != 1:
         resized_img: np.ndarray = cv2.resize(
@@ -856,14 +936,15 @@ def run_model(
     if crop:
         crop_corners: List[List[int]] = crop_corners_dict[(image_width, image_height)]
         out: Dict[str, list] = detector.detect_by_cropping(
-            img=resized_img, crop_corners=crop_corners, 
+            img=resized_img,
+            crop_corners=crop_corners,
         )
     else:
         out: Dict[str, list] = detector.detect(img=resized_img)
 
     # post-process the results in the resized resolution
     out = post_process_detections(
-        detections=out,  
+        detections=out,
         post_process_class_names=post_process_class_names,
         classnames_to_class_ids_map=detector.get_reverse_label_map(),
         overlap_threshold=overlap_threshold,
@@ -872,22 +953,25 @@ def run_model(
     # resize back the detections
     if scale_factor != 1:
         # scale the detections back to original image resolution
-        out['boxes'] = (scale_factor * np.array(out['boxes'])).astype(int)
+        out["boxes"] = (scale_factor * np.array(out["boxes"])).astype(int)
         # convert to a list to be consistent with the rest
-        out['boxes'] = [box for box in out['boxes']]
+        out["boxes"] = [box for box in out["boxes"]]
     else:
-        out['boxes'] = [np.array(box) for box in out['boxes']]   
+        out["boxes"] = [np.array(box) for box in out["boxes"]]
 
     if predict_masks and scale_factor != 1:
-        for idx in range(len(out['boxes'])):
-            xtl, ytl, xbr, ybr = out['boxes'][idx]
+        for idx in range(len(out["boxes"])):
+            xtl, ytl, xbr, ybr = out["boxes"][idx]
             # note that mask return by the detector is not a probability mask, but a binary mask
-            out['masks'][idx] = cv2.resize(out['masks'][idx], (xbr - xtl, ybr - ytl), interpolation=cv2.INTER_NEAREST)
-    
-    
+            out["masks"][idx] = cv2.resize(
+                out["masks"][idx],
+                (xbr - xtl, ybr - ytl),
+                interpolation=cv2.INTER_NEAREST,
+            )
+
     et = time.time()
 
     if plot_results:
         return out, et - st, show_detections(img, out, detector._label_map)
-    
+
     return out, et - st

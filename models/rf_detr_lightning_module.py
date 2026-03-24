@@ -48,11 +48,11 @@ class RFDETRLightningModule(pl.LightningModule):
 
         self.validation_step_outputs = []
         self.test_step_outputs = []
-        
+
         self.validation_step_outputs_sliced = []
         self.test_step_outputs_sliced = []
-        
-        if hasattr(self.config.model, 'ema') and self.config.model.ema.enabled:
+
+        if hasattr(self.config.model, "ema") and self.config.model.ema.enabled:
             self.validation_step_outputs_ema = []
             self.test_step_outputs_ema = []
             self.validation_step_outputs_sliced_ema = []
@@ -62,9 +62,21 @@ class RFDETRLightningModule(pl.LightningModule):
         self.val_viz_counter = 0
         self.test_viz_counter = 0
         self.PALETTE = [
-            (220, 20, 60), (119, 11, 32), (0, 0, 142), (0, 0, 230), (106, 0, 228),
-            (0, 60, 100), (0, 80, 100), (0, 0, 70), (0, 0, 192), (250, 170, 30),
-            (100, 170, 30), (220, 220, 0), (175, 116, 175), (250, 0, 30), (165, 42, 42)
+            (220, 20, 60),
+            (119, 11, 32),
+            (0, 0, 142),
+            (0, 0, 230),
+            (106, 0, 228),
+            (0, 60, 100),
+            (0, 80, 100),
+            (0, 0, 70),
+            (0, 0, 192),
+            (250, 170, 30),
+            (100, 170, 30),
+            (220, 220, 0),
+            (175, 116, 175),
+            (250, 0, 30),
+            (165, 42, 42),
         ]
         try:
             self.font = ImageFont.truetype("arial.ttf", 17)
@@ -118,7 +130,9 @@ class RFDETRLightningModule(pl.LightningModule):
 
     def training_step(self, batch, batch_idx):
         samples, targets = batch
-        batch_size = int(samples.shape[0]) if isinstance(samples, torch.Tensor) else len(targets)
+        batch_size = (
+            int(samples.shape[0]) if isinstance(samples, torch.Tensor) else len(targets)
+        )
         samples = samples.to(self.device)
         targets = self._move_targets(targets)
 
@@ -153,13 +167,13 @@ class RFDETRLightningModule(pl.LightningModule):
         """Resolve full image path using COCO annotations and configured roots."""
         coco_gt = self.val_coco_gt if split == "val" else self.test_coco_gt
         root = self.val_image_root if split == "val" else self.test_image_root
-        
+
         if not coco_gt or not root:
             return None
-            
+
         try:
             img_info = coco_gt.loadImgs(image_id)[0]
-            file_name = img_info['file_name']
+            file_name = img_info["file_name"]
             return os.path.join(root, file_name)
         except (IndexError, AttributeError, KeyError):
             return None
@@ -178,12 +192,16 @@ class RFDETRLightningModule(pl.LightningModule):
         """Reset validation visualization counter."""
         self.val_viz_counter = 0
         if self.trainer.is_global_zero:
-            self.print(f"[VAL] Starting validation for epoch {self.current_epoch + 1}...")
+            self.print(
+                f"[VAL] Starting validation for epoch {self.current_epoch + 1}..."
+            )
 
     @torch.no_grad()
     def validation_step(self, batch, batch_idx):
         samples, targets = batch
-        batch_size = int(samples.shape[0]) if isinstance(samples, torch.Tensor) else len(targets)
+        batch_size = (
+            int(samples.shape[0]) if isinstance(samples, torch.Tensor) else len(targets)
+        )
         samples = samples.to(self.device)
         targets = self._move_targets(targets)
 
@@ -201,96 +219,129 @@ class RFDETRLightningModule(pl.LightningModule):
         self._log_loss_dict("val", loss_dict, weight_dict, batch_size=batch_size)
 
         eval_mode = self.config.get("eval_inference", {}).get("mode", "whole")
-        
+
         # Whole Image Baseline Process (For Loss + Fallback)
         predictions, image_ids = self._collect_batch_predictions(outputs, targets)
-        
+
         if eval_mode in ["whole", "both"]:
-            self.validation_step_outputs.append({"predictions": predictions, "image_ids": image_ids})
-        
+            self.validation_step_outputs.append(
+                {"predictions": predictions, "image_ids": image_ids}
+            )
+
         if eval_mode in ["sliced", "both"]:
             sliced_predictions = {}
             for i, target in enumerate(targets):
                 img_id = int(target["image_id"].item())
                 img_path = self._get_image_path(img_id, "val")
-                
+
                 if not img_path or not os.path.exists(img_path):
-                    self.print(f"[Val] WARNING: Cannot find image {img_path} for SAHI. Falling back to whole image.")
+                    self.print(
+                        f"[Val] WARNING: Cannot find image {img_path} for SAHI. Falling back to whole image."
+                    )
                     sliced_predictions[img_id] = predictions[img_id]
                     continue
-                
+
                 def predict_fn(image_np):
                     # Convert numpy array to tensor (H, W, 3) -> (3, H, W)
-                    img_tensor = torch.from_numpy(image_np).permute(2, 0, 1).contiguous()
+                    img_tensor = (
+                        torch.from_numpy(image_np).permute(2, 0, 1).contiguous()
+                    )
                     img_tensor = F.convert_image_dtype(img_tensor, dtype=torch.float32)
                     img_tensor = img_tensor.to(self.device)
                     if next(self.model.parameters()).dtype == torch.float16:
                         img_tensor = img_tensor.half()
                     elif next(self.model.parameters()).dtype == torch.bfloat16:
                         img_tensor = img_tensor.bfloat16()
-                    
+
                     with torch.no_grad():
                         out = self.model([img_tensor])
-                    
-                    orig_size = torch.tensor([[image_np.shape[0], image_np.shape[1]]], device=self.device)
+
+                    orig_size = torch.tensor(
+                        [[image_np.shape[0], image_np.shape[1]]], device=self.device
+                    )
                     post = self.postprocess(out, orig_size)[0]
                     return to_cpu_device(post)
 
                 img_pil = Image.open(img_path).convert("RGB")
                 sahi_cfg = self.config.get("eval_inference", {}).get("sahi", {})
                 # For RF-DETR we often pad/resize. Just use config input size or 640
-                input_size = getattr(self.config.data, 'model_input_size', 640)
-                
+                input_size = getattr(self.config.data, "model_input_size", 640)
+
                 preds = run_sahi_sliced_eval(img_pil, predict_fn, sahi_cfg, input_size)
                 sliced_predictions[img_id] = preds
 
-            self.validation_step_outputs_sliced.append({"predictions": sliced_predictions, "image_ids": image_ids})
+            self.validation_step_outputs_sliced.append(
+                {"predictions": sliced_predictions, "image_ids": image_ids}
+            )
 
         # EMA validation
         # EMA validation
         from utils.ema import EMACallback
-        ema_callback = next((cb for cb in self.trainer.callbacks if isinstance(cb, EMACallback)), None)
+
+        ema_callback = next(
+            (cb for cb in self.trainer.callbacks if isinstance(cb, EMACallback)), None
+        )
         if ema_callback and ema_callback.ema_model:
             ema_outputs = ema_callback.ema_model.module(samples)
-            ema_predictions, ema_image_ids = self._collect_batch_predictions(ema_outputs, targets)
-            
+            ema_predictions, ema_image_ids = self._collect_batch_predictions(
+                ema_outputs, targets
+            )
+
             if eval_mode in ["whole", "both"]:
-                self.validation_step_outputs_ema.append({"predictions": ema_predictions, "image_ids": ema_image_ids})
-            
+                self.validation_step_outputs_ema.append(
+                    {"predictions": ema_predictions, "image_ids": ema_image_ids}
+                )
+
             if eval_mode in ["sliced", "both"]:
                 sliced_ema_predictions = {}
                 for i, target in enumerate(targets):
                     img_id = int(target["image_id"].item())
                     img_path = self._get_image_path(img_id, "val")
-                    
+
                     if not img_path or not os.path.exists(img_path):
                         sliced_ema_predictions[img_id] = ema_predictions[img_id]
                         continue
-                    
+
                     def predict_fn_ema(image_np):
-                        img_tensor = torch.from_numpy(image_np).permute(2, 0, 1).contiguous()
-                        img_tensor = F.convert_image_dtype(img_tensor, dtype=torch.float32)
+                        img_tensor = (
+                            torch.from_numpy(image_np).permute(2, 0, 1).contiguous()
+                        )
+                        img_tensor = F.convert_image_dtype(
+                            img_tensor, dtype=torch.float32
+                        )
                         img_tensor = img_tensor.to(self.device)
-                        if next(ema_callback.ema_model.module.parameters()).dtype == torch.float16:
+                        if (
+                            next(ema_callback.ema_model.module.parameters()).dtype
+                            == torch.float16
+                        ):
                             img_tensor = img_tensor.half()
-                        elif next(ema_callback.ema_model.module.parameters()).dtype == torch.bfloat16:
+                        elif (
+                            next(ema_callback.ema_model.module.parameters()).dtype
+                            == torch.bfloat16
+                        ):
                             img_tensor = img_tensor.bfloat16()
-                            
+
                         with torch.no_grad():
                             out = ema_callback.ema_model.module([img_tensor])
-                            
-                        orig_size = torch.tensor([[image_np.shape[0], image_np.shape[1]]], device=self.device)
+
+                        orig_size = torch.tensor(
+                            [[image_np.shape[0], image_np.shape[1]]], device=self.device
+                        )
                         post = self.postprocess(out, orig_size)[0]
                         return to_cpu_device(post)
 
                     img_pil = Image.open(img_path).convert("RGB")
                     sahi_cfg = self.config.get("eval_inference", {}).get("sahi", {})
-                    input_size = getattr(self.config.data, 'model_input_size', 640)
-                    
-                    preds = run_sahi_sliced_eval(img_pil, predict_fn_ema, sahi_cfg, input_size)
+                    input_size = getattr(self.config.data, "model_input_size", 640)
+
+                    preds = run_sahi_sliced_eval(
+                        img_pil, predict_fn_ema, sahi_cfg, input_size
+                    )
                     sliced_ema_predictions[img_id] = preds
-                
-                self.validation_step_outputs_sliced_ema.append({"predictions": sliced_ema_predictions, "image_ids": ema_image_ids})
+
+                self.validation_step_outputs_sliced_ema.append(
+                    {"predictions": sliced_ema_predictions, "image_ids": ema_image_ids}
+                )
 
         return {"predictions": predictions, "image_ids": image_ids}
 
@@ -306,7 +357,11 @@ class RFDETRLightningModule(pl.LightningModule):
                 predictions = []
                 image_ids = []
                 for batch_out in all_outputs:
-                    predictions.extend(convert_preds_to_coco(batch_out["predictions"], model_to_coco=self.model_to_coco))
+                    predictions.extend(
+                        convert_preds_to_coco(
+                            batch_out["predictions"], model_to_coco=self.model_to_coco
+                        )
+                    )
                     image_ids.extend(batch_out["image_ids"])
 
                 if predictions:
@@ -316,7 +371,7 @@ class RFDETRLightningModule(pl.LightningModule):
                         image_ids=sorted(set(image_ids)),
                         max_detections=int(self.config.model.max_detections),
                         label_map=self.config.model.label_map,
-                        prefix=f"{prefix_name} performance"
+                        prefix=f"{prefix_name} performance",
                     )
                 else:
                     metrics = {"map": 0.0, "map_50": 0.0, "map_75": 0.0}
@@ -324,33 +379,62 @@ class RFDETRLightningModule(pl.LightningModule):
             metrics = broadcast_object(metrics, src=0)
             for key, value in metrics.items():
                 # Formats as: val/map_ema instead of val_ema/map
-                self.log(f"{base_prefix}/{key}{suffix}", value, prog_bar=(key in {"map", "map_50"}), sync_dist=True)
+                self.log(
+                    f"{base_prefix}/{key}{suffix}",
+                    value,
+                    prog_bar=(key in {"map", "map_50"}),
+                    sync_dist=True,
+                )
                 if key == "map":
                     # Formats as: val_map_ema instead of val_ema_map
-                    self.log(f"{base_prefix}_{key}{suffix}", value, prog_bar=False, sync_dist=True)
-            
+                    self.log(
+                        f"{base_prefix}_{key}{suffix}",
+                        value,
+                        prog_bar=False,
+                        sync_dist=True,
+                    )
+
             outputs_list.clear()
             return merged
 
         # 1. Standard Whole
         if self.validation_step_outputs:
-            viz_predictions = _compute_and_log(self.validation_step_outputs, "Val", "val", "")
-            
+            viz_predictions = _compute_and_log(
+                self.validation_step_outputs, "Val", "val", ""
+            )
+
         # 2. Standard Sliced
         if self.validation_step_outputs_sliced:
-            viz_predictions = _compute_and_log(self.validation_step_outputs_sliced, "Val Sliced", "val", "_sliced")
+            viz_predictions = _compute_and_log(
+                self.validation_step_outputs_sliced, "Val Sliced", "val", "_sliced"
+            )
 
         # 3. EMA Whole
-        if hasattr(self, "validation_step_outputs_ema") and self.validation_step_outputs_ema:
-            viz_predictions = _compute_and_log(self.validation_step_outputs_ema, "Val EMA", "val", "_ema")
-            
+        if (
+            hasattr(self, "validation_step_outputs_ema")
+            and self.validation_step_outputs_ema
+        ):
+            viz_predictions = _compute_and_log(
+                self.validation_step_outputs_ema, "Val EMA", "val", "_ema"
+            )
+
         # 4. EMA Sliced
-        if hasattr(self, "validation_step_outputs_sliced_ema") and self.validation_step_outputs_sliced_ema:
-            viz_predictions = _compute_and_log(self.validation_step_outputs_sliced_ema, "Val Sliced EMA", "val", "_sliced_ema")
+        if (
+            hasattr(self, "validation_step_outputs_sliced_ema")
+            and self.validation_step_outputs_sliced_ema
+        ):
+            viz_predictions = _compute_and_log(
+                self.validation_step_outputs_sliced_ema,
+                "Val Sliced EMA",
+                "val",
+                "_sliced_ema",
+            )
 
         if self.trainer.is_global_zero and viz_predictions is not None:
             self._visualize_aggregated_predictions(viz_predictions, split="val")
-            self.print(f"[VAL] Completed validation for epoch {self.current_epoch + 1}.")
+            self.print(
+                f"[VAL] Completed validation for epoch {self.current_epoch + 1}."
+            )
 
     def on_test_epoch_start(self):
         """Reset test visualization counter."""
@@ -377,7 +461,9 @@ class RFDETRLightningModule(pl.LightningModule):
 
         if target_dtype is not None:
             self.model = self.model.to(dtype=target_dtype)
-            self.print(f"[INFO] Cast model weights to {target_dtype} for precision={self.trainer.precision}.")
+            self.print(
+                f"[INFO] Cast model weights to {target_dtype} for precision={self.trainer.precision}."
+            )
 
     @torch.no_grad()
     def test_step(self, batch, batch_idx):
@@ -387,92 +473,125 @@ class RFDETRLightningModule(pl.LightningModule):
 
         outputs = self.model(samples)
         predictions, image_ids = self._collect_batch_predictions(outputs, targets)
-        
+
         eval_mode = self.config.get("eval_inference", {}).get("mode", "whole")
-        
+
         if eval_mode in ["whole", "both"]:
-            self.test_step_outputs.append({"predictions": predictions, "image_ids": image_ids})
+            self.test_step_outputs.append(
+                {"predictions": predictions, "image_ids": image_ids}
+            )
 
         if eval_mode in ["sliced", "both"]:
             sliced_predictions = {}
             for i, target in enumerate(targets):
                 img_id = int(target["image_id"].item())
                 img_path = self._get_image_path(img_id, "test")
-                
+
                 if not img_path or not os.path.exists(img_path):
-                    self.print(f"[Test] WARNING: Cannot find image {img_path} for SAHI. Falling back to whole image.")
+                    self.print(
+                        f"[Test] WARNING: Cannot find image {img_path} for SAHI. Falling back to whole image."
+                    )
                     sliced_predictions[img_id] = predictions[img_id]
                     continue
-                
+
                 def predict_fn(image_np):
-                    img_tensor = torch.from_numpy(image_np).permute(2, 0, 1).contiguous()
+                    img_tensor = (
+                        torch.from_numpy(image_np).permute(2, 0, 1).contiguous()
+                    )
                     img_tensor = F.convert_image_dtype(img_tensor, dtype=torch.float32)
                     img_tensor = img_tensor.to(self.device)
                     if next(self.model.parameters()).dtype == torch.float16:
                         img_tensor = img_tensor.half()
                     elif next(self.model.parameters()).dtype == torch.bfloat16:
                         img_tensor = img_tensor.bfloat16()
-                        
+
                     with torch.no_grad():
                         out = self.model([img_tensor])
-                        
-                    orig_size = torch.tensor([[image_np.shape[0], image_np.shape[1]]], device=self.device)
+
+                    orig_size = torch.tensor(
+                        [[image_np.shape[0], image_np.shape[1]]], device=self.device
+                    )
                     post = self.postprocess(out, orig_size)[0]
                     return to_cpu_device(post)
 
                 img_pil = Image.open(img_path).convert("RGB")
                 sahi_cfg = self.config.get("eval_inference", {}).get("sahi", {})
-                input_size = getattr(self.config.data, 'model_input_size', 640)
-                
+                input_size = getattr(self.config.data, "model_input_size", 640)
+
                 preds = run_sahi_sliced_eval(img_pil, predict_fn, sahi_cfg, input_size)
                 sliced_predictions[img_id] = preds
 
-            self.test_step_outputs_sliced.append({"predictions": sliced_predictions, "image_ids": image_ids})
+            self.test_step_outputs_sliced.append(
+                {"predictions": sliced_predictions, "image_ids": image_ids}
+            )
 
         # EMA validation during test
         from utils.ema import EMACallback
-        ema_callback = next((cb for cb in self.trainer.callbacks if isinstance(cb, EMACallback)), None)
+
+        ema_callback = next(
+            (cb for cb in self.trainer.callbacks if isinstance(cb, EMACallback)), None
+        )
         if ema_callback and ema_callback.ema_model:
             ema_outputs = ema_callback.ema_model.module(samples)
-            ema_predictions, ema_image_ids = self._collect_batch_predictions(ema_outputs, targets)
-            
+            ema_predictions, ema_image_ids = self._collect_batch_predictions(
+                ema_outputs, targets
+            )
+
             if eval_mode in ["whole", "both"]:
-                self.test_step_outputs_ema.append({"predictions": ema_predictions, "image_ids": ema_image_ids})
-                
+                self.test_step_outputs_ema.append(
+                    {"predictions": ema_predictions, "image_ids": ema_image_ids}
+                )
+
             if eval_mode in ["sliced", "both"]:
                 sliced_ema_predictions = {}
                 for i, target in enumerate(targets):
                     img_id = int(target["image_id"].item())
                     img_path = self._get_image_path(img_id, "test")
-                    
+
                     if not img_path or not os.path.exists(img_path):
                         sliced_ema_predictions[img_id] = ema_predictions[img_id]
                         continue
-                    
+
                     def predict_fn_ema(image_np):
-                        img_tensor = torch.from_numpy(image_np).permute(2, 0, 1).contiguous()
-                        img_tensor = F.convert_image_dtype(img_tensor, dtype=torch.float32)
+                        img_tensor = (
+                            torch.from_numpy(image_np).permute(2, 0, 1).contiguous()
+                        )
+                        img_tensor = F.convert_image_dtype(
+                            img_tensor, dtype=torch.float32
+                        )
                         img_tensor = img_tensor.to(self.device)
-                        if next(ema_callback.ema_model.module.parameters()).dtype == torch.float16:
+                        if (
+                            next(ema_callback.ema_model.module.parameters()).dtype
+                            == torch.float16
+                        ):
                             img_tensor = img_tensor.half()
-                        elif next(ema_callback.ema_model.module.parameters()).dtype == torch.bfloat16:
+                        elif (
+                            next(ema_callback.ema_model.module.parameters()).dtype
+                            == torch.bfloat16
+                        ):
                             img_tensor = img_tensor.bfloat16()
-                            
+
                         with torch.no_grad():
                             out = ema_callback.ema_model.module([img_tensor])
-                            
-                        orig_size = torch.tensor([[image_np.shape[0], image_np.shape[1]]], device=self.device)
+
+                        orig_size = torch.tensor(
+                            [[image_np.shape[0], image_np.shape[1]]], device=self.device
+                        )
                         post = self.postprocess(out, orig_size)[0]
                         return to_cpu_device(post)
 
                     img_pil = Image.open(img_path).convert("RGB")
                     sahi_cfg = self.config.get("eval_inference", {}).get("sahi", {})
-                    input_size = getattr(self.config.data, 'model_input_size', 640)
-                    
-                    preds = run_sahi_sliced_eval(img_pil, predict_fn_ema, sahi_cfg, input_size)
+                    input_size = getattr(self.config.data, "model_input_size", 640)
+
+                    preds = run_sahi_sliced_eval(
+                        img_pil, predict_fn_ema, sahi_cfg, input_size
+                    )
                     sliced_ema_predictions[img_id] = preds
-                
-                self.test_step_outputs_sliced_ema.append({"predictions": sliced_ema_predictions, "image_ids": ema_image_ids})
+
+                self.test_step_outputs_sliced_ema.append(
+                    {"predictions": sliced_ema_predictions, "image_ids": ema_image_ids}
+                )
 
         return {"predictions": predictions, "image_ids": image_ids}
 
@@ -488,7 +607,11 @@ class RFDETRLightningModule(pl.LightningModule):
                 predictions = []
                 image_ids = []
                 for batch_out in all_outputs:
-                    predictions.extend(convert_preds_to_coco(batch_out["predictions"], model_to_coco=self.model_to_coco))
+                    predictions.extend(
+                        convert_preds_to_coco(
+                            batch_out["predictions"], model_to_coco=self.model_to_coco
+                        )
+                    )
                     image_ids.extend(batch_out["image_ids"])
 
                 if predictions:
@@ -498,7 +621,7 @@ class RFDETRLightningModule(pl.LightningModule):
                         image_ids=sorted(set(image_ids)),
                         max_detections=int(self.config.model.max_detections),
                         label_map=self.config.model.label_map,
-                        prefix=f"{prefix_name} performance"
+                        prefix=f"{prefix_name} performance",
                     )
                 else:
                     metrics = {"map": 0.0, "map_50": 0.0, "map_75": 0.0}
@@ -506,26 +629,45 @@ class RFDETRLightningModule(pl.LightningModule):
             metrics = broadcast_object(metrics, src=0)
             for key, value in metrics.items():
                 # Formats as: test/map_ema instead of test_ema/map
-                self.log(f"{base_prefix}/{key}{suffix}", value, prog_bar=(key in {"map", "map_50"}), sync_dist=True)
-            
+                self.log(
+                    f"{base_prefix}/{key}{suffix}",
+                    value,
+                    prog_bar=(key in {"map", "map_50"}),
+                    sync_dist=True,
+                )
+
             outputs_list.clear()
             return merged
 
         # 1. Standard Whole
         if self.test_step_outputs:
-            viz_predictions = _compute_and_log(self.test_step_outputs, "Test", "test", "")
-            
+            viz_predictions = _compute_and_log(
+                self.test_step_outputs, "Test", "test", ""
+            )
+
         # 2. Standard Sliced
         if self.test_step_outputs_sliced:
-            viz_predictions = _compute_and_log(self.test_step_outputs_sliced, "Test Sliced", "test", "_sliced")
+            viz_predictions = _compute_and_log(
+                self.test_step_outputs_sliced, "Test Sliced", "test", "_sliced"
+            )
 
         # 3. EMA Whole
         if hasattr(self, "test_step_outputs_ema") and self.test_step_outputs_ema:
-            viz_predictions = _compute_and_log(self.test_step_outputs_ema, "Test EMA", "test", "_ema")
-            
+            viz_predictions = _compute_and_log(
+                self.test_step_outputs_ema, "Test EMA", "test", "_ema"
+            )
+
         # 4. EMA Sliced
-        if hasattr(self, "test_step_outputs_sliced_ema") and self.test_step_outputs_sliced_ema:
-            viz_predictions = _compute_and_log(self.test_step_outputs_sliced_ema, "Test Sliced EMA", "test", "_sliced_ema")
+        if (
+            hasattr(self, "test_step_outputs_sliced_ema")
+            and self.test_step_outputs_sliced_ema
+        ):
+            viz_predictions = _compute_and_log(
+                self.test_step_outputs_sliced_ema,
+                "Test Sliced EMA",
+                "test",
+                "_sliced_ema",
+            )
 
         if self.trainer.is_global_zero and viz_predictions is not None:
             self._visualize_aggregated_predictions(viz_predictions, split="test")
@@ -634,11 +776,17 @@ class RFDETRLightningModule(pl.LightningModule):
             gt_labels = []
             if coco_gt:
                 try:
-                    gt_anns = coco_gt.loadAnns(coco_gt.getAnnIds(imgIds=[int(image_id)]))
+                    gt_anns = coco_gt.loadAnns(
+                        coco_gt.getAnnIds(imgIds=[int(image_id)])
+                    )
                     for ann in gt_anns:
                         x, y, w, h = ann["bbox"]
                         gt_boxes.append([x, y, x + w, y + h])
-                        gt_labels.append(self.coco_to_model.get(int(ann["category_id"]), int(ann["category_id"])))
+                        gt_labels.append(
+                            self.coco_to_model.get(
+                                int(ann["category_id"]), int(ann["category_id"])
+                            )
+                        )
                 except Exception:
                     gt_boxes = []
                     gt_labels = []
@@ -661,7 +809,11 @@ class RFDETRLightningModule(pl.LightningModule):
                 valid_labels = preds["labels"][valid_indices]
                 for label in valid_labels:
                     label_item = label.item() if torch.is_tensor(label) else int(label)
-                    class_name = label_map.get(int(label_item)) or label_map.get(str(int(label_item))) or str(label_item)
+                    class_name = (
+                        label_map.get(int(label_item))
+                        or label_map.get(str(int(label_item)))
+                        or str(label_item)
+                    )
                     pred_class_names.append(class_name)
 
                 image = self.draw_boxes(
@@ -675,7 +827,12 @@ class RFDETRLightningModule(pl.LightningModule):
                     threshold_override=viz_threshold,
                 )
 
-            gt_counts = Counter([label_map.get(int(l)) or label_map.get(str(int(l))) or str(l) for l in gt_labels])
+            gt_counts = Counter(
+                [
+                    label_map.get(int(l)) or label_map.get(str(int(l))) or str(l)
+                    for l in gt_labels
+                ]
+            )
             pred_counts = Counter(pred_class_names)
 
             draw = ImageDraw.Draw(image)
@@ -696,20 +853,28 @@ class RFDETRLightningModule(pl.LightningModule):
 
                 current_x = image.width - total_width - 10
                 for text, color in parts:
-                    draw.text((current_x + 1, text_y + 1), text, fill="black", font=self.font)
+                    draw.text(
+                        (current_x + 1, text_y + 1), text, fill="black", font=self.font
+                    )
                     draw.text((current_x, text_y), text, fill=color, font=self.font)
                     bbox = draw.textbbox((0, 0), text, font=self.font)
                     current_x += bbox[2] - bbox[0]
                 text_y += line_height
 
-            original_filename = os.path.basename(img_info.get("file_name", f"image_{image_id}.png"))
-            save_path = os.path.join(save_dir, f"image_{int(image_id)}_{original_filename}")
+            original_filename = os.path.basename(
+                img_info.get("file_name", f"image_{image_id}.png")
+            )
+            save_path = os.path.join(
+                save_dir, f"image_{int(image_id)}_{original_filename}"
+            )
             image.save(save_path)
             saved_count += 1
             # if saved_count % 500 == 0:
             #     self.print(f"[VIZ] {split.upper()} progress: saved {saved_count} images...")
 
-        self.print(f"[VIZ] {split.upper()} saved {saved_count} aggregated visualizations to: {save_dir}")
+        self.print(
+            f"[VIZ] {split.upper()} saved {saved_count} aggregated visualizations to: {save_dir}"
+        )
 
     @torch.no_grad()
     def predict_batch(self, samples, score_threshold=0.25):
@@ -737,11 +902,25 @@ class RFDETRLightningModule(pl.LightningModule):
             return filtered
         return outputs
 
-    def draw_boxes(self, image, boxes, labels, scores=None, id2label=None, color_override=None, label_prefix="", threshold_override=None):
+    def draw_boxes(
+        self,
+        image,
+        boxes,
+        labels,
+        scores=None,
+        id2label=None,
+        color_override=None,
+        label_prefix="",
+        threshold_override=None,
+    ):
         """Draws bounding boxes on a PIL image."""
         draw = ImageDraw.Draw(image)
-        threshold = threshold_override if threshold_override is not None else self.config.model.draw_threshold
-        
+        threshold = (
+            threshold_override
+            if threshold_override is not None
+            else self.config.model.draw_threshold
+        )
+
         if id2label is None:
             id2label = self.config.model.label_map
 
@@ -749,83 +928,99 @@ class RFDETRLightningModule(pl.LightningModule):
             box = boxes[i]
             label = labels[i]
             score = scores[i] if scores is not None else 1.0
-            
+
             if score < threshold:
                 continue
-            
+
             if torch.is_tensor(box):
                 box = box.tolist()
-            
+
             label_id = label.item() if torch.is_tensor(label) else int(label)
-            
+
             if color_override:
                 color = color_override
             else:
                 color = self.PALETTE[label_id % len(self.PALETTE)]
-            
+
             draw.rectangle(box, outline=color, width=3)
-            
-            class_name = id2label.get(label_id) or id2label.get(str(label_id)) or f"class_{label_id}"
+
+            class_name = (
+                id2label.get(label_id)
+                or id2label.get(str(label_id))
+                or f"class_{label_id}"
+            )
             label_text = f"{label_prefix}{class_name}"
             if scores is not None:
                 label_text += f": {score:.2f}"
-                
+
             text_box = draw.textbbox((box[0], box[1]), label_text, font=self.font)
             draw.rectangle(text_box, fill=color)
             draw.text((box[0], box[1]), label_text, fill="white", font=self.font)
-            
+
         return image
 
-    def _visualize_batch(self, save_dir, predictions_map, samples, targets, counter, split="val"):
+    def _visualize_batch(
+        self, save_dir, predictions_map, samples, targets, counter, split="val"
+    ):
         """Saves visualizations for a batch showing both GT and Predictions."""
         os.makedirs(save_dir, exist_ok=True)
         max_samples = self.config.checkpointing.visualize_samples
-        
+
         if counter == 0:
             self.print(f"[VIZ] Saving visualizations to: {save_dir}")
             self.print(f"[VIZ] Max samples: {max_samples}")
 
         # Determine which COCO GT to use based on stage
         coco_gt = self.test_coco_gt if split == "test" else self.val_coco_gt
-        
+
         # Use draw_threshold for visualization
         viz_threshold = float(self.config.model.draw_threshold)
-        
+
         # Un-normalize
         # Check if samples is NestedTensor or Tensor
-        if hasattr(samples, 'tensors'):
+        if hasattr(samples, "tensors"):
             pixel_values = samples.tensors
         else:
             pixel_values = samples
-            
-        mean = torch.tensor([0.485, 0.456, 0.406], device=pixel_values.device).view(1, 3, 1, 1)
-        std = torch.tensor([0.229, 0.224, 0.225], device=pixel_values.device).view(1, 3, 1, 1)
+
+        mean = torch.tensor([0.485, 0.456, 0.406], device=pixel_values.device).view(
+            1, 3, 1, 1
+        )
+        std = torch.tensor([0.229, 0.224, 0.225], device=pixel_values.device).view(
+            1, 3, 1, 1
+        )
         unnormalized_images = torch.clamp((pixel_values * std) + mean, 0, 1)
 
-        for i, target in enumerate(tqdm(targets, desc="Visualizing Batch", leave=False)):
+        for i, target in enumerate(
+            tqdm(targets, desc="Visualizing Batch", leave=False)
+        ):
             if max_samples != -1 and counter >= max_samples:
                 break
-                
+
             image_id = int(target["image_id"].item())
             image_tensor = unnormalized_images[i]
-            
+
             # Use original size if available in target, else tensor size
             if "orig_size" in target:
                 orig_h, orig_w = target["orig_size"].tolist()
             else:
                 orig_h, orig_w = image_tensor.shape[1], image_tensor.shape[2]
-                
-            image_np = (image_tensor.permute(1, 2, 0).cpu().numpy() * 255).astype('uint8')
-            resized_image_np = cv2.resize(image_np, (int(orig_w), int(orig_h)), interpolation=cv2.INTER_LINEAR)
+
+            image_np = (image_tensor.permute(1, 2, 0).cpu().numpy() * 255).astype(
+                "uint8"
+            )
+            resized_image_np = cv2.resize(
+                image_np, (int(orig_w), int(orig_h)), interpolation=cv2.INTER_LINEAR
+            )
             image = Image.fromarray(resized_image_np)
-            
-             # Get image metadata from COCO GT for filename
-            img_info = {'file_name': f"image_{image_id}.png"}
+
+            # Get image metadata from COCO GT for filename
+            img_info = {"file_name": f"image_{image_id}.png"}
             if coco_gt:
                 try:
                     loaded_imgs = coco_gt.loadImgs(image_id)
                     if loaded_imgs:
-                         img_info = loaded_imgs[0]
+                        img_info = loaded_imgs[0]
                 except (IndexError, AttributeError, KeyError):
                     pass
 
@@ -836,18 +1031,18 @@ class RFDETRLightningModule(pl.LightningModule):
                     gt_anns = coco_gt.loadAnns(coco_gt.getAnnIds(imgIds=image_id))
                     gt_boxes = []
                     for ann in gt_anns:
-                         x, y, w, h = ann['bbox']
-                         gt_boxes.append([x, y, x + w, y + h])
-                         gt_labels.append(ann['category_id'])
-                    
+                        x, y, w, h = ann["bbox"]
+                        gt_boxes.append([x, y, x + w, y + h])
+                        gt_labels.append(ann["category_id"])
+
                     image = self.draw_boxes(
-                        image, 
-                        gt_boxes, 
-                        gt_labels, 
-                        scores=None, 
+                        image,
+                        gt_boxes,
+                        gt_labels,
+                        scores=None,
                         id2label=self.config.model.label_map,
-                        color_override=(0, 255, 0), 
-                        label_prefix=""
+                        color_override=(0, 255, 0),
+                        label_prefix="",
                     )
                 except Exception:
                     pass
@@ -856,39 +1051,49 @@ class RFDETRLightningModule(pl.LightningModule):
             pred_class_names = []
             if image_id in predictions_map:
                 preds = predictions_map[image_id]
-                
-                if 'boxes' in preds and len(preds['boxes']) > 0:
-                     # Filter
-                    valid_indices = preds['scores'] >= viz_threshold
-                    valid_labels = preds['labels'][valid_indices]
+
+                if "boxes" in preds and len(preds["boxes"]) > 0:
+                    # Filter
+                    valid_indices = preds["scores"] >= viz_threshold
+                    valid_labels = preds["labels"][valid_indices]
                     label_map = self.config.model.label_map
                     for l in valid_labels:
                         l_item = l.item() if torch.is_tensor(l) else int(l)
-                        name = label_map.get(int(l_item)) or label_map.get(str(l_item)) or str(l_item)
+                        name = (
+                            label_map.get(int(l_item))
+                            or label_map.get(str(l_item))
+                            or str(l_item)
+                        )
                         pred_class_names.append(name)
 
                     image = self.draw_boxes(
-                        image, 
-                        preds['boxes'], 
-                        preds['labels'], 
-                        preds['scores'], 
+                        image,
+                        preds["boxes"],
+                        preds["labels"],
+                        preds["scores"],
                         id2label=self.config.model.label_map,
-                        color_override=(255, 0, 0), 
+                        color_override=(255, 0, 0),
                         label_prefix="",
-                        threshold_override=viz_threshold
+                        threshold_override=viz_threshold,
                     )
 
             # --- 3. Counts & Filename ---
             from collections import Counter
+
             label_map = self.config.model.label_map
-            
-            gt_counts = Counter([label_map.get(int(l)) or label_map.get(str(l)) or str(l) for l in gt_labels])
+
+            gt_counts = Counter(
+                [
+                    label_map.get(int(l)) or label_map.get(str(l)) or str(l)
+                    for l in gt_labels
+                ]
+            )
             pred_counts = Counter(pred_class_names)
-            
+
             draw = ImageDraw.Draw(image)
             text_y = 10
             line_height = 24
-            
+
             all_classes = set(gt_counts.keys()) | set(pred_counts.keys())
             for cls_name in sorted(all_classes):
                 # Parts to draw: (Text, Color)
@@ -896,27 +1101,29 @@ class RFDETRLightningModule(pl.LightningModule):
                     (f"{cls_name}: ", "white"),
                     (f"{pred_counts[cls_name]}", "red"),
                     ("/", "white"),
-                    (f"{gt_counts[cls_name]}", "green")
+                    (f"{gt_counts[cls_name]}", "green"),
                 ]
-                
+
                 # Calculate total width to align right
                 total_width = 0
                 for text, _ in parts:
                     bbox = draw.textbbox((0, 0), text, font=self.font)
                     total_width += bbox[2] - bbox[0]
-                
+
                 current_x = image.width - total_width - 10
-                
+
                 for text, color in parts:
                     # Draw shadow
-                    draw.text((current_x + 1, text_y + 1), text, fill="black", font=self.font)
+                    draw.text(
+                        (current_x + 1, text_y + 1), text, fill="black", font=self.font
+                    )
                     # Draw text
                     draw.text((current_x, text_y), text, fill=color, font=self.font)
-                    
+
                     # Advance cursor
                     bbox = draw.textbbox((0, 0), text, font=self.font)
                     current_x += bbox[2] - bbox[0]
-                
+
                 text_y += line_height
 
             detected_classes = sorted(list(set(pred_class_names)))
@@ -925,15 +1132,15 @@ class RFDETRLightningModule(pl.LightningModule):
                 prefix = f"image_{class_str}_"
             else:
                 prefix = "image_no_detections_"
-            
-            original_filename = os.path.basename(img_info['file_name'])
+
+            original_filename = os.path.basename(img_info["file_name"])
             new_filename = f"{prefix}{original_filename}"
             new_filename = new_filename.replace("image_image_", "image_")
-            
+
             save_path = os.path.join(save_dir, new_filename)
             image.save(save_path)
             counter += 1
-            
+
         return counter
 
     def configure_optimizers(self):
@@ -1000,7 +1207,9 @@ class RFDETRLightningModule(pl.LightningModule):
         This avoids stepping LR when AMP/overflow skips optimizer.step().
         """
         optimizer = getattr(scheduler, "optimizer", None)
-        optimizer_has_stepped = optimizer is None or getattr(optimizer, "_step_count", 0) > 0
+        optimizer_has_stepped = (
+            optimizer is None or getattr(optimizer, "_step_count", 0) > 0
+        )
         if not optimizer_has_stepped:
             return
 
