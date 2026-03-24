@@ -2,7 +2,7 @@
 # Main config. This file selects the default for each config group.
 
 defaults:
-  - model: rtdetr_base
+  - model: rtdetr
   - optimizer: adamw_scaled
   - scheduler: cosine_warmup
   - trainer: default

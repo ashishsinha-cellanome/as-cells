@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# USE this file only to create the splits
 import json
 import shutil
 from collections import Counter, defaultdict
@@ -25,6 +26,17 @@ def _strip_split_prefix(file_name: str, split_name: str) -> str:
         return file_name[len(f"../{split_name}/") :]
     if file_name.startswith(f"{split_name}/"):
         return file_name[len(f"{split_name}/") :]
+    return file_name
+
+
+def _sanitize_file_name(file_name: str) -> str:
+    if (
+        "/" in file_name
+        or "\\" in file_name
+        or ".cache/datasets/" in file_name
+        or Path(file_name).is_absolute()
+    ):
+        return Path(file_name).name
     return file_name
 
 
@@ -107,7 +119,7 @@ def analyze_and_filter_split(
             new_image = dict(image)
             if normalize_file_names:
                 orig_file_name = str(image.get("file_name", ""))
-                new_image["file_name"] = _strip_split_prefix(orig_file_name, split_name)
+                new_image["file_name"] = _sanitize_file_name(orig_file_name)
             filtered_images.append(new_image)
 
     filtered_annotations = []
@@ -192,9 +204,7 @@ def build_train_plus_val_promoted(
         new_image = dict(image)
         if copy_images:
             orig_file_name = str(image.get("file_name", ""))
-            new_image["file_name"] = (
-                f"train/{_strip_split_prefix(orig_file_name, train_split_name)}"
-            )
+            new_image["file_name"] = _sanitize_file_name(orig_file_name)
         new_train_images.append(new_image)
 
     promoted_images = []
@@ -206,9 +216,7 @@ def build_train_plus_val_promoted(
         new_image["id"] = int(next_image_id)
         orig_file_name = str(image.get("file_name", ""))
         if copy_images:
-            new_image["file_name"] = (
-                f"valid/{_strip_split_prefix(orig_file_name, val_split_name)}"
-            )
+            new_image["file_name"] = _sanitize_file_name(orig_file_name)
         else:
             new_image["file_name"] = f"../{val_split_name}/{orig_file_name}"
         promoted_images.append(new_image)
@@ -397,14 +405,15 @@ def validate_outputs(
     promoted_id_set = {int(x) for x in promoted_new_image_ids}
     promoted_image_path_violations = []
     base_train_image_path_violations = []
+    bad_path_fragments = []
     for image in train_plus_payload.get("images", []):
         image_id = int(image["id"])
         file_name = str(image.get("file_name", ""))
         if copy_images:
-            if image_id in promoted_id_set and not file_name.startswith("valid/"):
-                promoted_image_path_violations.append(file_name)
-            if image_id not in promoted_id_set and not file_name.startswith("train/"):
-                base_train_image_path_violations.append(file_name)
+            if "/" in file_name or "\\" in file_name:
+                bad_path_fragments.append(file_name)
+            if ".cache/datasets/" in file_name or Path(file_name).is_absolute():
+                bad_path_fragments.append(file_name)
         else:
             if image_id in promoted_id_set and not file_name.startswith(
                 f"../{promoted_val_split_name}/"
@@ -434,7 +443,27 @@ def validate_outputs(
         "train_plus_missing_image_refs": missing_image_refs,
         "promoted_image_path_violations": promoted_image_path_violations,
         "base_train_image_path_violations": base_train_image_path_violations,
+        "bad_path_fragments": bad_path_fragments,
     }
+
+
+def _sanitize_payload_images(payload: dict[str, Any]) -> tuple[dict[str, Any], int]:
+    images = payload.get("images", [])
+    changed = 0
+    new_images = []
+    for image in images:
+        new_image = dict(image)
+        orig = str(image.get("file_name", ""))
+        sanitized = _sanitize_file_name(orig)
+        if sanitized != orig:
+            changed += 1
+        new_image["file_name"] = sanitized
+        new_images.append(new_image)
+    payload = dict(payload)
+    payload["images"] = new_images
+    return payload, changed
+
+
 
 
 def _copy_images(
@@ -485,6 +514,7 @@ def main(cfg: DictConfig) -> None:
         str(getattr(no300_cfg, "images_dir", "images")) if no300_cfg else "images"
     )
     copy_workers = int(getattr(no300_cfg, "copy_workers", 8)) if no300_cfg else 8
+    repair_only = bool(getattr(no300_cfg, "repair_only", False)) if no300_cfg else False
 
     train_src_path = data_root / f"{train_split_name}_annotations.json"
     val_src_path = data_root / f"{val_split_name}_annotations.json"
@@ -505,6 +535,73 @@ def main(cfg: DictConfig) -> None:
     )
     print(f"Threshold: >{THRESHOLD}")
     print(f"Copy images: {copy_images}")
+    print(f"Repair only: {repair_only}")
+
+
+    if repair_only:
+        valid_no300_path = data_root / f"{VAL_OUTPUT_NAME}_annotations.json"
+        test_no300_path = data_root / f"{TEST_OUTPUT_NAME}_annotations.json"
+        train_plus_path = data_root / f"{TRAIN_PROMOTED_OUTPUT_NAME}_annotations.json"
+        for path in (valid_no300_path, test_no300_path, train_plus_path):
+            if not path.exists():
+                raise FileNotFoundError(f"Missing output annotation file for repair: {path}")
+
+        valid_payload, valid_changed = _sanitize_payload_images(load_json(valid_no300_path))
+        test_payload, test_changed = _sanitize_payload_images(load_json(test_no300_path))
+        train_payload, train_changed = _sanitize_payload_images(load_json(train_plus_path))
+
+        write_json(valid_no300_path, valid_payload, pretty=False)
+        write_json(test_no300_path, test_payload, pretty=False)
+        write_json(train_plus_path, train_payload, pretty=False)
+        print(
+            f"Repaired file_name values: valid_no300={valid_changed}, "
+            f"test_no300={test_changed}, train_plus_valgt300={train_changed}"
+        )
+
+        if copy_images:
+            images_root = data_root / images_dir_name
+            val_src_root = images_root / val_split_name
+            test_src_root = images_root / test_split_name
+            train_src_root = images_root / train_split_name
+            val_dst_root = images_root / VAL_OUTPUT_NAME
+            test_dst_root = images_root / TEST_OUTPUT_NAME
+            train_plus_dst_root = images_root / TRAIN_PROMOTED_OUTPUT_NAME
+
+            print("\nCopying filtered validation images (repair)...")
+            val_items: list[tuple[Path, Path]] = []
+            for image in valid_payload.get("images", []):
+                rel = str(image.get("file_name", ""))
+                val_items.append((val_src_root / rel, val_dst_root / rel))
+            copied, skipped = _copy_images(items=val_items, workers=copy_workers)
+            print(f"  valid_no300: copied={copied}, skipped={skipped}")
+
+            print("\nCopying filtered test images (repair)...")
+            test_items: list[tuple[Path, Path]] = []
+            for image in test_payload.get("images", []):
+                rel = str(image.get("file_name", ""))
+                test_items.append((test_src_root / rel, test_dst_root / rel))
+            copied, skipped = _copy_images(items=test_items, workers=copy_workers)
+            print(f"  test_no300: copied={copied}, skipped={skipped}")
+
+            print("\nCopying train_plus_valgt300 images (repair)...")
+            train_items: list[tuple[Path, Path]] = []
+            missing = 0
+            for image in train_payload.get("images", []):
+                rel = str(image.get("file_name", ""))
+                src = train_src_root / rel
+                if not src.exists():
+                    alt = val_src_root / rel
+                    if alt.exists():
+                        src = alt
+                    else:
+                        missing += 1
+                        continue
+                train_items.append((src, train_plus_dst_root / rel))
+            copied, skipped = _copy_images(items=train_items, workers=copy_workers)
+            print(f"  train_plus_valgt300: copied={copied}, skipped={skipped}, missing={missing}")
+
+        print("\nRepair completed.")
+        return
 
     print("\nLoading and filtering validation annotations...")
     val_payload = load_json(val_src_path)
@@ -600,12 +697,12 @@ def main(cfg: DictConfig) -> None:
 
         print("\nCopying train_plus_valgt300 images...")
         train_items: list[tuple[Path, Path]] = []
+        promoted_id_set = set(train_plus["promoted_new_image_ids"])
         for image in train_plus["payload"].get("images", []):
             rel = str(image.get("file_name", ""))
-            if rel.startswith("valid/"):
-                src = val_src_root / rel[len("valid/") :]
-            elif rel.startswith("train/"):
-                src = train_src_root / rel[len("train/") :]
+            image_id = int(image.get("id"))
+            if image_id in promoted_id_set:
+                src = val_src_root / rel
             else:
                 src = train_src_root / rel
             train_items.append((src, train_plus_dst_root / rel))

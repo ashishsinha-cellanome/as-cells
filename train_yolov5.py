@@ -310,13 +310,14 @@ def main(config: DictConfig):
     logger = _setup_logger(config)
     if logger:
         logger.experiment.save("models/yolov5_lightning_module.py")
-        logger.watch(lightning_model, log="gradients", log_freq=100)
+        logger.watch(lightning_model, log='gradients', log_freq=500)
         rank_zero_print("✓ WandB logger watching model for gradients")
 
     callbacks = _setup_callbacks(config)
     profiler = _get_profiler(config)
 
     trainer = pl.Trainer(
+        enable_progress_bar=True,
         accelerator=config.trainer.accelerator,
         devices=config.trainer.devices,
         num_nodes=int(os.environ.get("SLURM_NNODES", 1)),

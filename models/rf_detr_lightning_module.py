@@ -150,17 +150,6 @@ class RFDETRLightningModule(pl.LightningModule):
         )
         self._log_loss_dict("train", loss_dict, weight_dict, batch_size=batch_size)
 
-        # Heartbeat logs for long epochs when progress bars are not visible in tmux/srun.
-        # heartbeat_interval = 500
-        # if self.trainer.is_global_zero and (batch_idx == 0 or (batch_idx + 1) % heartbeat_interval == 0):
-        #     total_batches = getattr(self.trainer, "num_training_batches", None)
-        #     total_batches_str = str(total_batches) if isinstance(total_batches, int) else "?"
-        #     self.print(
-        #         f"[TRAIN] epoch={self.current_epoch + 1} "
-        #         f"batch={batch_idx + 1}/{total_batches_str} "
-        #         f"loss={float(loss.detach().item()):.4f}"
-        #     )
-
         return loss
 
     def _get_image_path(self, image_id: int, split: str) -> str | None:

@@ -167,10 +167,14 @@ class RTDETRLightningModule(pl.LightningModule):
                     if p.requires_grad:
                         all_frozen = False
                         break
-
                 if has_params and all_frozen:
                     m.eval()
-
+            # keep BN layers in eval mode 
+            for m in self.modules():
+                if isinstance(m, (torch.nn.BatchNorm2d, torch.nn.SyncBatchNorm)):
+                    if all(not p.requires_grad for p in m.parameters()):
+                        m.eval() 
+    
     def training_step(self, batch, batch_idx):
         """Training step."""
 
@@ -1390,14 +1394,32 @@ class RTDETRLightningModule(pl.LightningModule):
                 # 'verbose': Trueq
             }
         elif sch_config.type == "cosine":
-            # Ensure T_max is positive
-            t_max = max(1, total_steps - warmup_steps)
+            warmup_sched = torch.optim.lr_scheduler.LinearLR(
+                optimizer, start_factor=1e-3, end_factor=1.0, total_iters=warmup_steps
+            )
+            cosine_sched = torch.optim.lr_scheduler.CosineAnnealingLR(
+                optimizer,
+                T_max=max(1, total_steps - warmup_steps),
+                eta_min=sch_config.eta_min
+            )
             scheduler = {
-                "scheduler": torch.optim.lr_scheduler.CosineAnnealingLR(
-                    optimizer, T_max=t_max, eta_min=sch_config.eta_min
+                'scheduler': torch.optim.lr_scheduler.SequentialLR(
+                    optimizer,
+                    schedulers=[warmup_sched, cosine_sched],
+                    milestones=[warmup_steps]
                 ),
                 "interval": "step",
             }
+            # # Ensure T_max is positive
+            # t_max = max(1, total_steps - warmup_steps)
+            # scheduler = {
+            #     'scheduler': torch.optim.lr_scheduler.CosineAnnealingLR(
+            #         optimizer,
+            #         T_max=t_max,
+            #         eta_min=sch_config.eta_min
+            #     ),
+            #     'interval': 'step'
+            # }
             # schedulers = [warmup_scheduler, scheduler]
         elif sch_config.type == "lambda":
             # Linear warmup + constant
@@ -1441,34 +1463,32 @@ class RTDETRLightningModule(pl.LightningModule):
 
         return {"optimizer": optimizer, "lr_scheduler": scheduler}
 
-    def optimizer_step(self, epoch, batch_idx, optimizer, optimizer_closure):
-        # --- 1. Warmup Logic (Apply BEFORE step) ---
-
-        # Use effective_warmup_steps if set in configure_optimizers, else default logic
-        if hasattr(self, "effective_warmup_steps"):
-            warmup_steps = self.effective_warmup_steps
-        else:
-            total_steps = self.trainer.estimated_stepping_batches + 100
-            warmup_steps = max(
-                self.config.scheduler.warmup_steps, int(0.1 * total_steps)
-            )
-
-        is_one_cycle = self.config.scheduler.type == "onecycle"
-
-        if self.trainer.global_step < warmup_steps and not is_one_cycle:
-            # Calculate linear scale (0.0 to 1.0)
-            lr_scale = min(
-                1.0, float(self.trainer.global_step + 1) / float(max(1, warmup_steps))
-            )
-
-            # Get the base LR from config to ensure we always scale from the correct starting point
-            # (Avoids issues where pg['lr'] might be modified by other schedulers or restarts)
-            base_lr = self.config.optimizer.optimizer.lr
-
-            for pg in optimizer.param_groups:
-                pg["lr"] = base_lr * lr_scale
-
-        optimizer.step(closure=optimizer_closure)
+    # def optimizer_step(self, epoch, batch_idx, optimizer, optimizer_closure):
+    #     # --- 1. Warmup Logic (Apply BEFORE step) ---
+        
+    #     # Use effective_warmup_steps if set in configure_optimizers, else default logic
+    #     # if hasattr(self, 'effective_warmup_steps'):
+    #     #     warmup_steps = self.effective_warmup_steps
+    #     # else:
+    #     #     total_steps = self.trainer.estimated_stepping_batches + 100
+    #     #     warmup_steps = max(self.config.scheduler.warmup_steps, int(0.1 * total_steps))
+        
+    #     # is_one_cycle = self.config.scheduler.type == "onecycle"
+        
+    #     # if self.trainer.global_step < warmup_steps and not is_one_cycle:
+    #     #     # Calculate linear scale (0.0 to 1.0)
+    #     #     lr_scale = min(1.0, float(self.trainer.global_step + 1) / float(max(1, warmup_steps)))
+            
+    #     #     # Get the base LR from config to ensure we always scale from the correct starting point
+    #     #     # (Avoids issues where pg['lr'] might be modified by other schedulers or restarts)
+    #     #     base_lr = self.config.optimizer.optimizer.lr
+            
+    #     #     for pg in optimizer.param_groups:
+    #     #         if 'base_lr_group' not in pg:
+    #     #             pg['base_lr_group'] = pg['lr']
+    #     #         pg['lr'] = pg['base_lr_group'] * lr_scale
+        
+    #     optimizer.step(closure=optimizer_closure)
 
     def _get_scheduler_with_warmup(self, optimizer, sch_config):
         """

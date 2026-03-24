@@ -391,7 +391,7 @@ class COCODataModule(pl.LightningDataModule):
             )
         return DataLoader(
             self.test_dataset,
-            batch_size=1,
+            batch_size=32,
             shuffle=False,
             num_workers=self.num_workers,
             collate_fn=self.collate_fn,

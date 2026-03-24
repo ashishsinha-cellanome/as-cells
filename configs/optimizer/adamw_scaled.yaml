@@ -1,7 +1,7 @@
 # configs/optimizer/adamw_scaled.yaml
 optimizer:
   _target_: torch.optim.AdamW
-  lr: 1e-4
+  lr: 1e-5
   weight_decay: 1e-6
   
   # Toggle for fine-grained parameter grouping (Regex based)
@@ -19,14 +19,14 @@ optimizer:
     - params: '^(?=.*decoder(?=.*bias|.*norm.*weight)).*$'
       weight_decay: 0.0
 
-scheduler:
-  type: "reduce_lr_on_plateau"
-  warmup_steps: 1000
-  factor: 0.9
-  patience: 5
-  T_max: ${trainer.max_epochs}
-  last_epoch: -1
-  eta_min: 1e-6
+# scheduler:
+#   type: "reduce_lr_on_plateau"
+#   warmup_steps: 1000
+#   factor: 0.9
+#   patience: 5
+#   T_max: ${trainer.max_epochs}
+#   last_epoch: -1
+#   eta_min: 1e-6
 
 training:
   profiler:

@@ -42,6 +42,8 @@ rtdetr:
   decoder_n_points: 4
   decoder_method: 'default' # choices: default/discrete
   num_feature_levels: ${model.rtdetr.decoder_n_levels}
+  
+  num_queries: 600
 
   # denoising params
   num_denoising: 0
@@ -64,5 +66,5 @@ max_detections: 100
 
 ema:
   enabled: true
-  decay: 0.9999
+  decay: 0.993
   warmup_steps: 2000  # Skip EMA updates for first N steps (early training has noisy gradients)
