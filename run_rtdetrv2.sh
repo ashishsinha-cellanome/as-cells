@@ -10,7 +10,7 @@
 ##SBATCH --exclusive
 #SBATCH --mem-per-gpu=24G
 #SBATCH --array=0-95
-#SBATCH --time=1-23:59:59
+#SBATCH --time=3-23:59:59
 #SBATCH --output=logs/%x-%A_%a.out
 #SBATCH --error=logs/%x-%A_%a.err
 
