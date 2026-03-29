@@ -1,5 +1,6 @@
 import pytorch_lightning as pl
 from pathlib import Path
+from omegaconf import OmegaConf
 
 from torch.utils.data import DataLoader
 
@@ -67,7 +68,7 @@ class RFDETRDataModule(pl.LightningDataModule):
             args.num_select = int(model_cfg.num_select)
         return args
 
-    def _build_transforms(self, image_set: str):
+    def _build_transforms(self, image_set: str, aug_config=None):
         args = self._args
         transform_fn = (
             make_coco_transforms_square_div_64
@@ -88,18 +89,37 @@ class RFDETRDataModule(pl.LightningDataModule):
             skip_random_resize=not args.do_random_resize_via_padding,
             patch_size=args.patch_size,
             num_windows=args.num_windows,
+            aug_config=aug_config,
         )
+
+    def _load_aug_config(self):
+        """Load RF-DETR augmentation config from rfdetr_transforms.yaml."""
+        transforms_path = Path(__file__).parent.parent / "configs" / "data" / "rfdetr_transforms.yaml"
+        if not transforms_path.exists():
+            return None
+
+        cfg = OmegaConf.load(transforms_path)
+        if hasattr(cfg, "rfdetr_transforms"):
+            return OmegaConf.to_container(cfg.rfdetr_transforms, resolve=True)
+        return None
 
     def _make_dataset(self, split_name: str):
         image_root = Path(self.dataset_path) / "images" / split_name
         ann_path = Path(self.dataset_path) / f"{split_name}_annotations.json"
+
+        # Load augmentation config for training split only
+        aug_config = None
+        if split_name == self.config.train_name:
+            aug_config = self._load_aug_config()
+
         return CocoDetection(
             img_folder=image_root,
             ann_file=ann_path,
             transforms=self._build_transforms(
                 "test"
                 if split_name == self.config.test_name
-                else ("val" if split_name == self.config.val_name else "train")
+                else ("val" if split_name == self.config.val_name else "train"),
+                aug_config=aug_config,
             ),
             include_masks=False,
         )

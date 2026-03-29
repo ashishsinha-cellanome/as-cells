@@ -1,0 +1,31 @@
+# RF-DETR specific augmentation config
+# Combines RF-DETR defaults with custom augmentations for brightfield microscopy
+
+rfdetr_transforms:
+  # RF-DETR default augmentation
+  HorizontalFlip:
+    p: 0.5
+
+  # Geometric augmentations (affect bounding boxes)
+  RandomRotate90:
+    p: 0.5
+
+  Perspective:
+    p: 0.25
+
+  RandomScale:
+    scale_limit: [-0.3, 0.0]
+    p: 0.5
+
+  # Pixel-level augmentations (preserve bounding boxes)
+  RandomBrightnessContrast:
+    brightness_limit: 0.2
+    contrast_limit: 0.2
+    p: 0.25
+
+  HueSaturationValue:
+    p: 0.25
+
+  AdditiveNoise:
+    p: 0.25
+    spatial_mode: 'per_pixel'
