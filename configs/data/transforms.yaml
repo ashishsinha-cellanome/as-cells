@@ -4,13 +4,14 @@ transforms:
   train:
     - name: RandomScale
       params:
-        scale_limit: [ -0.3, 0.0 ] 
+        scale_limit: [ -0.3, 0.3 ] 
         p: 1.0
     - name: PadIfNeeded
       params:
         min_height: ${model.input_size} # change as per model input size
         min_width: ${model.input_size}
         position: 'random'
+        p: 1.0
     - name: RandomCrop
       params:
         height: ${model.input_size}

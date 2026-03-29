@@ -4,8 +4,8 @@ input_size: 560
 rfdetr:
   size: base             # base|small|medium|large|nano
   pretrain_weights: null # auto-select size-matched defaults unless explicitly overridden
-  num_queries: null
-  num_select: null
+  num_queries: 300
+  num_select: ${model.rfdetr.num_queries}
 
   # RF-DETR data/training behavior
   multi_scale: true
