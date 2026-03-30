@@ -1,5 +1,5 @@
 name: rf_detr_${model.rfdetr.size}
-input_size: 560
+input_size: 672
 
 rfdetr:
   size: base             # base|small|medium|large|nano
@@ -28,7 +28,7 @@ label_map:
 
 detection_threshold: 0.05
 draw_threshold: 0.4
-max_detections: 300
+max_detections: 100
 
 ema:
   enabled: true

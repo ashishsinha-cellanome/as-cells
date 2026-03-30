@@ -1069,7 +1069,7 @@ def main(config: DictConfig):
             rank_zero_print(
                 f"Warning: Could not find model source file at {source_path}"
             )
-        logger.watch(model, log="gradients", log_freq=100)
+        logger.watch(model, log="gradients", log_freq=500)
         rank_zero_print("✓ WandB logger watching model for gradients")
 
     profiler = setup_profiler(config)

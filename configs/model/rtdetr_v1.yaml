@@ -6,15 +6,15 @@ input_size: 640 #$${model.rtdetr.input_size}
 
 rtdetr:
   # RT-DETRv1 Configuration
-  model_name: "rtdetr_r50vd" 
+  model_name: "rtdetr_r50vd"
   pretrained_name_or_path: "PekingU/rtdetr_r50vd_coco_o365"
   input_size: 640
-  
+
   freeze_backbone_batch_norms: true
   normalize_before: false
 
   # --- SWEEP PARAMETERS ---
-  config_overrides: 
+  config_overrides:
   auxiliary_loss: true
   use_focal_loss: true
 
@@ -25,23 +25,23 @@ rtdetr:
   # label's loss
   focal_loss_alpha: 0.75
   focal_loss_gamma: 2.0
-  
+
   # Matcher costs
   matcher_class_cost: 2.0
   matcher_bbox_cost: 5.0
   matcher_giou_cost: 2.0
-  
+
   # Loss weights
   weight_loss_vfl: 1.0
   weight_loss_bbox: 5.0
   weight_loss_giou: 2.0
   eos_coefficient: 0.0001
-  
+
   # Decoder params
   decoder_n_levels: 3
   decoder_n_points: 4
   num_feature_levels: ${model.rtdetr.decoder_n_levels}
-  
+
   num_queries: 600
 
   # denoising params
@@ -54,17 +54,17 @@ rtdetr:
 
 # --- General ---
 label_map:
-  0: 'cell'
-  1: 'bead'
-  2: 'cell-adhered'
-  3: 'soma'
+  0: "cell"
+  1: "bead"
+  2: "cell-adhered"
+  3: "soma"
 
 detection_threshold: 0.05
 draw_threshold: 0.4
-max_detections: 300
+max_detections: 100
 
 ema:
   enabled: true
   decay: 0.9999
-  warmup_steps: 500  # Skip EMA updates for first N steps (early training has noisy gradients)
+  warmup_steps: 500 # Skip EMA updates for first N steps (early training has noisy gradients)
   tau: 2000
