@@ -1,0 +1,38 @@
+defaults:
+  - backbone: dinov2_mask2former
+
+name: mask2former_${model.backbone.name}
+input_size: 512
+
+mask2former:
+  pretrained_name_or_path: facebook/mask2former-swin-large-coco-instance
+  local_files_only: false
+  num_queries: 300
+  threshold: 0.5
+  mask_threshold: 0.5
+  overlap_mask_area_threshold: 0.8
+
+lora:
+  enabled: false
+  rank: 8
+  alpha: 16
+  dropout: 0.05
+  bias: "none"
+  target_modules: ["query", "value"]
+  modules_to_save: []
+
+ema:
+  enabled: true
+  decay: 0.993
+  tau: 100
+  warmup_steps: 100
+
+label_map:
+  0: "cell"
+  1: "bead"
+  2: "cell-adhered"
+  3: "soma"
+
+detection_threshold: 0.5
+draw_threshold: 0.5
+max_detections: 100

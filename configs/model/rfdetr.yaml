@@ -6,6 +6,7 @@ rfdetr:
   pretrain_weights: null # auto-select size-matched defaults unless explicitly overridden
   num_queries: 300
   num_select: ${model.rfdetr.num_queries}
+  finetune_mode: queries_head # full|queries_head|queries_decoder_head
 
   # RF-DETR data/training behavior
   multi_scale: true
@@ -28,7 +29,7 @@ label_map:
 
 detection_threshold: 0.05
 draw_threshold: 0.4
-max_detections: 100
+max_detections: 100 # for crowded scenes, set >= model.rfdetr.num_select (or override via CLI)
 
 ema:
   enabled: true

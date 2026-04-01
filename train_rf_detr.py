@@ -3,8 +3,9 @@
 import datetime
 import os
 import time
+import copy
 import warnings
-from typing import Any, Dict, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
 import hydra
 import pytorch_lightning as pl
@@ -26,7 +27,7 @@ from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.plugins.environments import SLURMEnvironment
 from rfdetr.assets.model_weights import ModelWeights, download_pretrain_weights
 from rfdetr import RFDETRBase, RFDETRLarge, RFDETRMedium, RFDETRNano, RFDETRSmall
-from rfdetr.models import build_criterion_and_postprocessors
+from rfdetr.models.lwdetr import build_criterion_and_postprocessors
 
 from data.rf_detr_data_module import RFDETRDataModule
 from models.rf_detr_lightning_module import RFDETRLightningModule
@@ -59,6 +60,198 @@ _DEFAULT_PRETRAIN_WEIGHTS_BY_SIZE: Dict[str, str] = {
 
 _PRETRAIN_DOWNLOAD_WAIT_TIMEOUT_SEC = 300
 _PRETRAIN_DOWNLOAD_WAIT_POLL_SEC = 2
+
+
+def _extract_checkpoint_num_queries(checkpoint: Dict[str, Any]) -> Optional[int]:
+    args_obj = checkpoint.get("args")
+    if hasattr(args_obj, "num_queries"):
+        try:
+            return int(args_obj.num_queries)
+        except (TypeError, ValueError):
+            return None
+    if isinstance(args_obj, dict) and "num_queries" in args_obj:
+        try:
+            return int(args_obj["num_queries"])
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def _init_rows_from_pretrained_stats(base_tensor: torch.Tensor, n_rows: int) -> torch.Tensor:
+    if n_rows <= 0:
+        return base_tensor.new_empty((0, base_tensor.shape[1]))
+    mean = base_tensor.mean(dim=0, keepdim=True)
+    std = base_tensor.std(dim=0, keepdim=True, unbiased=False).clamp_min(1e-6)
+    return mean + torch.randn(
+        n_rows, base_tensor.shape[1], dtype=base_tensor.dtype
+    ) * std
+
+
+def _build_query_compatible_pretrain_weights(
+    pretrain_weights: str,
+    requested_num_queries: Optional[int],
+    run_save_dir: str,
+) -> str:
+    if requested_num_queries is None:
+        return pretrain_weights
+
+    checkpoint = torch.load(pretrain_weights, map_location="cpu", weights_only=False)
+    if not isinstance(checkpoint, dict):
+        rank_zero_print(
+            "[Startup] Query-compat skipped: pretrain checkpoint is not a dict."
+        )
+        return pretrain_weights
+
+    model_state = checkpoint.get("model")
+    if not isinstance(model_state, dict):
+        rank_zero_print(
+            "[Startup] Query-compat skipped: checkpoint has no 'model' state_dict."
+        )
+        return pretrain_weights
+
+    ref_key = "refpoint_embed.weight"
+    query_key = "query_feat.weight"
+    if ref_key not in model_state or query_key not in model_state:
+        rank_zero_print(
+            "[Startup] Query-compat skipped: checkpoint missing query tensors."
+        )
+        return pretrain_weights
+
+    ref_tensor = model_state[ref_key]
+    query_tensor = model_state[query_key]
+    if (
+        not isinstance(ref_tensor, torch.Tensor)
+        or not isinstance(query_tensor, torch.Tensor)
+        or ref_tensor.ndim != 2
+        or query_tensor.ndim != 2
+        or ref_tensor.shape[0] != query_tensor.shape[0]
+    ):
+        rank_zero_print(
+            "[Startup] Query-compat skipped: unexpected query tensor shape(s)."
+        )
+        return pretrain_weights
+
+    source_num_queries = _extract_checkpoint_num_queries(checkpoint)
+    if source_num_queries is None or source_num_queries <= 0:
+        rank_zero_print(
+            "[Startup] Query-compat skipped: could not infer source num_queries from checkpoint args."
+        )
+        return pretrain_weights
+
+    source_rows = int(ref_tensor.shape[0])
+    if source_rows % source_num_queries != 0:
+        rank_zero_print(
+            "[Startup] Query-compat skipped: query rows are not divisible by source num_queries."
+        )
+        return pretrain_weights
+
+    rows_per_query = source_rows // source_num_queries
+    target_rows = int(requested_num_queries) * rows_per_query
+    if target_rows <= 0 or target_rows == source_rows:
+        return pretrain_weights
+
+    new_ref = ref_tensor.new_empty((target_rows, ref_tensor.shape[1]))
+    new_query = query_tensor.new_empty((target_rows, query_tensor.shape[1]))
+    copy_rows = min(source_rows, target_rows)
+    new_ref[:copy_rows] = ref_tensor[:copy_rows]
+    new_query[:copy_rows] = query_tensor[:copy_rows]
+    if target_rows > source_rows:
+        extra_rows = target_rows - source_rows
+        new_ref[source_rows:] = _init_rows_from_pretrained_stats(ref_tensor, extra_rows)
+        new_query[source_rows:] = _init_rows_from_pretrained_stats(
+            query_tensor, extra_rows
+        )
+
+    compatible_ckpt = copy.deepcopy(checkpoint)
+    compatible_model_state = dict(model_state)
+    compatible_model_state[ref_key] = new_ref
+    compatible_model_state[query_key] = new_query
+    compatible_ckpt["model"] = compatible_model_state
+
+    if hasattr(compatible_ckpt.get("args"), "num_queries"):
+        compatible_ckpt["args"].num_queries = int(requested_num_queries)
+
+    compat_dir = os.path.join(run_save_dir, "compat_pretrain")
+    os.makedirs(compat_dir, exist_ok=True)
+    base_name = os.path.splitext(os.path.basename(pretrain_weights))[0]
+    compat_path = os.path.join(
+        compat_dir, f"{base_name}_q{int(requested_num_queries)}.pth"
+    )
+
+    rank = get_rank()
+    if rank == 0:
+        torch.save(compatible_ckpt, compat_path)
+    else:
+        deadline = time.time() + _PRETRAIN_DOWNLOAD_WAIT_TIMEOUT_SEC
+        while time.time() < deadline and not os.path.exists(compat_path):
+            time.sleep(_PRETRAIN_DOWNLOAD_WAIT_POLL_SEC)
+
+    if not os.path.exists(compat_path):
+        raise FileNotFoundError(
+            f"Failed to prepare query-compatible pretrain weights at '{compat_path}'."
+        )
+
+    rank_zero_print(
+        "[Startup] Query-compat pretrain prepared: "
+        f"source_queries={source_num_queries}, requested_queries={int(requested_num_queries)}, "
+        f"rows_per_query={rows_per_query}, copied_rows={copy_rows}, total_rows={target_rows}."
+    )
+    rank_zero_print(f"[Startup] Using query-compatible pretrain weights: {compat_path}")
+    return compat_path
+
+
+def _apply_rfdetr_finetune_mode(
+    nn_model: torch.nn.Module, finetune_mode: str
+) -> Tuple[int, int, List[str]]:
+    mode = str(finetune_mode).lower()
+    named_params = list(nn_model.named_parameters())
+
+    if mode == "full":
+        for _, param in named_params:
+            param.requires_grad = True
+    else:
+        for _, param in named_params:
+            param.requires_grad = False
+
+        allow_prefixes: List[str] = [
+            "refpoint_embed.",
+            "query_feat.",
+            "class_embed.",
+            "bbox_embed.",
+            "transformer.enc_out_class_embed.",
+            "transformer.enc_out_bbox_embed.",
+        ]
+        if mode == "queries_decoder_head":
+            allow_prefixes.append("transformer.decoder.")
+        elif mode != "queries_head":
+            raise ValueError(
+                "Unsupported model.rfdetr.finetune_mode. "
+                "Use one of: full, queries_head, queries_decoder_head."
+            )
+
+        for name, param in named_params:
+            if any(name.startswith(prefix) for prefix in allow_prefixes):
+                param.requires_grad = True
+
+    trainable = [name for name, p in named_params if p.requires_grad]
+    trainable_params = sum(p.numel() for _, p in named_params if p.requires_grad)
+    total_params = sum(p.numel() for _, p in named_params)
+    return trainable_params, total_params, trainable
+
+
+def _maybe_raise_max_detections(
+    config: DictConfig, requested_num_select: Optional[int]
+) -> None:
+    if requested_num_select is None:
+        return
+    current_max_dets = int(config.model.max_detections)
+    if current_max_dets >= int(requested_num_select):
+        return
+    config.model.max_detections = int(requested_num_select)
+    rank_zero_print(
+        "[Startup] Raised model.max_detections to match high-query run: "
+        f"{current_max_dets} -> {int(requested_num_select)}"
+    )
 
 
 def _get_profiler(config: DictConfig):
@@ -446,6 +639,22 @@ def main(config: DictConfig):
         num_classes=len(label_map),
         device="cuda" if torch.cuda.is_available() else "cpu",
     )
+
+    requested_num_queries = model_kwargs.get("num_queries")
+    if "pretrain_weights" in model_kwargs:
+        model_kwargs["pretrain_weights"] = _build_query_compatible_pretrain_weights(
+            pretrain_weights=str(model_kwargs["pretrain_weights"]),
+            requested_num_queries=(
+                int(requested_num_queries) if requested_num_queries is not None else None
+            ),
+            run_save_dir=run_save_dir,
+        )
+    _maybe_raise_max_detections(
+        config=config,
+        requested_num_select=(
+            int(model_kwargs["num_select"]) if "num_select" in model_kwargs else None
+        ),
+    )
     _log_effective_model_config(config.model.rfdetr.size, model_kwargs)
 
     rf_wrapper = rf_model_cls(**model_kwargs)
@@ -457,6 +666,27 @@ def main(config: DictConfig):
         rf_wrapper.model.class_names = class_names
 
     rf_wrapper.model.reinitialize_detection_head(len(label_map))
+
+    finetune_mode = str(config.model.rfdetr.get("finetune_mode", "queries_head"))
+    trainable_params, total_params, trainable_names = _apply_rfdetr_finetune_mode(
+        rf_wrapper.model.model, finetune_mode
+    )
+    rank_zero_print(
+        "[Startup] RF-DETR finetune mode: "
+        f"{finetune_mode} ({trainable_params:,}/{total_params:,} params trainable)"
+    )
+    if trainable_names:
+        preview = trainable_names[:20]
+        for name in preview:
+            rank_zero_print(f"  - trainable: {name}")
+        if len(trainable_names) > len(preview):
+            rank_zero_print(
+                f"  - ... and {len(trainable_names) - len(preview)} more trainable tensors"
+            )
+    else:
+        rank_zero_print(
+            "[Startup] WARNING: No trainable parameters selected by finetune mode."
+        )
 
     base_args = rf_wrapper.model.args
     data_module = RFDETRDataModule(

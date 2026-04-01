@@ -63,84 +63,202 @@ DEFAULT_CROP_CORNERS: Final[Dict[Tuple[int, int], List[List[int]]]] = {
 }
 
 
-def get_mask2former_instance_segmentation_model_with_dinov2_backbone(
-    id2label: Dict[int, str], model_type: str, with_registers: bool
-):
+def _default_dinov2_out_indices(backbone_name: str) -> List[int]:
+    name = backbone_name.lower()
+    if "small" in name or "base" in name:
+        return [6, 8, 10, 12]
+    if "large" in name:
+        return [18, 20, 22, 24]
+    if "giant" in name:
+        return [34, 36, 38, 40]
+    return [6, 8, 10, 12]
 
-    # transformer layer outputs to use
-    output_indices_map: Dict[str, List[int]] = {
-        "small": [6, 8, 10, 12],
-        "base": [6, 8, 10, 12],
-        "large": [18, 20, 22, 24],
-        "giant": [34, 36, 38, 40],
-    }
 
-    if model_type.lower() in output_indices_map.keys():
-        if with_registers:
-            dinov2_checkpoint_str: str = "dinov2-with-registers-" + model_type.lower()
-        else:
-            dinov2_checkpoint_str: str = "dinov2-" + model_type.lower()
+def _apply_backbone_training_mode(
+    model: Mask2FormerForUniversalSegmentation,
+    training_mode: str,
+) -> None:
+    mode = str(training_mode).lower()
+    encoder = model.model.pixel_level_module.encoder
 
-        output_indices: List[int] = output_indices_map[model_type.lower()]
-    else:
-        dinov2_checkpoint_str: str = "dinov2-base"
-        output_indices: List[int] = output_indices_map["base"]
-        print(
-            f"[ERROR] Incorrect model type passed {model_type}! Using the base model by default."
-        )
+    if mode == "frozen":
+        for param in encoder.parameters():
+            param.requires_grad = False
+        return
 
-    # store Dinov2 weights locally to reload them again, only do it if already not loaded locally
-    if not os.path.exists(
-        os.path.join(MODEL_REPO_PATH, dinov2_checkpoint_str + ".pth")
-    ):
-        dinov2_model = Dinov2Model.from_pretrained(
-            "facebook/" + dinov2_checkpoint_str, out_indices=output_indices
-        )
-        torch.save(
-            dinov2_model.state_dict(),
-            os.path.join(MODEL_REPO_PATH, dinov2_checkpoint_str + ".pth"),
-        )
+    if mode == "full_finetune":
+        for param in encoder.parameters():
+            param.requires_grad = True
+        return
 
-    # create Mask2Former config for semantic segmentation with Dinov2 backbone
+    if mode == "lora":
+        for param in encoder.parameters():
+            param.requires_grad = False
+        return
 
-    mask2former_checkpoint = "facebook/mask2former-swin-large-coco-instance"
-
-    model_config = Mask2FormerConfig.from_pretrained(mask2former_checkpoint)
-    model = Mask2FormerForUniversalSegmentation.from_pretrained(
-        mask2former_checkpoint, id2label=id2label, ignore_mismatched_sizes=True
-    )
-    model_config = model.config
-    model_config.backbone_config = Dinov2Config.from_pretrained(
-        "facebook/" + dinov2_checkpoint_str, out_indices=output_indices
+    raise ValueError(
+        f"Unsupported Mask2Former backbone training_mode: {training_mode}"
     )
 
-    # instantiate Mask2Former model with Dinov2 backbone (random weights)
-    model = Mask2FormerForUniversalSegmentation(model_config)
 
-    # load Dinov2 weights into Mask2Former backbone
-    dinov2_backbone = model.model.pixel_level_module.encoder
-    dinov2_backbone.load_state_dict(
-        torch.load(os.path.join(MODEL_REPO_PATH, dinov2_checkpoint_str + ".pth"))
+def _apply_backbone_lora(
+    model: Mask2FormerForUniversalSegmentation,
+    *,
+    rank: int,
+    alpha: int,
+    dropout: float,
+    bias: str,
+    target_modules: List[str],
+    modules_to_save: Optional[List[str]] = None,
+) -> Mask2FormerForUniversalSegmentation:
+    try:
+        from peft import LoraConfig, get_peft_model
+    except ImportError as exc:
+        raise ImportError(
+            "LoRA training was requested, but the 'peft' package is not installed. "
+            "Install project dependencies again after adding 'peft'."
+        ) from exc
+
+    encoder = model.model.pixel_level_module.encoder
+    for param in encoder.parameters():
+        param.requires_grad = False
+
+    lora_config = LoraConfig(
+        r=int(rank),
+        lora_alpha=int(alpha),
+        lora_dropout=float(dropout),
+        bias=str(bias),
+        target_modules=[str(module) for module in target_modules],
+        modules_to_save=list(modules_to_save or []),
     )
-
-    # freeze all the weights in Dinov2 backbone
-    # for param in dinov2_backbone.parameters():
-    #     param.requires_grad_(False)
-
-    # this is for freezing the backbone in Mask2Former, it should be the same as above
-    for param in model.model.pixel_level_module.encoder.parameters():
-        param.requires_grad_(False)
-
+    model.model.pixel_level_module.encoder = get_peft_model(encoder, lora_config)
     return model
 
 
+def summarize_trainable_parameters(
+    model: Mask2FormerForUniversalSegmentation,
+) -> Dict[str, int]:
+    encoder = model.model.pixel_level_module.encoder
+    total_params = sum(param.numel() for param in model.parameters())
+    trainable_params = sum(
+        param.numel() for param in model.parameters() if param.requires_grad
+    )
+    trainable_backbone_params = sum(
+        param.numel() for param in encoder.parameters() if param.requires_grad
+    )
+    return {
+        "total_params": int(total_params),
+        "trainable_params": int(trainable_params),
+        "trainable_backbone_params": int(trainable_backbone_params),
+    }
+
+
+def build_mask2former_with_dinov2_backbone(
+    *,
+    id2label: Dict[int, str],
+    mask2former_pretrained_name_or_path: str,
+    backbone_pretrained_name_or_path: str,
+    training_mode: str = "frozen",
+    lora_config: Optional[Dict[str, Union[int, float, str, bool, List[str]]]] = None,
+    num_queries: Optional[int] = None,
+    out_indices: Optional[List[int]] = None,
+    local_files_only: bool = False,
+) -> Mask2FormerForUniversalSegmentation:
+    label2id = {str(name): int(idx) for idx, name in id2label.items()}
+    out_indices = out_indices or _default_dinov2_out_indices(
+        backbone_pretrained_name_or_path
+    )
+
+    pretrained_model = Mask2FormerForUniversalSegmentation.from_pretrained(
+        mask2former_pretrained_name_or_path,
+        id2label=id2label,
+        label2id=label2id,
+        ignore_mismatched_sizes=True,
+        local_files_only=local_files_only,
+    )
+    pretrained_state = pretrained_model.state_dict()
+    model_config = pretrained_model.config
+    model_config.num_labels = len(id2label)
+    model_config.id2label = id2label
+    model_config.label2id = label2id
+    if num_queries is not None:
+        model_config.num_queries = int(num_queries)
+    model_config.backbone_config = Dinov2Config.from_pretrained(
+        backbone_pretrained_name_or_path,
+        out_indices=out_indices,
+        local_files_only=local_files_only,
+    )
+
+    model = Mask2FormerForUniversalSegmentation(model_config)
+    current_state = model.state_dict()
+    transferable_state = {
+        key: value
+        for key, value in pretrained_state.items()
+        if key in current_state
+        and value.shape == current_state[key].shape
+        and not key.startswith("model.pixel_level_module.encoder.")
+    }
+    model.load_state_dict(transferable_state, strict=False)
+
+    dinov2_model = Dinov2Model.from_pretrained(
+        backbone_pretrained_name_or_path,
+        out_indices=out_indices,
+        local_files_only=local_files_only,
+    )
+    encoder_state = model.model.pixel_level_module.encoder.state_dict()
+    dinov2_state = {
+        key: value
+        for key, value in dinov2_model.state_dict().items()
+        if key in encoder_state and value.shape == encoder_state[key].shape
+    }
+    model.model.pixel_level_module.encoder.load_state_dict(dinov2_state, strict=False)
+    _apply_backbone_training_mode(model, training_mode)
+    if str(training_mode).lower() == "lora":
+        if not lora_config or not bool(lora_config.get("enabled", False)):
+            raise ValueError(
+                "Mask2Former LoRA requires model.backbone.training_mode=lora "
+                "and model.lora.enabled=true."
+            )
+        model = _apply_backbone_lora(
+            model,
+            rank=int(lora_config["rank"]),
+            alpha=int(lora_config["alpha"]),
+            dropout=float(lora_config["dropout"]),
+            bias=str(lora_config["bias"]),
+            target_modules=[str(x) for x in lora_config["target_modules"]],
+            modules_to_save=[
+                str(x) for x in lora_config.get("modules_to_save", []) or []
+            ],
+        )
+    return model
+
+
+def get_mask2former_instance_segmentation_model_with_dinov2_backbone(
+    id2label: Dict[int, str], model_type: str, with_registers: bool
+):
+    model_type = str(model_type).lower()
+    if with_registers:
+        backbone_name = f"facebook/dinov2-with-registers-{model_type}"
+    else:
+        backbone_name = f"facebook/dinov2-{model_type}"
+    return build_mask2former_with_dinov2_backbone(
+        id2label=id2label,
+        mask2former_pretrained_name_or_path="facebook/mask2former-swin-large-coco-instance",
+        backbone_pretrained_name_or_path=backbone_name,
+        training_mode="frozen",
+        out_indices=_default_dinov2_out_indices(backbone_name),
+    )
+
+
 def get_mask2former_processor(
-    model_input_size: Tuple[int, int],
+    model_input_size: Tuple[int, int] | int,
 ) -> Mask2FormerImageProcessor:
+    if isinstance(model_input_size, int):
+        model_input_size = (model_input_size, model_input_size)
     return Mask2FormerImageProcessor(
         ignore_index=-1,
         do_resize=True,
-        size=model_input_size,
+        size={"height": int(model_input_size[0]), "width": int(model_input_size[1])},
         size_divisor=14,
         reduce_labels=False,
         do_rescale=True,

@@ -16,7 +16,9 @@ data:
 
 no300:
   copy_images: true
+  copy_masks: true
   images_dir: "images"
+  masks_dir: "masks"
   copy_workers: 8
 
 checkpointing:

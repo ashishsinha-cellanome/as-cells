@@ -9,7 +9,6 @@ from rfdetr.datasets.coco import (
     make_coco_transforms,
     make_coco_transforms_square_div_64,
 )
-from rfdetr.main import populate_args
 from rfdetr.util.misc import collate_fn
 
 
@@ -33,9 +32,10 @@ class RFDETRDataModule(pl.LightningDataModule):
         trainer_cfg = self.config.trainer
 
         if self.base_args is None:
-            args = populate_args()
-        else:
-            args = self.base_args
+            raise ValueError(
+                "RFDETRDataModule requires `base_args` built from the active RF-DETR model context."
+            )
+        args = self.base_args
 
         args.dataset_file = "roboflow"
         args.dataset_dir = self.dataset_path

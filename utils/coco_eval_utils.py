@@ -85,15 +85,18 @@ def compute_coco_metrics(
     max_detections=100,
     label_map=None,
     prefix="Performance",
+    iou_type="bbox",
+    metric_prefix="",
 ):
     """
-    Compute aggregate + per-class COCO bbox metrics.
+    Compute aggregate + per-class COCO metrics.
     Returns a dict containing map/map_50/... and per-class map_* keys.
+    When metric_prefix is provided, all returned keys are prefixed, e.g. segm_map.
     """
     if coco_gt is None or len(predictions) == 0:
         return {}
 
-    metrics = {
+    base_metrics = {
         "map": -1.0,
         "map_50": -1.0,
         "map_75": -1.0,
@@ -107,20 +110,23 @@ def compute_coco_metrics(
         "mar_medium": -1.0,
         "mar_large": -1.0,
     }
+    metric_prefix = str(metric_prefix or "").strip()
+    key_prefix = f"{metric_prefix}_" if metric_prefix else ""
+    metrics = {f"{key_prefix}{key}": value for key, value in base_metrics.items()}
 
     try:
         coco_dt = coco_gt.loadRes(predictions)
-        coco_eval = COCOeval(coco_gt, coco_dt, "bbox")
+        coco_eval = COCOeval(coco_gt, coco_dt, iou_type)
         coco_eval.params.maxDets = [1, 10, max_detections]
         coco_eval.params.imgIds = image_ids
         coco_eval.evaluate()
         coco_eval.accumulate()
         coco_eval.summarize()
 
-        keys = list(metrics.keys())
+        keys = list(base_metrics.keys())
         for idx, key in enumerate(keys):
             if idx < len(coco_eval.stats):
-                metrics[key] = round(float(coco_eval.stats[idx]), 4)
+                metrics[f"{key_prefix}{key}"] = round(float(coco_eval.stats[idx]), 4)
 
         if hasattr(coco_eval, "eval") and "precision" in coco_eval.eval:
             precisions = coco_eval.eval["precision"]
@@ -156,12 +162,16 @@ def compute_coco_metrics(
                 p_all = precisions[:, :, class_idx, 0, -1]
                 valid_all = p_all[p_all > -1]
                 if len(valid_all) > 0:
-                    metrics[f"map_{class_name}"] = round(float(np.mean(valid_all)), 4)
+                    metrics[f"{key_prefix}map_{class_name}"] = round(
+                        float(np.mean(valid_all)), 4
+                    )
 
                 p_50 = precisions[0, :, class_idx, 0, -1]
                 valid_50 = p_50[p_50 > -1]
                 if len(valid_50) > 0:
-                    metrics[f"map_50_{class_name}"] = round(float(np.mean(valid_50)), 4)
+                    metrics[f"{key_prefix}map_50_{class_name}"] = round(
+                        float(np.mean(valid_50)), 4
+                    )
 
                 if recalls is not None:
                     for recall_idx, recall_val in enumerate([1, 10, max_detections]):
@@ -170,7 +180,7 @@ def compute_coco_metrics(
                         r_all = recalls[:, class_idx, 0, recall_idx]
                         valid_r_all = r_all[r_all > -1]
                         if len(valid_r_all) > 0:
-                            metrics[f"mar_{recall_val}_{class_name}"] = round(
+                            metrics[f"{key_prefix}mar_{recall_val}_{class_name}"] = round(
                                 float(np.mean(valid_r_all)), 4
                             )
 
@@ -202,8 +212,12 @@ def compute_coco_metrics(
                         "Labels": labels_per_class.get(cat_id, 0),
                         "P": best_p,
                         "R": best_r,
-                        "mAP@.5": metrics.get(f"map_50_{class_name}", 0.0),
-                        "mAP@.5:.95": metrics.get(f"map_{class_name}", 0.0),
+                        "mAP@.5": metrics.get(
+                            f"{key_prefix}map_50_{class_name}", 0.0
+                        ),
+                        "mAP@.5:.95": metrics.get(
+                            f"{key_prefix}map_{class_name}", 0.0
+                        ),
                     }
                 )
 
@@ -221,8 +235,8 @@ def compute_coco_metrics(
                 "Labels": total_labels,
                 "P": avg_p,
                 "R": avg_r,
-                "mAP@.5": metrics.get("map_50", 0.0),
-                "mAP@.5:.95": metrics.get("map", 0.0),
+                "mAP@.5": metrics.get(f"{key_prefix}map_50", 0.0),
+                "mAP@.5:.95": metrics.get(f"{key_prefix}map", 0.0),
             }
 
             # Print the formatted table

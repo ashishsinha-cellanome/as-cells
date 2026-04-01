@@ -464,9 +464,12 @@ def _sanitize_payload_images(payload: dict[str, Any]) -> tuple[dict[str, Any], i
     return payload, changed
 
 
+def _mask_file_name_from_image_file_name(file_name: str) -> str:
+    sanitized = _sanitize_file_name(str(file_name))
+    return f"{Path(sanitized).stem}.pkl"
 
 
-def _copy_images(
+def _copy_items(
     *,
     items: list[tuple[Path, Path]],
     workers: int,
@@ -497,6 +500,105 @@ def _copy_images(
     return copied, skipped
 
 
+def _copy_images(
+    *,
+    items: list[tuple[Path, Path]],
+    workers: int,
+) -> tuple[int, int]:
+    return _copy_items(items=items, workers=workers)
+
+
+def _copy_masks(
+    *,
+    items: list[tuple[Path, Path]],
+    workers: int,
+) -> tuple[int, int]:
+    return _copy_items(items=items, workers=workers)
+
+
+def _build_mask_items_for_split(
+    *,
+    images: list[dict[str, Any]],
+    src_root: Path,
+    dst_root: Path,
+) -> tuple[list[tuple[Path, Path]], list[str]]:
+    items: list[tuple[Path, Path]] = []
+    missing: list[str] = []
+    for image in images:
+        mask_name = _mask_file_name_from_image_file_name(str(image.get("file_name", "")))
+        src = src_root / mask_name
+        if not src.exists():
+            missing.append(mask_name)
+            continue
+        items.append((src, dst_root / mask_name))
+    return items, missing
+
+
+def _build_train_plus_mask_items(
+    *,
+    images: list[dict[str, Any]],
+    promoted_new_image_ids: list[int],
+    train_src_root: Path,
+    val_src_root: Path,
+    dst_root: Path,
+) -> tuple[list[tuple[Path, Path]], list[str]]:
+    items: list[tuple[Path, Path]] = []
+    missing: list[str] = []
+    promoted_id_set = {int(x) for x in promoted_new_image_ids}
+
+    for image in images:
+        image_id = int(image.get("id"))
+        mask_name = _mask_file_name_from_image_file_name(str(image.get("file_name", "")))
+        src_root = val_src_root if image_id in promoted_id_set else train_src_root
+        src = src_root / mask_name
+        if not src.exists():
+            missing.append(mask_name)
+            continue
+        items.append((src, dst_root / mask_name))
+
+    return items, missing
+
+
+def _build_repair_train_plus_mask_items(
+    *,
+    images: list[dict[str, Any]],
+    train_src_root: Path,
+    val_src_root: Path,
+    dst_root: Path,
+) -> tuple[list[tuple[Path, Path]], list[str]]:
+    items: list[tuple[Path, Path]] = []
+    missing: list[str] = []
+
+    for image in images:
+        mask_name = _mask_file_name_from_image_file_name(str(image.get("file_name", "")))
+        src = train_src_root / mask_name
+        if not src.exists():
+            alt = val_src_root / mask_name
+            if alt.exists():
+                src = alt
+            else:
+                missing.append(mask_name)
+                continue
+        items.append((src, dst_root / mask_name))
+
+    return items, missing
+
+
+def _validate_mask_outputs(
+    *,
+    images: list[dict[str, Any]],
+    masks_root: Path,
+) -> list[str]:
+    missing: list[str] = []
+    for image in images:
+        mask_name = _mask_file_name_from_image_file_name(str(image.get("file_name", "")))
+        if not (masks_root / mask_name).exists():
+            missing.append(mask_name)
+    return missing
+
+
+
+
 @hydra.main(config_path="configs", config_name="config.yaml", version_base=None)
 def main(cfg: DictConfig) -> None:
     data_root = Path(cfg.data.path).expanduser()
@@ -512,6 +614,10 @@ def main(cfg: DictConfig) -> None:
     copy_images = bool(getattr(no300_cfg, "copy_images", False)) if no300_cfg else False
     images_dir_name = (
         str(getattr(no300_cfg, "images_dir", "images")) if no300_cfg else "images"
+    )
+    copy_masks = bool(getattr(no300_cfg, "copy_masks", True)) if no300_cfg else True
+    masks_dir_name = (
+        str(getattr(no300_cfg, "masks_dir", "masks")) if no300_cfg else "masks"
     )
     copy_workers = int(getattr(no300_cfg, "copy_workers", 8)) if no300_cfg else 8
     repair_only = bool(getattr(no300_cfg, "repair_only", False)) if no300_cfg else False
@@ -535,6 +641,7 @@ def main(cfg: DictConfig) -> None:
     )
     print(f"Threshold: >{THRESHOLD}")
     print(f"Copy images: {copy_images}")
+    print(f"Copy masks: {copy_masks}")
     print(f"Repair only: {repair_only}")
 
 
@@ -599,6 +706,49 @@ def main(cfg: DictConfig) -> None:
                 train_items.append((src, train_plus_dst_root / rel))
             copied, skipped = _copy_images(items=train_items, workers=copy_workers)
             print(f"  train_plus_valgt300: copied={copied}, skipped={skipped}, missing={missing}")
+
+        if copy_masks:
+            masks_root = data_root / masks_dir_name
+            val_mask_src_root = masks_root / val_split_name
+            test_mask_src_root = masks_root / test_split_name
+            train_mask_src_root = masks_root / train_split_name
+            val_mask_dst_root = masks_root / VAL_OUTPUT_NAME
+            test_mask_dst_root = masks_root / TEST_OUTPUT_NAME
+            train_plus_mask_dst_root = masks_root / TRAIN_PROMOTED_OUTPUT_NAME
+
+            print("\nCopying filtered validation masks (repair)...")
+            val_items, val_missing = _build_mask_items_for_split(
+                images=valid_payload.get("images", []),
+                src_root=val_mask_src_root,
+                dst_root=val_mask_dst_root,
+            )
+            copied, skipped = _copy_masks(items=val_items, workers=copy_workers)
+            print(
+                f"  valid_no300 masks: copied={copied}, skipped={skipped}, missing={len(val_missing)}"
+            )
+
+            print("\nCopying filtered test masks (repair)...")
+            test_items, test_missing = _build_mask_items_for_split(
+                images=test_payload.get("images", []),
+                src_root=test_mask_src_root,
+                dst_root=test_mask_dst_root,
+            )
+            copied, skipped = _copy_masks(items=test_items, workers=copy_workers)
+            print(
+                f"  test_no300 masks: copied={copied}, skipped={skipped}, missing={len(test_missing)}"
+            )
+
+            print("\nCopying train_plus_valgt300 masks (repair)...")
+            train_items, train_missing = _build_repair_train_plus_mask_items(
+                images=train_payload.get("images", []),
+                train_src_root=train_mask_src_root,
+                val_src_root=val_mask_src_root,
+                dst_root=train_plus_mask_dst_root,
+            )
+            copied, skipped = _copy_masks(items=train_items, workers=copy_workers)
+            print(
+                f"  train_plus_valgt300 masks: copied={copied}, skipped={skipped}, missing={len(train_missing)}"
+            )
 
         print("\nRepair completed.")
         return
@@ -709,6 +859,50 @@ def main(cfg: DictConfig) -> None:
         copied, skipped = _copy_images(items=train_items, workers=copy_workers)
         print(f"  train_plus_valgt300: copied={copied}, skipped={skipped}")
 
+    if copy_masks:
+        masks_root = data_root / masks_dir_name
+        val_mask_src_root = masks_root / val_split_name
+        test_mask_src_root = masks_root / test_split_name
+        train_mask_src_root = masks_root / train_split_name
+        val_mask_dst_root = masks_root / VAL_OUTPUT_NAME
+        test_mask_dst_root = masks_root / TEST_OUTPUT_NAME
+        train_plus_mask_dst_root = masks_root / TRAIN_PROMOTED_OUTPUT_NAME
+
+        print("\nCopying filtered validation masks...")
+        val_items, val_missing = _build_mask_items_for_split(
+            images=val_stats["filtered_payload"].get("images", []),
+            src_root=val_mask_src_root,
+            dst_root=val_mask_dst_root,
+        )
+        copied, skipped = _copy_masks(items=val_items, workers=copy_workers)
+        print(
+            f"  valid_no300 masks: copied={copied}, skipped={skipped}, missing={len(val_missing)}"
+        )
+
+        print("\nCopying filtered test masks...")
+        test_items, test_missing = _build_mask_items_for_split(
+            images=test_stats["filtered_payload"].get("images", []),
+            src_root=test_mask_src_root,
+            dst_root=test_mask_dst_root,
+        )
+        copied, skipped = _copy_masks(items=test_items, workers=copy_workers)
+        print(
+            f"  test_no300 masks: copied={copied}, skipped={skipped}, missing={len(test_missing)}"
+        )
+
+        print("\nCopying train_plus_valgt300 masks...")
+        train_items, train_missing = _build_train_plus_mask_items(
+            images=train_plus["payload"].get("images", []),
+            promoted_new_image_ids=train_plus["promoted_new_image_ids"],
+            train_src_root=train_mask_src_root,
+            val_src_root=val_mask_src_root,
+            dst_root=train_plus_mask_dst_root,
+        )
+        copied, skipped = _copy_masks(items=train_items, workers=copy_workers)
+        print(
+            f"  train_plus_valgt300 masks: copied={copied}, skipped={skipped}, missing={len(train_missing)}"
+        )
+
     validation_results = validate_outputs(
         val_path=valid_no300_path,
         test_path=test_no300_path,
@@ -719,6 +913,23 @@ def main(cfg: DictConfig) -> None:
         train_split_name=train_split_name,
         copy_images=copy_images,
     )
+    validation_results["valid_no300_missing_masks"] = []
+    validation_results["test_no300_missing_masks"] = []
+    validation_results["train_plus_missing_masks"] = []
+    if copy_masks:
+        masks_root = data_root / masks_dir_name
+        validation_results["valid_no300_missing_masks"] = _validate_mask_outputs(
+            images=val_stats["filtered_payload"].get("images", []),
+            masks_root=masks_root / VAL_OUTPUT_NAME,
+        )
+        validation_results["test_no300_missing_masks"] = _validate_mask_outputs(
+            images=test_stats["filtered_payload"].get("images", []),
+            masks_root=masks_root / TEST_OUTPUT_NAME,
+        )
+        validation_results["train_plus_missing_masks"] = _validate_mask_outputs(
+            images=train_plus["payload"].get("images", []),
+            masks_root=masks_root / TRAIN_PROMOTED_OUTPUT_NAME,
+        )
 
     if not validation_results["val_filter_rule_satisfied"]:
         raise RuntimeError(
@@ -747,6 +958,21 @@ def main(cfg: DictConfig) -> None:
             "Found base train images missing the expected path prefix: "
             f"{validation_results['base_train_image_path_violations'][:10]}"
         )
+    if validation_results["valid_no300_missing_masks"]:
+        raise RuntimeError(
+            "valid_no300 is missing expected mask files: "
+            f"{validation_results['valid_no300_missing_masks'][:10]}"
+        )
+    if validation_results["test_no300_missing_masks"]:
+        raise RuntimeError(
+            "test_no300 is missing expected mask files: "
+            f"{validation_results['test_no300_missing_masks'][:10]}"
+        )
+    if validation_results["train_plus_missing_masks"]:
+        raise RuntimeError(
+            "train_plus_valgt300 is missing expected mask files: "
+            f"{validation_results['train_plus_missing_masks'][:10]}"
+        )
 
     manifest_path = data_root / "no300_variants_manifest.json"
     manifest = {
@@ -764,7 +990,9 @@ def main(cfg: DictConfig) -> None:
             "train_promoted": TRAIN_PROMOTED_OUTPUT_NAME,
         },
         "copy_images": copy_images,
+        "copy_masks": copy_masks,
         "images_dir": images_dir_name,
+        "masks_dir": masks_dir_name,
         "copy_workers": copy_workers,
         "source_files": {
             "train": _file_signature(train_src_path),
