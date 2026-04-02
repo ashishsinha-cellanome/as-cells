@@ -676,6 +676,8 @@ class Mask2FormerLightningModule(pl.LightningModule):
         label_prefix: str = "",
         threshold_override: float | None = None,
         outline_width: int = 3,
+        draw_boxes: bool = True,
+        draw_contours: bool = True,
     ) -> Image.Image:
         """Draw bounding boxes and optional mask contour outlines on a PIL image.
 
@@ -690,6 +692,8 @@ class Mask2FormerLightningModule(pl.LightningModule):
             label_prefix: Prefix for label text.
             threshold_override: Override config draw_threshold.
             outline_width: Line width for contour outlines.
+            draw_boxes: Whether to draw bounding box rectangles.
+            draw_contours: Whether to draw mask contour outlines.
 
         Returns:
             The modified PIL Image.
@@ -724,14 +728,20 @@ class Mask2FormerLightningModule(pl.LightningModule):
                 color = self.PALETTE[label_id % len(self.PALETTE)]
 
             # Draw mask contour outlines (thick strokes)
-            if contours and i < len(contours) and contours[i] is not None:
+            if (
+                draw_contours
+                and contours
+                and i < len(contours)
+                and contours[i] is not None
+            ):
                 for cnt in contours[i]:
                     pts = [(int(p[0][0]), int(p[0][1])) for p in cnt]
                     if len(pts) >= 2:
                         draw.line(pts + [pts[0]], fill=color, width=outline_width)
 
             # Draw bounding box
-            draw.rectangle([x1, y1, x2, y2], outline=color, width=2)
+            if draw_boxes:
+                draw.rectangle([x1, y1, x2, y2], outline=color, width=2)
 
             # Draw label text
             class_name = (
@@ -826,11 +836,12 @@ class Mask2FormerLightningModule(pl.LightningModule):
                 continue
 
             try:
-                image = Image.open(image_path).convert("RGB")
+                image_bbox = Image.open(image_path).convert("RGB")
+                image_seg = Image.open(image_path).convert("RGB")
             except Exception:
                 continue
 
-            orig_h, orig_w = image.height, image.width
+            orig_h, orig_w = image_bbox.height, image_bbox.width
 
             # --- GT outlines from segm_coco_gt (preferred) ---
             gt_boxes: list[list[float]] = []
@@ -882,8 +893,22 @@ class Mask2FormerLightningModule(pl.LightningModule):
                     pass
 
             if gt_boxes:
-                image = self.draw_outlines_and_boxes(
-                    image,
+                # Draw GT Bounding Boxes
+                image_bbox = self.draw_outlines_and_boxes(
+                    image_bbox,
+                    gt_boxes,
+                    gt_labels,
+                    scores=None,
+                    contours=None,
+                    id2label=label_map,
+                    color_override=(0, 255, 0),
+                    outline_width=3,
+                    draw_boxes=True,
+                    draw_contours=False,
+                )
+                # Draw GT Segmentation Contours
+                image_seg = self.draw_outlines_and_boxes(
+                    image_seg,
                     gt_boxes,
                     gt_labels,
                     scores=None,
@@ -891,6 +916,8 @@ class Mask2FormerLightningModule(pl.LightningModule):
                     id2label=label_map,
                     color_override=(0, 255, 0),
                     outline_width=3,
+                    draw_boxes=False,
+                    draw_contours=True,
                 )
 
             # --- Prediction outlines ---
@@ -924,8 +951,22 @@ class Mask2FormerLightningModule(pl.LightningModule):
                 pred_class_names.append(class_name)
 
             if pred_boxes:
-                image = self.draw_outlines_and_boxes(
-                    image,
+                # Draw Pred Bounding Boxes
+                image_bbox = self.draw_outlines_and_boxes(
+                    image_bbox,
+                    pred_boxes,
+                    pred_labels,
+                    scores=pred_scores,
+                    contours=None,
+                    id2label=label_map,
+                    color_override=(255, 0, 0),
+                    outline_width=3,
+                    draw_boxes=True,
+                    draw_contours=False,
+                )
+                # Draw Pred Segmentation Contours
+                image_seg = self.draw_outlines_and_boxes(
+                    image_seg,
                     pred_boxes,
                     pred_labels,
                     scores=pred_scores,
@@ -933,6 +974,8 @@ class Mask2FormerLightningModule(pl.LightningModule):
                     id2label=label_map,
                     color_override=(255, 0, 0),
                     outline_width=3,
+                    draw_boxes=False,
+                    draw_contours=True,
                 )
 
             # --- Count overlay (top-right): pred / gt per class ---
@@ -942,34 +985,38 @@ class Mask2FormerLightningModule(pl.LightningModule):
             )
             pred_counts = Counter(pred_class_names)
 
-            draw = ImageDraw.Draw(image)
-            text_y = 10
-            line_height = 24
-            all_classes = set(gt_counts.keys()) | set(pred_counts.keys())
-            for cls_name in sorted(all_classes):
-                parts = [
-                    (f"{cls_name}: ", "white"),
-                    (f"{pred_counts[cls_name]}", "red"),
-                    ("/", "white"),
-                    (f"{gt_counts[cls_name]}", "green"),
-                ]
-                total_width = 0
-                for text, _ in parts:
-                    bbox = draw.textbbox((0, 0), text, font=self.font)
-                    total_width += bbox[2] - bbox[0]
+            def _draw_counts(img: Image.Image) -> None:
+                draw = ImageDraw.Draw(img)
+                text_y = 10
+                line_height = 24
+                all_classes = set(gt_counts.keys()) | set(pred_counts.keys())
+                for cls_name in sorted(all_classes):
+                    parts = [
+                        (f"{cls_name}: ", "white"),
+                        (f"{pred_counts[cls_name]}", "red"),
+                        ("/", "white"),
+                        (f"{gt_counts[cls_name]}", "green"),
+                    ]
+                    total_width = 0
+                    for text, _ in parts:
+                        bbox = draw.textbbox((0, 0), text, font=self.font)
+                        total_width += bbox[2] - bbox[0]
 
-                current_x = image.width - total_width - 10
-                for text, color in parts:
-                    draw.text(
-                        (current_x + 1, text_y + 1),
-                        text,
-                        fill="black",
-                        font=self.font,
-                    )
-                    draw.text((current_x, text_y), text, fill=color, font=self.font)
-                    bbox = draw.textbbox((0, 0), text, font=self.font)
-                    current_x += bbox[2] - bbox[0]
-                text_y += line_height
+                    current_x = img.width - total_width - 10
+                    for text, color in parts:
+                        draw.text(
+                            (current_x + 1, text_y + 1),
+                            text,
+                            fill="black",
+                            font=self.font,
+                        )
+                        draw.text((current_x, text_y), text, fill=color, font=self.font)
+                        bbox = draw.textbbox((0, 0), text, font=self.font)
+                        current_x += bbox[2] - bbox[0]
+                    text_y += line_height
+
+            _draw_counts(image_bbox)
+            _draw_counts(image_seg)
 
             # --- Save with class-name-prefixed filename ---
             detected_classes = sorted(list(set(pred_class_names)))
@@ -985,8 +1032,13 @@ class Mask2FormerLightningModule(pl.LightningModule):
             new_filename = f"{prefix}{original_filename}"
             new_filename = new_filename.replace("image_image_", "image_")
 
-            save_path = os.path.join(save_dir, new_filename)
-            image.save(save_path)
+            # Save separate bbox and seg images
+            bbox_save_path = os.path.join(save_dir, f"bbox_{new_filename}")
+            seg_save_path = os.path.join(save_dir, f"seg_{new_filename}")
+
+            image_bbox.save(bbox_save_path)
+            image_seg.save(seg_save_path)
+
             saved_count += 1
 
         self.print(
