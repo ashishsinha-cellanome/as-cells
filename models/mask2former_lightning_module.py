@@ -478,8 +478,9 @@ class Mask2FormerLightningModule(pl.LightningModule):
                 sync_dist=True,
             )
 
+        gathered_copy = list(gathered)
         outputs_list.clear()
-        return gathered
+        return gathered_copy
 
     def on_validation_epoch_end(self):
         gathered_val = self._evaluate_and_log_epoch(
