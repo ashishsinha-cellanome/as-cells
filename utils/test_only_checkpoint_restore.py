@@ -131,6 +131,12 @@ def _merge_test_only_config_from_ckpt(
             merged_cfg, "data.eval_batch_size", current_cfg.data.get("eval_batch_size")
         )
 
+
+    if hasattr(current_cfg, "checkpointing") and current_cfg.checkpointing is not None:
+        merged_cfg.checkpointing = OmegaConf.create(
+            OmegaConf.to_container(current_cfg.checkpointing, resolve=False)
+        )
+
     if hasattr(current_cfg, "logging") and current_cfg.logging is not None:
         merged_cfg.logging = OmegaConf.create(
             OmegaConf.to_container(current_cfg.logging, resolve=False)
