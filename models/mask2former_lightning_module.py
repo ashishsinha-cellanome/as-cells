@@ -1,11 +1,13 @@
 import os
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
+import cv2
 import numpy as np
 import pytorch_lightning as pl
 import torch
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 from pycocotools import mask as mask_utils
 
 from utils.coco_eval_utils import (
@@ -62,6 +64,34 @@ class Mask2FormerLightningModule(pl.LightningModule):
             self.validation_step_outputs_ema: list[dict[str, Any]] = []
             self.test_step_outputs_ema: list[dict[str, Any]] = []
 
+        # Reverse mapping for GT category ID lookup
+        self.coco_to_model = {int(v): int(k) for k, v in self.model_to_coco.items()}
+
+        # Visualization setup
+        self.val_viz_counter = 0
+        self.test_viz_counter = 0
+        self.PALETTE = [
+            (220, 20, 60),
+            (119, 11, 32),
+            (0, 0, 142),
+            (0, 0, 230),
+            (106, 0, 228),
+            (0, 60, 100),
+            (0, 80, 100),
+            (0, 0, 70),
+            (0, 0, 192),
+            (250, 170, 30),
+            (100, 170, 30),
+            (220, 220, 0),
+            (175, 116, 175),
+            (250, 0, 30),
+            (165, 42, 42),
+        ]
+        try:
+            self.font = ImageFont.truetype("arial.ttf", 17)
+        except IOError:
+            self.font = ImageFont.load_default()
+
         self.save_hyperparameters(
             ignore=[
                 "model",
@@ -91,6 +121,40 @@ class Mask2FormerLightningModule(pl.LightningModule):
 
     def _move_label_list(self, values: list[torch.Tensor]) -> list[torch.Tensor]:
         return [value.to(self.device) for value in values]
+
+    def _should_visualize(self, split: str) -> bool:
+        """Check whether visualization should run this epoch for the given split."""
+        if split == "val":
+            every_n = max(1, int(self.config.checkpointing.visualize_every_n_epochs))
+            return (self.current_epoch + 1) % every_n == 0
+        return True
+
+    def _get_visualization_limit(self):
+        """Return the maximum number of samples to visualize, or None for unlimited."""
+        raw_value = self.config.checkpointing.visualize_samples
+        if raw_value == -1:
+            return None
+        try:
+            numeric = float(raw_value)
+        except (TypeError, ValueError):
+            return None
+        if numeric < 0 or numeric == float("inf"):
+            return None
+        return int(numeric)
+
+    @staticmethod
+    def _decode_rle_mask(rle, size):
+        """Decode an RLE-encoded mask back to a binary numpy array (H, W)."""
+        rle_copy = {"size": size, "counts": rle["counts"].encode("utf-8")}
+        return mask_utils.decode(rle_copy).astype(np.uint8)
+
+    @staticmethod
+    def _mask_to_contours(mask_np):
+        """Extract external contours from a binary mask for outline drawing."""
+        contours, _ = cv2.findContours(
+            mask_np, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+        )
+        return contours
 
     @staticmethod
     def _default_eval_metrics(metric_prefix: str = "") -> dict[str, float]:
@@ -145,7 +209,10 @@ class Mask2FormerLightningModule(pl.LightningModule):
 
                 encoded = _encode_binary_mask(binary_mask)
                 bbox = mask_utils.toBbox(
-                    {"size": encoded["size"], "counts": encoded["counts"].encode("utf-8")}
+                    {
+                        "size": encoded["size"],
+                        "counts": encoded["counts"].encode("utf-8"),
+                    }
                 ).tolist()
                 category_id = int(
                     self.model_to_coco.get(
@@ -370,7 +437,8 @@ class Mask2FormerLightningModule(pl.LightningModule):
                     image_ids=sorted(set(image_ids)),
                     max_detections=int(self.config.model.max_detections),
                     label_map=self.detection_label_map,
-                    prefix=prefix_label or f"{prefix.capitalize()} detection performance",
+                    prefix=prefix_label
+                    or f"{prefix.capitalize()} detection performance",
                     iou_type="bbox",
                 )
             if segm_predictions:
@@ -419,7 +487,20 @@ class Mask2FormerLightningModule(pl.LightningModule):
             segm_gt=self.val_segm_coco_gt,
             prefix="val",
         )
-        if hasattr(self, "validation_step_outputs_ema") and self.validation_step_outputs_ema:
+
+        # --- Visualization ---
+        if self.trainer.is_global_zero:
+            gathered = gather_outputs_across_processes(self.validation_step_outputs)
+            viz_map: dict[int, list[dict[str, Any]]] = {}
+            for batch_out in gathered:
+                for pred in batch_out.get("segm_predictions", []):
+                    viz_map.setdefault(pred["image_id"], []).append(pred)
+            self._visualize_aggregated_predictions(viz_map, split="val")
+
+        if (
+            hasattr(self, "validation_step_outputs_ema")
+            and self.validation_step_outputs_ema
+        ):
             self._evaluate_and_log_epoch(
                 outputs_list=self.validation_step_outputs_ema,
                 bbox_gt=self.val_coco_gt,
@@ -429,6 +510,19 @@ class Mask2FormerLightningModule(pl.LightningModule):
                 prefix_label="Val EMA detection performance",
             )
 
+            # --- EMA Visualization ---
+            if self.trainer.is_global_zero:
+                gathered = gather_outputs_across_processes(
+                    self.validation_step_outputs_ema
+                )
+                viz_map_ema: dict[int, list[dict[str, Any]]] = {}
+                for batch_out in gathered:
+                    for pred in batch_out.get("segm_predictions", []):
+                        viz_map_ema.setdefault(pred["image_id"], []).append(pred)
+                self._visualize_aggregated_predictions(
+                    viz_map_ema, split="val", suffix="_ema"
+                )
+
     def on_test_epoch_end(self):
         self._evaluate_and_log_epoch(
             outputs_list=self.test_step_outputs,
@@ -436,6 +530,16 @@ class Mask2FormerLightningModule(pl.LightningModule):
             segm_gt=self.test_segm_coco_gt,
             prefix="test",
         )
+
+        # --- Visualization ---
+        if self.trainer.is_global_zero:
+            gathered = gather_outputs_across_processes(self.test_step_outputs)
+            viz_map: dict[int, list[dict[str, Any]]] = {}
+            for batch_out in gathered:
+                for pred in batch_out.get("segm_predictions", []):
+                    viz_map.setdefault(pred["image_id"], []).append(pred)
+            self._visualize_aggregated_predictions(viz_map, split="test")
+
         if hasattr(self, "test_step_outputs_ema") and self.test_step_outputs_ema:
             self._evaluate_and_log_epoch(
                 outputs_list=self.test_step_outputs_ema,
@@ -445,6 +549,17 @@ class Mask2FormerLightningModule(pl.LightningModule):
                 suffix="_ema",
                 prefix_label="Test EMA detection performance",
             )
+
+            # --- EMA Visualization ---
+            if self.trainer.is_global_zero:
+                gathered = gather_outputs_across_processes(self.test_step_outputs_ema)
+                viz_map_ema: dict[int, list[dict[str, Any]]] = {}
+                for batch_out in gathered:
+                    for pred in batch_out.get("segm_predictions", []):
+                        viz_map_ema.setdefault(pred["image_id"], []).append(pred)
+                self._visualize_aggregated_predictions(
+                    viz_map_ema, split="test", suffix="_ema"
+                )
 
     def on_test_start(self):
         self.model = self.model.to(self.device)
@@ -525,7 +640,9 @@ class Mask2FormerLightningModule(pl.LightningModule):
 
         return {"optimizer": optimizer, "lr_scheduler": scheduler}
 
-    def _resolve_image_path(self, image_root: str | None, file_name: str) -> Path | None:
+    def _resolve_image_path(
+        self, image_root: str | None, file_name: str
+    ) -> Path | None:
         if not image_root:
             return None
         candidate = Path(image_root) / file_name
@@ -538,3 +655,332 @@ class Mask2FormerLightningModule(pl.LightningModule):
 
     def _load_image(self, image_path: Path) -> Image.Image:
         return Image.open(image_path).convert("RGB")
+
+    def draw_outlines_and_boxes(
+        self,
+        image: Image.Image,
+        boxes: list,
+        labels: list,
+        scores: list | None = None,
+        contours: list | None = None,
+        id2label: dict | None = None,
+        color_override: tuple[int, int, int] | None = None,
+        label_prefix: str = "",
+        threshold_override: float | None = None,
+        outline_width: int = 3,
+    ) -> Image.Image:
+        """Draw bounding boxes and optional mask contour outlines on a PIL image.
+
+        Args:
+            image: PIL Image to draw on.
+            boxes: List of [x1, y1, x2, y2] boxes.
+            labels: List of class IDs (int or tensor).
+            scores: Optional list of confidence scores.
+            contours: Optional list of OpenCV contours (from cv2.findContours).
+            id2label: Mapping from class ID to name.
+            color_override: If set, use this color for all boxes/outlines.
+            label_prefix: Prefix for label text.
+            threshold_override: Override config draw_threshold.
+            outline_width: Line width for contour outlines.
+
+        Returns:
+            The modified PIL Image.
+        """
+        draw = ImageDraw.Draw(image)
+        threshold = (
+            threshold_override
+            if threshold_override is not None
+            else float(self.config.model.draw_threshold)
+        )
+
+        if id2label is None:
+            id2label = self.config.model.label_map
+
+        for i in range(len(boxes)):
+            box = boxes[i]
+            label = labels[i]
+            score = scores[i] if scores is not None else 1.0
+
+            if score < threshold:
+                continue
+
+            if torch.is_tensor(box):
+                box = box.tolist()
+            x1, y1, x2, y2 = [int(v) for v in box]
+
+            label_id = label.item() if torch.is_tensor(label) else int(label)
+
+            if color_override:
+                color = color_override
+            else:
+                color = self.PALETTE[label_id % len(self.PALETTE)]
+
+            # Draw mask contour outlines (thick strokes)
+            if contours and i < len(contours) and contours[i] is not None:
+                for cnt in contours[i]:
+                    pts = [(int(p[0][0]), int(p[0][1])) for p in cnt]
+                    if len(pts) >= 2:
+                        draw.line(pts + [pts[0]], fill=color, width=outline_width)
+
+            # Draw bounding box
+            draw.rectangle([x1, y1, x2, y2], outline=color, width=2)
+
+            # Draw label text
+            class_name = (
+                id2label.get(label_id)
+                or id2label.get(str(label_id))
+                or f"class_{label_id}"
+            )
+            label_text = f"{label_prefix}{class_name}"
+            if scores is not None:
+                label_text += f": {score:.2f}"
+
+            text_box = draw.textbbox((x1, y1), label_text, font=self.font)
+            draw.rectangle(text_box, fill=color)
+            draw.text((x1, y1), label_text, fill="white", font=self.font)
+
+        return image
+
+    def _visualize_aggregated_predictions(
+        self, predictions_map, split: str = "val", suffix: str = ""
+    ) -> None:
+        """Save visualization images for aggregated epoch predictions.
+
+        Draws GT and predicted segmentation outlines (thick contours) along
+        with bounding boxes on the original images.  GT outlines come from
+        ``val_segm_coco_gt`` / ``test_segm_coco_gt`` when available, falling
+        back to bbox-only from ``val_coco_gt`` / ``test_coco_gt``.
+
+        Args:
+            predictions_map: Dict mapping image_id → list of prediction dicts
+                with keys: image_id, category_id, bbox, score, segmentation (RLE).
+            split: 'val' or 'test'.
+            suffix: Appended to the output subdirectory (e.g. '_ema').
+        """
+        if not self.trainer.is_global_zero:
+            return
+        if not predictions_map:
+            return
+        if not self._should_visualize(split):
+            return
+
+        max_samples = self._get_visualization_limit()
+        coco_gt = self.test_coco_gt if split == "test" else self.val_coco_gt
+        segm_coco_gt = (
+            self.test_segm_coco_gt if split == "test" else self.val_segm_coco_gt
+        )
+        image_root = self.test_image_root if split == "test" else self.val_image_root
+        label_map = self.config.model.label_map
+        viz_threshold = float(self.config.model.draw_threshold)
+
+        if split == "val":
+            save_dir = os.path.join(
+                self.config.checkpointing.save_dir,
+                self.config.checkpointing.visualization_dir,
+                f"epoch_{(self.current_epoch + 1):03d}",
+                f"val{suffix}",
+            )
+        else:
+            save_dir = os.path.join(
+                self.config.checkpointing.save_dir,
+                self.config.checkpointing.visualization_dir,
+                "test",
+                f"test{suffix}",
+            )
+
+        os.makedirs(save_dir, exist_ok=True)
+        saved_count = 0
+        self.print(
+            f"[VIZ] Saving {split.upper()}{suffix} visualizations to: {save_dir} "
+            f"(max_samples={'all' if max_samples is None else max_samples})"
+        )
+        if max_samples is None:
+            self.print(
+                "[VIZ] WARNING: Unlimited visualization enabled. "
+                "This can be very slow on large datasets."
+            )
+
+        for image_id in sorted(predictions_map.keys()):
+            if max_samples is not None and saved_count >= max_samples:
+                break
+
+            pred_list = predictions_map[image_id]
+            if not pred_list:
+                continue
+
+            # Resolve image path
+            img_info: dict[str, Any] = {"file_name": f"image_{image_id}.png"}
+            if coco_gt and int(image_id) in getattr(coco_gt, "imgs", {}):
+                img_info = coco_gt.imgs[int(image_id)]
+
+            image_path = self._resolve_image_path(image_root, img_info.get("file_name"))
+            if image_path is None:
+                continue
+
+            try:
+                image = Image.open(image_path).convert("RGB")
+            except Exception:
+                continue
+
+            orig_h, orig_w = image.height, image.width
+
+            # --- GT outlines from segm_coco_gt (preferred) ---
+            gt_boxes: list[list[float]] = []
+            gt_labels: list[int] = []
+            gt_contours: list | None = None
+            if segm_coco_gt:
+                try:
+                    gt_anns = segm_coco_gt.loadAnns(
+                        segm_coco_gt.getAnnIds(imgIds=[int(image_id)])
+                    )
+                    gt_boxes = []
+                    gt_labels = []
+                    gt_contours = []
+                    for ann in gt_anns:
+                        x, y, w, h = ann["bbox"]
+                        gt_boxes.append([x, y, x + w, y + h])
+                        gt_labels.append(
+                            self.coco_to_model.get(
+                                int(ann["category_id"]), int(ann["category_id"])
+                            )
+                        )
+                        rle = ann.get("segmentation")
+                        if rle and isinstance(rle, dict) and "counts" in rle:
+                            mask_np = self._decode_rle_mask(rle, size=(orig_h, orig_w))
+                            gt_contours.append(self._mask_to_contours(mask_np))
+                        else:
+                            gt_contours.append(None)
+                except Exception:
+                    gt_boxes = []
+                    gt_labels = []
+                    gt_contours = None
+
+            # Fallback: GT boxes only from coco_gt
+            if not gt_boxes and coco_gt:
+                try:
+                    gt_anns = coco_gt.loadAnns(
+                        coco_gt.getAnnIds(imgIds=[int(image_id)])
+                    )
+                    for ann in gt_anns:
+                        x, y, w, h = ann["bbox"]
+                        gt_boxes.append([x, y, x + w, y + h])
+                        gt_labels.append(
+                            self.coco_to_model.get(
+                                int(ann["category_id"]), int(ann["category_id"])
+                            )
+                        )
+                    gt_contours = [None] * len(gt_boxes)
+                except Exception:
+                    pass
+
+            if gt_boxes:
+                image = self.draw_outlines_and_boxes(
+                    image,
+                    gt_boxes,
+                    gt_labels,
+                    scores=None,
+                    contours=gt_contours,
+                    id2label=label_map,
+                    color_override=(0, 255, 0),
+                    outline_width=3,
+                )
+
+            # --- Prediction outlines ---
+            pred_boxes: list[list[float]] = []
+            pred_labels: list[int] = []
+            pred_scores: list[float] = []
+            pred_contours: list = []
+            pred_class_names: list[str] = []
+
+            for pred in pred_list:
+                score = float(pred["score"])
+                if score < viz_threshold:
+                    continue
+                bx = pred["bbox"]  # [x, y, w, h]
+                pred_boxes.append([bx[0], bx[1], bx[0] + bx[2], bx[1] + bx[3]])
+                pred_labels.append(pred["category_id"])
+                pred_scores.append(score)
+
+                rle = pred.get("segmentation")
+                if rle and isinstance(rle, dict) and "counts" in rle:
+                    mask_np = self._decode_rle_mask(rle, size=(orig_h, orig_w))
+                    pred_contours.append(self._mask_to_contours(mask_np))
+                else:
+                    pred_contours.append(None)
+
+                class_name = (
+                    label_map.get(int(pred["category_id"]))
+                    or label_map.get(str(int(pred["category_id"])))
+                    or str(pred["category_id"])
+                )
+                pred_class_names.append(class_name)
+
+            if pred_boxes:
+                image = self.draw_outlines_and_boxes(
+                    image,
+                    pred_boxes,
+                    pred_labels,
+                    scores=pred_scores,
+                    contours=pred_contours,
+                    id2label=label_map,
+                    color_override=(255, 0, 0),
+                    outline_width=3,
+                )
+
+            # --- Count overlay (top-right): pred / gt per class ---
+            gt_counts = Counter(
+                label_map.get(int(lbl)) or label_map.get(str(int(lbl))) or str(lbl)
+                for lbl in gt_labels
+            )
+            pred_counts = Counter(pred_class_names)
+
+            draw = ImageDraw.Draw(image)
+            text_y = 10
+            line_height = 24
+            all_classes = set(gt_counts.keys()) | set(pred_counts.keys())
+            for cls_name in sorted(all_classes):
+                parts = [
+                    (f"{cls_name}: ", "white"),
+                    (f"{pred_counts[cls_name]}", "red"),
+                    ("/", "white"),
+                    (f"{gt_counts[cls_name]}", "green"),
+                ]
+                total_width = 0
+                for text, _ in parts:
+                    bbox = draw.textbbox((0, 0), text, font=self.font)
+                    total_width += bbox[2] - bbox[0]
+
+                current_x = image.width - total_width - 10
+                for text, color in parts:
+                    draw.text(
+                        (current_x + 1, text_y + 1),
+                        text,
+                        fill="black",
+                        font=self.font,
+                    )
+                    draw.text((current_x, text_y), text, fill=color, font=self.font)
+                    bbox = draw.textbbox((0, 0), text, font=self.font)
+                    current_x += bbox[2] - bbox[0]
+                text_y += line_height
+
+            # --- Save with class-name-prefixed filename ---
+            detected_classes = sorted(list(set(pred_class_names)))
+            if detected_classes:
+                class_prefix = "_".join(detected_classes)
+                prefix = f"image_{class_prefix}_"
+            else:
+                prefix = "image_no_detections_"
+
+            original_filename = os.path.basename(
+                img_info.get("file_name", f"image_{image_id}.png")
+            )
+            new_filename = f"{prefix}{original_filename}"
+            new_filename = new_filename.replace("image_image_", "image_")
+
+            save_path = os.path.join(save_dir, new_filename)
+            image.save(save_path)
+            saved_count += 1
+
+        self.print(
+            f"[VIZ] {split.upper()}{suffix} saved {saved_count} visualizations to: {save_dir}"
+        )
