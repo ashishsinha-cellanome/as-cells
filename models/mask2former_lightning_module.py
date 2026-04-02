@@ -750,7 +750,8 @@ class Mask2FormerLightningModule(pl.LightningModule):
                 or f"class_{label_id}"
             )
             label_text = f"{label_prefix}{class_name}"
-            if scores is not None:
+            # Omit score when visualizing segmentation masks only
+            if scores is not None and not (draw_contours and not draw_boxes):
                 label_text += f": {score:.2f}"
 
             text_box = draw.textbbox((x1, y1), label_text, font=self.font)
