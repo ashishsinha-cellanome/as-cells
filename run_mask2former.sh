@@ -54,7 +54,7 @@ echo "========================================================"
 srun uv run train_mask2former.py \
   model=mask2former \
   trainer.max_epochs=50 \
-  data.batch_size=32 \
+  data.batch_size=16 \
   model.mask2former.num_queries=300 \
   ${MY_CONFIG}
 
