@@ -1,22 +1,21 @@
 # configs/checkpointing/default.yaml
 
 # checkpointing:
-  _folder_name: "${model.name}_${now:%Y-%m-%d}"
-  save_dir: "checkpoints/" 
-  save_top_k: 1
-  monitor: "val_map"
-  mode: "max"
-  save_last: true
-  every_n_epochs: 1
-  
+_folder_name: "${model.name}_${now:%Y-%m-%d}"
+save_dir: "checkpoints/"
+save_top_k: 1
+monitor: "val_map"
+mode: "max"
+save_last: true
+every_n_epochs: 1
 
-  # Paths for initial model creation
-  # Uses the dynamic folder name defined above
-  dinov2_backbone_checkpoint: "${hydra:runtime.cwd}/checkpoints/backbones/dinov2"
-  rtdetr_initial_checkpoint: "${hydra:runtime.cwd}/checkpoints/${checkpointing._folder_name}"
+# Paths for initial model creation
+# Uses the dynamic folder name defined above
+dinov2_backbone_checkpoint: "${hydra:runtime.cwd}/checkpoints/backbones/dinov2"
+rtdetr_initial_checkpoint: "${hydra:runtime.cwd}/checkpoints/${checkpointing._folder_name}"
 
-  # Visualization
-  val_image_dir: "${hydra:runtime.cwd}"
-  visualization_dir: "predictions"
-  visualize_every_n_epochs: 5
-  visualize_samples: 10 # set -1 to save all samples (can be very slow on large val/test sets)
+# Visualization
+val_image_dir: "${hydra:runtime.cwd}"
+visualization_dir: "predictions"
+visualize_every_n_epochs: 5
+visualize_samples: -1 # set -1 to save all samples (can be very slow on large val/test sets)
