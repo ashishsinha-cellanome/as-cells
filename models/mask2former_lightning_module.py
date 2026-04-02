@@ -416,7 +416,7 @@ class Mask2FormerLightningModule(pl.LightningModule):
         prefix: str,
         suffix: str = "",
         prefix_label: str | None = None,
-    ) -> None:
+    ) -> list[dict[str, Any]]:
         gathered = gather_outputs_across_processes(outputs_list)
         bbox_predictions: list[dict[str, Any]] = []
         segm_predictions: list[dict[str, Any]] = []
@@ -479,40 +479,30 @@ class Mask2FormerLightningModule(pl.LightningModule):
             )
 
         outputs_list.clear()
+        return gathered
 
     def on_validation_epoch_end(self):
-        # --- Gather predictions for visualization BEFORE _evaluate_and_log_epoch clears them ---
-        viz_map: dict[int, list[dict[str, Any]]] = {}
-        if self.trainer.is_global_zero:
-            for batch_out in self.validation_step_outputs:
-                for pred in batch_out.get("segm_predictions", []):
-                    viz_map.setdefault(pred["image_id"], []).append(pred)
-
-        viz_map_ema: dict[int, list[dict[str, Any]]] = {}
-        if (
-            self.trainer.is_global_zero
-            and hasattr(self, "validation_step_outputs_ema")
-            and self.validation_step_outputs_ema
-        ):
-            for batch_out in self.validation_step_outputs_ema:
-                for pred in batch_out.get("segm_predictions", []):
-                    viz_map_ema.setdefault(pred["image_id"], []).append(pred)
-
-        self._evaluate_and_log_epoch(
+        gathered_val = self._evaluate_and_log_epoch(
             outputs_list=self.validation_step_outputs,
             bbox_gt=self.val_coco_gt,
             segm_gt=self.val_segm_coco_gt,
             prefix="val",
         )
 
-        # --- Visualization ---
-        self._visualize_aggregated_predictions(viz_map, split="val")
+        if self.trainer.is_global_zero:
+            viz_map: dict[int, list[dict[str, Any]]] = {}
+            for batch_out in gathered_val:
+                for img_id in batch_out.get("image_ids", []):
+                    viz_map.setdefault(int(img_id), [])
+                for pred in batch_out.get("segm_predictions", []):
+                    viz_map[int(pred["image_id"])].append(pred)
+            self._visualize_aggregated_predictions(viz_map, split="val")
 
         if (
             hasattr(self, "validation_step_outputs_ema")
             and self.validation_step_outputs_ema
         ):
-            self._evaluate_and_log_epoch(
+            gathered_ema = self._evaluate_and_log_epoch(
                 outputs_list=self.validation_step_outputs_ema,
                 bbox_gt=self.val_coco_gt,
                 segm_gt=self.val_segm_coco_gt,
@@ -521,41 +511,36 @@ class Mask2FormerLightningModule(pl.LightningModule):
                 prefix_label="Val EMA detection performance",
             )
 
-            # --- EMA Visualization ---
-            self._visualize_aggregated_predictions(
-                viz_map_ema, split="val", suffix="_ema"
-            )
+            if self.trainer.is_global_zero:
+                viz_map_ema: dict[int, list[dict[str, Any]]] = {}
+                for batch_out in gathered_ema:
+                    for img_id in batch_out.get("image_ids", []):
+                        viz_map_ema.setdefault(int(img_id), [])
+                    for pred in batch_out.get("segm_predictions", []):
+                        viz_map_ema[int(pred["image_id"])].append(pred)
+                self._visualize_aggregated_predictions(
+                    viz_map_ema, split="val", suffix="_ema"
+                )
 
     def on_test_epoch_end(self):
-        # --- Gather predictions for visualization BEFORE _evaluate_and_log_epoch clears them ---
-        viz_map: dict[int, list[dict[str, Any]]] = {}
-        if self.trainer.is_global_zero:
-            for batch_out in self.test_step_outputs:
-                for pred in batch_out.get("segm_predictions", []):
-                    viz_map.setdefault(pred["image_id"], []).append(pred)
-
-        viz_map_ema: dict[int, list[dict[str, Any]]] = {}
-        if (
-            self.trainer.is_global_zero
-            and hasattr(self, "test_step_outputs_ema")
-            and self.test_step_outputs_ema
-        ):
-            for batch_out in self.test_step_outputs_ema:
-                for pred in batch_out.get("segm_predictions", []):
-                    viz_map_ema.setdefault(pred["image_id"], []).append(pred)
-
-        self._evaluate_and_log_epoch(
+        gathered_test = self._evaluate_and_log_epoch(
             outputs_list=self.test_step_outputs,
             bbox_gt=self.test_coco_gt,
             segm_gt=self.test_segm_coco_gt,
             prefix="test",
         )
 
-        # --- Visualization ---
-        self._visualize_aggregated_predictions(viz_map, split="test")
+        if self.trainer.is_global_zero:
+            viz_map: dict[int, list[dict[str, Any]]] = {}
+            for batch_out in gathered_test:
+                for img_id in batch_out.get("image_ids", []):
+                    viz_map.setdefault(int(img_id), [])
+                for pred in batch_out.get("segm_predictions", []):
+                    viz_map[int(pred["image_id"])].append(pred)
+            self._visualize_aggregated_predictions(viz_map, split="test")
 
         if hasattr(self, "test_step_outputs_ema") and self.test_step_outputs_ema:
-            self._evaluate_and_log_epoch(
+            gathered_ema = self._evaluate_and_log_epoch(
                 outputs_list=self.test_step_outputs_ema,
                 bbox_gt=self.test_coco_gt,
                 segm_gt=self.test_segm_coco_gt,
@@ -564,10 +549,16 @@ class Mask2FormerLightningModule(pl.LightningModule):
                 prefix_label="Test EMA detection performance",
             )
 
-            # --- EMA Visualization ---
-            self._visualize_aggregated_predictions(
-                viz_map_ema, split="test", suffix="_ema"
-            )
+            if self.trainer.is_global_zero:
+                viz_map_ema: dict[int, list[dict[str, Any]]] = {}
+                for batch_out in gathered_ema:
+                    for img_id in batch_out.get("image_ids", []):
+                        viz_map_ema.setdefault(int(img_id), [])
+                    for pred in batch_out.get("segm_predictions", []):
+                        viz_map_ema[int(pred["image_id"])].append(pred)
+                self._visualize_aggregated_predictions(
+                    viz_map_ema, split="test", suffix="_ema"
+                )
 
     def on_test_start(self):
         self.model = self.model.to(self.device)
@@ -824,8 +815,6 @@ class Mask2FormerLightningModule(pl.LightningModule):
                 break
 
             pred_list = predictions_map[image_id]
-            if not pred_list:
-                continue
 
             # Resolve image path
             img_info: dict[str, Any] = {"file_name": f"image_{image_id}.png"}
