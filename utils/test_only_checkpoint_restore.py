@@ -102,7 +102,7 @@ def _warn_ignored_cli_overrides(current_cfg: DictConfig, ckpt_cfg: DictConfig) -
         flat = {}
         for key, value in cfg.items():
             full_key = f"{prefix}.{key}" if prefix else key
-            if OmegaConf.is_config(value):
+            if OmegaConf.is_dict(value):
                 flat.update(_flatten(value, full_key))
             else:
                 flat[full_key] = value
