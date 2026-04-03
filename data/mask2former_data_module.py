@@ -1,6 +1,8 @@
 import json
 import os
 import pickle
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Optional
 
@@ -11,6 +13,7 @@ from PIL import Image
 from pycocotools import mask as mask_utils
 from pycocotools.coco import COCO
 from torch.utils.data import DataLoader, Dataset
+from tqdm import tqdm
 
 
 def _resolve_image_path(image_root: Path, file_name: str) -> Path:
@@ -67,53 +70,75 @@ def _encode_binary_mask(mask: np.ndarray) -> dict[str, Any]:
     return {"size": list(encoded["size"]), "counts": encoded["counts"]}
 
 
+def _process_single_image(image: dict, mask_root: Path) -> list[dict[str, Any]]:
+    image_id = int(image["id"])
+    image_height = int(image["height"])
+    image_width = int(image["width"])
+    mask_path = mask_root / f"{Path(str(image['file_name'])).stem}.pkl"
+    if not mask_path.exists():
+        raise FileNotFoundError(
+            f"Missing sidecar mask for image_id={image_id}: {mask_path}"
+        )
+
+    with mask_path.open("rb") as fh:
+        mask_payload = pickle.load(fh)
+
+    annotations = []
+    for ann in mask_payload.get("annotations", []):
+        full_mask = _decode_sidecar_annotation_mask(ann, image_height, image_width)
+        if int(full_mask.sum()) == 0:
+            continue
+
+        encoded = _encode_binary_mask(full_mask)
+        bbox = mask_utils.toBbox(encoded).tolist()
+        area = float(mask_utils.area(encoded))
+
+        annotations.append(
+            {
+                "image_id": image_id,
+                "category_id": int(ann["category_id"]),
+                "segmentation": encoded,
+                "bbox": [float(x) for x in bbox],
+                "area": area,
+                "iscrowd": 0,
+            }
+        )
+    return annotations
+
+
 def build_segmentation_coco_gt(
     annotation_path: str | Path, mask_root: str | Path
 ) -> COCO:
     annotation_path = Path(annotation_path)
     mask_root = Path(mask_root)
+
+    t0 = time.time()
+    file_size_gb = annotation_path.stat().st_size / 1e9
+    print(f"\n[Data] Loading {annotation_path.name} ({file_size_gb:.2f} GB)...")
     payload = json.loads(annotation_path.read_text())
+    print(f"[Data] Loaded JSON in {time.time() - t0:.1f}s")
 
     images = [dict(img) for img in payload.get("images", [])]
     categories = [dict(cat) for cat in payload.get("categories", [])]
     annotations: list[dict[str, Any]] = []
-    next_ann_id = 1
 
-    for image in images:
-        image_id = int(image["id"])
-        image_height = int(image["height"])
-        image_width = int(image["width"])
-        mask_path = mask_root / f"{Path(str(image['file_name'])).stem}.pkl"
-        if not mask_path.exists():
-            raise FileNotFoundError(
-                f"Missing sidecar mask for image_id={image_id}: {mask_path}"
-            )
+    print(f"[Data] Processing masks for {len(images)} images from {mask_root.name}...")
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        futures = {
+            executor.submit(_process_single_image, img, mask_root): img
+            for img in images
+        }
+        for future in tqdm(
+            as_completed(futures), total=len(futures), desc="Loading masks"
+        ):
+            annotations.extend(future.result())
 
-        with mask_path.open("rb") as fh:
-            mask_payload = pickle.load(fh)
+    # Assign IDs sequentially after parallel collection
+    for i, ann in enumerate(annotations, 1):
+        ann["id"] = i
 
-        for ann in mask_payload.get("annotations", []):
-            full_mask = _decode_sidecar_annotation_mask(ann, image_height, image_width)
-            if int(full_mask.sum()) == 0:
-                continue
-
-            encoded = _encode_binary_mask(full_mask)
-            bbox = mask_utils.toBbox(encoded).tolist()
-            area = float(mask_utils.area(encoded))
-
-            annotations.append(
-                {
-                    "id": next_ann_id,
-                    "image_id": image_id,
-                    "category_id": int(ann["category_id"]),
-                    "segmentation": encoded,
-                    "bbox": [float(x) for x in bbox],
-                    "area": area,
-                    "iscrowd": 0,
-                }
-            )
-            next_ann_id += 1
-
+    print("[Data] Building COCO object index...")
+    t0 = time.time()
     coco_gt = COCO()
     coco_gt.dataset = {
         "images": images,
@@ -122,6 +147,7 @@ def build_segmentation_coco_gt(
         "info": payload.get("info", {}),
     }
     coco_gt.createIndex()
+    print(f"[Data] Index built in {time.time() - t0:.1f}s\n")
     return coco_gt
 
 
@@ -138,16 +164,29 @@ class Mask2FormerDataset(Dataset):
         self.mask_root = Path(mask_root)
         self.image_processor = image_processor
 
+        import time
+
+        t0 = time.time()
+        file_size_gb = self.annotation_path.stat().st_size / 1e9
+        print(
+            f"[Dataset] Loading annotations from {self.annotation_path.name} ({file_size_gb:.2f} GB)..."
+        )
         self.payload = json.loads(self.annotation_path.read_text())
+
         self.images = list(self.payload.get("images", []))
         self.categories = list(self.payload.get("categories", []))
         self.image_ids = [int(image["id"]) for image in self.images]
         self.image_id_to_info = {int(image["id"]): image for image in self.images}
+        print(
+            f"[Dataset] Init complete in {time.time() - t0:.1f}s ({len(self.images)} images)"
+        )
 
     def __len__(self) -> int:
         return len(self.images)
 
-    def _load_sidecar_annotations(self, image_info: dict[str, Any]) -> list[dict[str, Any]]:
+    def _load_sidecar_annotations(
+        self, image_info: dict[str, Any]
+    ) -> list[dict[str, Any]]:
         mask_path = self.mask_root / f"{Path(str(image_info['file_name'])).stem}.pkl"
         if not mask_path.exists():
             raise FileNotFoundError(
@@ -173,7 +212,9 @@ class Mask2FormerDataset(Dataset):
         image_np = np.array(image)
         sidecar_annotations = self._load_sidecar_annotations(image_info)
 
-        instance_map = np.full((image_height, image_width), fill_value=-1, dtype=np.int64)
+        instance_map = np.full(
+            (image_height, image_width), fill_value=-1, dtype=np.int64
+        )
         instance_id_to_semantic_id: dict[int, int] = {}
         instance_id = 1
 
@@ -242,7 +283,14 @@ class Mask2FormerDataModule(pl.LightningDataModule):
         )
 
     def _load_coco(self, split_name: str) -> COCO:
-        coco = COCO(str(self._annotation_path(split_name)))
+        import time
+
+        ann_path = self._annotation_path(split_name)
+        t0 = time.time()
+        file_size_gb = ann_path.stat().st_size / 1e9
+        print(f"\n[COCO API] Loading {ann_path.name} ({file_size_gb:.2f} GB)...")
+        coco = COCO(str(ann_path))
+        print(f"[COCO API] Loaded in {time.time() - t0:.1f}s")
         if "info" not in coco.dataset:
             coco.dataset["info"] = {}
         return coco
@@ -253,27 +301,17 @@ class Mask2FormerDataModule(pl.LightningDataModule):
                 self.train_dataset = self._build_dataset(self.config.train_name)
             if self.val_dataset is None:
                 self.val_dataset = self._build_dataset(self.config.val_name)
-            if self._val_coco_gt is None:
-                self._val_coco_gt = self._load_coco(self.config.val_name)
-            if self._val_segm_coco_gt is None:
-                self._val_segm_coco_gt = build_segmentation_coco_gt(
-                    self._annotation_path(self.config.val_name),
-                    self._mask_root(self.config.val_name),
-                )
+            # COCO objects are now lazy-loaded via properties
 
         if stage in (None, "test"):
             if self.test_dataset is None:
-                split_name = self.config.val_name if self.config.debug else self.config.test_name
-                self.test_dataset = self._build_dataset(split_name)
-            if self._test_coco_gt is None:
-                split_name = self.config.val_name if self.config.debug else self.config.test_name
-                self._test_coco_gt = self._load_coco(split_name)
-            if self._test_segm_coco_gt is None:
-                split_name = self.config.val_name if self.config.debug else self.config.test_name
-                self._test_segm_coco_gt = build_segmentation_coco_gt(
-                    self._annotation_path(split_name),
-                    self._mask_root(split_name),
+                split_name = (
+                    self.config.val_name
+                    if getattr(self.config, "debug", False)
+                    else self.config.test_name
                 )
+                self.test_dataset = self._build_dataset(split_name)
+            # COCO objects are now lazy-loaded via properties
 
     @staticmethod
     def collate_fn(batch: list[dict[str, Any]]) -> dict[str, Any]:
@@ -289,18 +327,42 @@ class Mask2FormerDataModule(pl.LightningDataModule):
 
     @property
     def val_coco_gt(self) -> Optional[COCO]:
+        if self._val_coco_gt is None:
+            self._val_coco_gt = self._load_coco(self.config.val_name)
         return self._val_coco_gt
 
     @property
     def test_coco_gt(self) -> Optional[COCO]:
+        if self._test_coco_gt is None:
+            split_name = (
+                self.config.val_name
+                if getattr(self.config, "debug", False)
+                else self.config.test_name
+            )
+            self._test_coco_gt = self._load_coco(split_name)
         return self._test_coco_gt
 
     @property
     def val_segm_coco_gt(self) -> Optional[COCO]:
+        if self._val_segm_coco_gt is None:
+            self._val_segm_coco_gt = build_segmentation_coco_gt(
+                self._annotation_path(self.config.val_name),
+                self._mask_root(self.config.val_name),
+            )
         return self._val_segm_coco_gt
 
     @property
     def test_segm_coco_gt(self) -> Optional[COCO]:
+        if self._test_segm_coco_gt is None:
+            split_name = (
+                self.config.val_name
+                if getattr(self.config, "debug", False)
+                else self.config.test_name
+            )
+            self._test_segm_coco_gt = build_segmentation_coco_gt(
+                self._annotation_path(split_name),
+                self._mask_root(split_name),
+            )
         return self._test_segm_coco_gt
 
     @property
@@ -309,7 +371,9 @@ class Mask2FormerDataModule(pl.LightningDataModule):
 
     @property
     def test_image_root(self) -> str:
-        split_name = self.config.val_name if self.config.debug else self.config.test_name
+        split_name = (
+            self.config.val_name if self.config.debug else self.config.test_name
+        )
         return str(self._image_root(split_name))
 
     def train_dataloader(self):
