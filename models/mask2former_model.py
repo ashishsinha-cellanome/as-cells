@@ -8,7 +8,6 @@ import torch
 from transformers import (
     Dinov2Config,
     Dinov2Model,
-    Mask2FormerConfig,
     Mask2FormerForUniversalSegmentation,
     Mask2FormerImageProcessor,
 )
@@ -16,6 +15,15 @@ from transformers import (
 import os
 import logging
 from typing import Tuple, List, Final, Optional, Dict, Union
+
+
+def _from_pretrained_cached_first(loader_fn, *, repo_id: str, **kwargs):
+    """Try loading from local cache first; fall back to downloading if not cached."""
+    try:
+        return loader_fn(repo_id, local_files_only=True, **kwargs)
+    except OSError:
+        print(f"[HF] Model not in cache, downloading: {repo_id}")
+        return loader_fn(repo_id, local_files_only=False, **kwargs)
 
 
 # constants and default values
@@ -96,9 +104,7 @@ def _apply_backbone_training_mode(
             param.requires_grad = False
         return
 
-    raise ValueError(
-        f"Unsupported Mask2Former backbone training_mode: {training_mode}"
-    )
+    raise ValueError(f"Unsupported Mask2Former backbone training_mode: {training_mode}")
 
 
 def _apply_backbone_lora(
@@ -169,12 +175,12 @@ def build_mask2former_with_dinov2_backbone(
         backbone_pretrained_name_or_path
     )
 
-    pretrained_model = Mask2FormerForUniversalSegmentation.from_pretrained(
-        mask2former_pretrained_name_or_path,
+    pretrained_model = _from_pretrained_cached_first(
+        Mask2FormerForUniversalSegmentation.from_pretrained,
+        repo_id=mask2former_pretrained_name_or_path,
         id2label=id2label,
         label2id=label2id,
         ignore_mismatched_sizes=True,
-        local_files_only=local_files_only,
     )
     pretrained_state = pretrained_model.state_dict()
     model_config = pretrained_model.config
@@ -183,10 +189,10 @@ def build_mask2former_with_dinov2_backbone(
     model_config.label2id = label2id
     if num_queries is not None:
         model_config.num_queries = int(num_queries)
-    model_config.backbone_config = Dinov2Config.from_pretrained(
-        backbone_pretrained_name_or_path,
+    model_config.backbone_config = _from_pretrained_cached_first(
+        Dinov2Config.from_pretrained,
+        repo_id=backbone_pretrained_name_or_path,
         out_indices=out_indices,
-        local_files_only=local_files_only,
     )
 
     model = Mask2FormerForUniversalSegmentation(model_config)
@@ -200,10 +206,10 @@ def build_mask2former_with_dinov2_backbone(
     }
     model.load_state_dict(transferable_state, strict=False)
 
-    dinov2_model = Dinov2Model.from_pretrained(
-        backbone_pretrained_name_or_path,
+    dinov2_model = _from_pretrained_cached_first(
+        Dinov2Model.from_pretrained,
+        repo_id=backbone_pretrained_name_or_path,
         out_indices=out_indices,
-        local_files_only=local_files_only,
     )
     encoder_state = model.model.pixel_level_module.encoder.state_dict()
     dinov2_state = {
