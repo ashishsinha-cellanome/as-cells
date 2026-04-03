@@ -124,7 +124,7 @@ def _setup_callbacks(config: DictConfig):
         ModelSummary(max_depth=3),
         EarlyStopping(
             monitor=primary_early_stop_monitor,
-            patience=20,
+            patience=10,
             mode=ckpt_cfg.mode,
             verbose=True,
         ),
@@ -367,7 +367,7 @@ def main(config: DictConfig):
         limit_val_batches=config.data.limit_val_batches if not config.debug else 10,
         limit_test_batches=config.data.limit_test_batches if not config.debug else 10,
         profiler=None if config.debug else profiler,
-        plugins=[SLURMEnvironment(auto_requeue=False)]
+        plugins=[SLURMEnvironment(auto_requeue=True)]
         if "SLURM_JOB_ID" in os.environ
         else None,
     )

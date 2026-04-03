@@ -25,7 +25,7 @@ ema:
   enabled: true
   decay: 0.993
   tau: 100
-  warmup_steps: 100
+  warmup_steps: 2000
 
 label_map:
   0: "cell"
