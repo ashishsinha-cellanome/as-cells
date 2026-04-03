@@ -184,7 +184,9 @@ def _validate_lora_config(config: DictConfig) -> None:
         )
 
     if lora_enabled and not list(config.model.lora.target_modules):
-        raise ValueError("model.lora.target_modules must be non-empty when LoRA is enabled.")
+        raise ValueError(
+            "model.lora.target_modules must be non-empty when LoRA is enabled."
+        )
 
 
 def _resolve_run_name(config: DictConfig):
@@ -258,7 +260,7 @@ def main(config: DictConfig):
         config.initialization.load_from_checkpoint = early_ckpt_path
         config.checkpointing.save_dir = run_save_dir
         test_only_weight_source = _select_eval_weights_source(
-            early_ckpt_path, test_only_checkpoint
+            early_ckpt_path, test_only_checkpoint, config
         )
         rank_zero_print(
             f"test_only: selected checkpoint weight source = {test_only_weight_source.upper()}"

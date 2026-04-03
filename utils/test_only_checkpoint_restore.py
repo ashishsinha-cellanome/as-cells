@@ -74,6 +74,66 @@ def _load_ckpt(ckpt_path: str) -> Dict[str, Any]:
     return checkpoint
 
 
+def _warn_ignored_cli_overrides(current_cfg: DictConfig, ckpt_cfg: DictConfig) -> None:
+    """Warn about CLI model/optimizer/scheduler overrides that will be ignored in test_only mode."""
+    ignored_prefixes = ("model.", "optimizer.", "scheduler.")
+    allowed_override_keys = {
+        "data.path",
+        "data.limit_test_batches",
+        "data.num_workers",
+        "data.batch_size",
+        "data.eval_batch_size",
+        "data.val_name",
+        "data.test_name",
+        "data.train_name",
+        "trainer",
+        "checkpointing",
+        "logging",
+        "eval_inference",
+        "inference",
+        "test_only",
+        "debug",
+        "seed",
+        "run_name",
+        "initialization.load_from_checkpoint",
+    }
+
+    def _flatten(cfg: DictConfig, prefix: str = "") -> Dict[str, Any]:
+        flat = {}
+        for key, value in cfg.items():
+            full_key = f"{prefix}.{key}" if prefix else key
+            if OmegaConf.is_config(value):
+                flat.update(_flatten(value, full_key))
+            else:
+                flat[full_key] = value
+        return flat
+
+    current_flat = _flatten(current_cfg)
+    ckpt_flat = _flatten(ckpt_cfg)
+
+    ignored = []
+    for dotted_key in sorted(current_flat.keys()):
+        if not any(dotted_key.startswith(p) for p in ignored_prefixes):
+            continue
+        if dotted_key in allowed_override_keys:
+            continue
+        cli_val = current_flat[dotted_key]
+        ckpt_val = ckpt_flat.get(dotted_key)
+        if ckpt_val is not None and cli_val != ckpt_val:
+            ignored.append((dotted_key, cli_val, ckpt_val))
+
+    if ignored:
+        rank_zero_print("=" * 80)
+        rank_zero_print(
+            "[test_only] WARNING: The following CLI model parameter(s) are "
+            "ignored. Using checkpoint architecture:"
+        )
+        for key, cli_val, ckpt_val in ignored:
+            rank_zero_print(f"  {key} = {cli_val}  (checkpoint has {ckpt_val})")
+        rank_zero_print(f"[test_only] {len(ignored)} CLI parameter(s) ignored.")
+        rank_zero_print("=" * 80)
+
+
 def _merge_test_only_config_from_ckpt(
     current_cfg: DictConfig, ckpt: Dict[str, Any]
 ) -> DictConfig:
@@ -93,6 +153,8 @@ def _merge_test_only_config_from_ckpt(
     )
     merged_cfg = OmegaConf.create(OmegaConf.to_container(ckpt_cfg, resolve=False))
     OmegaConf.set_struct(merged_cfg, False)
+
+    _warn_ignored_cli_overrides(current_cfg, ckpt_cfg)
 
     # Runtime/test-only override policy
     merged_cfg.test_only = current_cfg.test_only
@@ -130,7 +192,6 @@ def _merge_test_only_config_from_ckpt(
         _set_nested_value(
             merged_cfg, "data.eval_batch_size", current_cfg.data.get("eval_batch_size")
         )
-
 
     if hasattr(current_cfg, "checkpointing") and current_cfg.checkpointing is not None:
         merged_cfg.checkpointing = OmegaConf.create(
