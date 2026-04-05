@@ -1,5 +1,7 @@
 **/*.ipynb
 .codex
+.hydra
+.opencode
 .env
 .claude/
 *.ckpt
