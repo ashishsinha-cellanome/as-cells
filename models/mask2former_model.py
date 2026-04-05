@@ -19,6 +19,8 @@ from typing import Tuple, List, Final, Optional, Dict, Union
 
 def _from_pretrained_cached_first(loader_fn, *, repo_id: str, **kwargs):
     """Try loading from local cache first; fall back to downloading if not cached."""
+    # Remove local_files_only from kwargs since we manage it internally
+    kwargs.pop("local_files_only", None)
     try:
         return loader_fn(repo_id, local_files_only=True, **kwargs)
     except OSError:
