@@ -304,9 +304,16 @@ def main(config: DictConfig):
         if hasattr(config.model, "ema") and config.model.ema.enabled
         else [config.checkpointing.monitor]
     )
+
+    ema_enabled = hasattr(config.model, "ema") and config.model.ema.enabled
+    ema_monitor_log = (
+        "\n  -> EMA Checkpointing Monitor: val/segm_map_ema" if ema_enabled else ""
+    )
+
     rank_zero_print(
         "[Startup] Metrics Tracking:\n"
-        f"  -> Checkpointing Monitor: {config.checkpointing.monitor}\n"
+        f"  -> Standard Checkpointing Monitor: {config.checkpointing.monitor}"
+        f"{ema_monitor_log}\n"
         f"  -> Early Stopping Monitor: {primary_early_stop_monitor}\n"
         f"  -> Test Phase Checkpoint Selection: {test_monitors}"
     )
