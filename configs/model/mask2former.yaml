@@ -1,8 +1,14 @@
+# @package _global_
 defaults:
   - backbone: dinov2_mask2former
 
 name: mask2former_${model.backbone.name}
 input_size: 512
+
+checkpointing:
+  monitor: "val/segm_map"
+  mode: "max"
+  visualize_samples: 100
 
 mask2former:
   pretrained_name_or_path: facebook/mask2former-swin-large-coco-instance

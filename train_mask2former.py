@@ -102,7 +102,7 @@ def _setup_callbacks(config: DictConfig):
     ckpt_cfg = config.checkpointing
     ckpt_dir = os.path.join(to_absolute_path(ckpt_cfg.save_dir), "ckpts")
     primary_early_stop_monitor = (
-        "val/map_ema"
+        "val/segm_map_ema"
         if hasattr(config.model, "ema") and config.model.ema.enabled
         else ckpt_cfg.monitor
     )
@@ -145,7 +145,7 @@ def _setup_callbacks(config: DictConfig):
                 warmup_steps=warmup_steps,
             )
         )
-        ema_monitor = "val/map_ema"
+        ema_monitor = "val/segm_map_ema""
         callbacks.append(
             ModelCheckpoint(
                 dirpath=ckpt_dir,
@@ -411,7 +411,7 @@ def main(config: DictConfig):
 
         best_path = None
         preferred_monitors = (
-            ["val/map_ema", config.checkpointing.monitor]
+            ["val/segm_map_ema", config.checkpointing.monitor]
             if hasattr(config.model, "ema") and config.model.ema.enabled
             else [config.checkpointing.monitor]
         )
