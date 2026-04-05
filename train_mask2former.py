@@ -28,6 +28,7 @@ from data.mask2former_data_module import Mask2FormerDataModule
 from models.mask2former_lightning_module import Mask2FormerLightningModule
 from models.mask2former_model import (
     build_mask2former_with_dinov2_backbone,
+    build_original_mask2former,
     get_mask2former_processor,
     summarize_trainable_parameters,
 )
@@ -327,20 +328,37 @@ def main(config: DictConfig):
     data_module.setup("fit")
     data_module.setup("test")
 
-    model = build_mask2former_with_dinov2_backbone(
-        id2label=label_map,
-        mask2former_pretrained_name_or_path=str(
-            config.model.mask2former.pretrained_name_or_path
-        ),
-        backbone_pretrained_name_or_path=str(
-            config.model.backbone.pretrained_name_or_path
-        ),
-        training_mode=str(config.model.backbone.training_mode),
-        lora_config=OmegaConf.to_container(config.model.lora, resolve=True),
-        num_queries=int(config.model.mask2former.num_queries),
-        out_indices=[int(x) for x in config.model.backbone.out_indices],
-        local_files_only=bool(config.model.mask2former.get("local_files_only", False)),
-    )
+    backbone_pretrained = config.model.backbone.get("pretrained_name_or_path")
+    if backbone_pretrained is not None:
+        # DINOv2 backbone path
+        model = build_mask2former_with_dinov2_backbone(
+            id2label=label_map,
+            mask2former_pretrained_name_or_path=str(
+                config.model.mask2former.pretrained_name_or_path
+            ),
+            backbone_pretrained_name_or_path=str(backbone_pretrained),
+            training_mode=str(config.model.backbone.training_mode),
+            lora_config=OmegaConf.to_container(config.model.lora, resolve=True),
+            num_queries=int(config.model.mask2former.num_queries),
+            out_indices=[int(x) for x in config.model.backbone.out_indices],
+            local_files_only=bool(
+                config.model.mask2former.get("local_files_only", False)
+            ),
+        )
+    else:
+        # Original Swin backbone path
+        model = build_original_mask2former(
+            id2label=label_map,
+            mask2former_pretrained_name_or_path=str(
+                config.model.mask2former.pretrained_name_or_path
+            ),
+            training_mode=str(config.model.backbone.training_mode),
+            num_queries=int(config.model.mask2former.num_queries),
+            out_indices=[int(x) for x in config.model.backbone.out_indices],
+            local_files_only=bool(
+                config.model.mask2former.get("local_files_only", False)
+            ),
+        )
     param_summary = summarize_trainable_parameters(model)
     rank_zero_print(
         "[Startup] Mask2Former params: "

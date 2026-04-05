@@ -239,6 +239,55 @@ def build_mask2former_with_dinov2_backbone(
     return model
 
 
+def build_original_mask2former(
+    *,
+    id2label: Dict[int, str],
+    mask2former_pretrained_name_or_path: str,
+    training_mode: str = "full_finetune",
+    num_queries: Optional[int] = None,
+    local_files_only: bool = False,
+    out_indices: Optional[List[int]] = None,
+) -> Mask2FormerForUniversalSegmentation:
+    """Build original Mask2Former with its native Swin backbone (no DINOv2 replacement).
+
+    The pretrained Mask2Former checkpoint already contains a Swin backbone trained
+    end-to-end on COCO. This function loads it directly and adapts the classification
+    head for the target number of classes.
+    """
+    # out_indices is unused here since the Swin encoder is already configured in the checkpoint
+    del out_indices
+
+    label2id = {str(name): int(idx) for idx, name in id2label.items()}
+
+    model = _from_pretrained_cached_first(
+        Mask2FormerForUniversalSegmentation.from_pretrained,
+        repo_id=mask2former_pretrained_name_or_path,
+        id2label=id2label,
+        label2id=label2id,
+        ignore_mismatched_sizes=True,
+        local_files_only=local_files_only,
+    )
+
+    model_config = model.config
+    model_config.num_labels = len(id2label)
+    model_config.id2label = id2label
+    model_config.label2id = label2id
+    if num_queries is not None:
+        model_config.num_queries = int(num_queries)
+
+    _apply_backbone_training_mode(model, training_mode)
+
+    # We deliberately don't apply LoRA here for the Swin backbone yet,
+    # as it requires verifying the target_modules for Swin architecture.
+    if str(training_mode).lower() == "lora":
+        raise NotImplementedError(
+            "LoRA training is not yet supported for the original Swin backbone. "
+            "Please use training_mode='frozen' or 'full_finetune'."
+        )
+
+    return model
+
+
 def get_mask2former_instance_segmentation_model_with_dinov2_backbone(
     id2label: Dict[int, str], model_type: str, with_registers: bool
 ):
