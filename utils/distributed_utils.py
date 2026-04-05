@@ -64,6 +64,12 @@ def setup_cluster_env():
     os.environ.setdefault("NCCL_P2P_DISABLE", "1")
     os.environ.setdefault("NCCL_IB_DISABLE", "1")
 
+    # Shared Hugging Face cache directory to prevent redownloads across SLURM compute nodes
+    os.environ.setdefault(
+        "HF_HOME",
+        "/project/aip-robsc/asinha/cellanome/DATA/checkpoints/backbones/huggingface_cache",
+    )
+
 
 def get_rank():
     if dist.is_available() and dist.is_initialized():
