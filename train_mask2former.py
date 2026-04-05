@@ -213,8 +213,15 @@ def main(config: DictConfig):
 
     OmegaConf.set_struct(config, False)
     _resolve_run_name(config)
-    config.checkpointing.monitor = "val/map"
-    config.checkpointing.mode = "max"
+
+    if hasattr(config.model, "checkpointing"):
+        config.checkpointing.monitor = config.model.checkpointing.get(
+            "monitor", "val/map"
+        )
+        config.checkpointing.mode = config.model.checkpointing.get("mode", "max")
+    else:
+        config.checkpointing.monitor = "val/map"
+        config.checkpointing.mode = "max"
 
     hydra_cfg = HydraConfig.get()
     job_overrides = hydra_cfg.overrides.task
