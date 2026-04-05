@@ -294,6 +294,23 @@ def main(config: DictConfig):
             f"warmup_steps={config.model.ema.get('warmup_steps', 0)}"
         )
 
+    primary_early_stop_monitor = (
+        "val/segm_map_ema"
+        if hasattr(config.model, "ema") and config.model.ema.enabled
+        else config.checkpointing.monitor
+    )
+    test_monitors = (
+        ["val/segm_map_ema", config.checkpointing.monitor]
+        if hasattr(config.model, "ema") and config.model.ema.enabled
+        else [config.checkpointing.monitor]
+    )
+    rank_zero_print(
+        "[Startup] Metrics Tracking:\n"
+        f"  -> Checkpointing Monitor: {config.checkpointing.monitor}\n"
+        f"  -> Early Stopping Monitor: {primary_early_stop_monitor}\n"
+        f"  -> Test Phase Checkpoint Selection: {test_monitors}"
+    )
+
     image_processor = get_mask2former_processor(int(config.model.input_size))
     data_module = Mask2FormerDataModule(
         dataset_path=dataset_path,
