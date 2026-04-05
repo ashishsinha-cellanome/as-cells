@@ -1,4 +1,3 @@
-# @package _global_
 defaults:
   - backbone: dinov2_mask2former
 

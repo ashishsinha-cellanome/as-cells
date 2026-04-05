@@ -145,7 +145,7 @@ def _setup_callbacks(config: DictConfig):
                 warmup_steps=warmup_steps,
             )
         )
-        ema_monitor = "val/segm_map_ema""
+        ema_monitor = "val/segm_map_ema"
         callbacks.append(
             ModelCheckpoint(
                 dirpath=ckpt_dir,
