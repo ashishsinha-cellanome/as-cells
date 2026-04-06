@@ -16,7 +16,10 @@ import time
 import torch
 from typing import Any, Dict, Literal, Optional, Tuple
 
+# Must be called BEFORE importing transformers or any module that depends on it
 from utils.distributed_utils import setup_cluster_env, rank_print
+
+setup_cluster_env()
 
 # --- Monkey-patch for generalized_box_iou to prevent crash on degenerate boxes ---
 import transformers.loss.loss_for_object_detection as loss_utils
@@ -129,11 +132,9 @@ try:
         loss_rt_detr.RTDetrHungarianMatcher.original_forward = (
             loss_rt_detr.RTDetrHungarianMatcher.forward
         )
-        loss_rt_detr.RTDetrHungarianMatcher.forward = patched_matcher_forward
+         loss_rt_detr.RTDetrHungarianMatcher.forward = patched_matcher_forward
 except (ImportError, AttributeError):
     pass
-
-setup_cluster_env()
 
 
 def _resolve_ckpt_path(
@@ -255,14 +256,12 @@ def _merge_test_only_config_from_ckpt(
             merged_cfg, "data.batch_size", current_cfg.data.get("batch_size")
         )
 
-
     if hasattr(current_cfg, "checkpointing") and current_cfg.checkpointing is not None:
         merged_cfg.checkpointing = OmegaConf.create(
             OmegaConf.to_container(current_cfg.checkpointing, resolve=False)
         )
 
     if hasattr(current_cfg, "logging") and current_cfg.logging is not None:
-
         merged_cfg.logging = OmegaConf.create(
             OmegaConf.to_container(current_cfg.logging, resolve=False)
         )
@@ -406,10 +405,7 @@ from utils.distributed_utils import (
     get_rank,
     rank_zero_print,
     rank_print,
-    setup_cluster_env,
 )
-
-setup_cluster_env()
 
 
 def create_initial_checkpoint(config: DictConfig) -> str:

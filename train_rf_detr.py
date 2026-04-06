@@ -7,6 +7,11 @@ import copy
 import warnings
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
+# Must be called BEFORE importing rfdetr or transformers
+from utils.distributed_utils import setup_cluster_env, get_rank, rank_zero_print
+
+setup_cluster_env()
+
 import hydra
 import pytorch_lightning as pl
 import torch
@@ -77,14 +82,16 @@ def _extract_checkpoint_num_queries(checkpoint: Dict[str, Any]) -> Optional[int]
     return None
 
 
-def _init_rows_from_pretrained_stats(base_tensor: torch.Tensor, n_rows: int) -> torch.Tensor:
+def _init_rows_from_pretrained_stats(
+    base_tensor: torch.Tensor, n_rows: int
+) -> torch.Tensor:
     if n_rows <= 0:
         return base_tensor.new_empty((0, base_tensor.shape[1]))
     mean = base_tensor.mean(dim=0, keepdim=True)
     std = base_tensor.std(dim=0, keepdim=True, unbiased=False).clamp_min(1e-6)
-    return mean + torch.randn(
-        n_rows, base_tensor.shape[1], dtype=base_tensor.dtype
-    ) * std
+    return (
+        mean + torch.randn(n_rows, base_tensor.shape[1], dtype=base_tensor.dtype) * std
+    )
 
 
 def _build_query_compatible_pretrain_weights(
@@ -645,7 +652,9 @@ def main(config: DictConfig):
         model_kwargs["pretrain_weights"] = _build_query_compatible_pretrain_weights(
             pretrain_weights=str(model_kwargs["pretrain_weights"]),
             requested_num_queries=(
-                int(requested_num_queries) if requested_num_queries is not None else None
+                int(requested_num_queries)
+                if requested_num_queries is not None
+                else None
             ),
             run_save_dir=run_save_dir,
         )
