@@ -6,7 +6,7 @@ import warnings
 from typing import Any, Dict, Optional
 
 # Must be called BEFORE importing transformers or lightning modules that depend on it
-from utils.distributed_utils import setup_cluster_env
+from utils.distributed_utils import setup_cluster_env, get_rank, rank_zero_print
 
 setup_cluster_env()
 
@@ -37,7 +37,6 @@ from models.mask2former_model import (
     get_mask2former_processor,
     summarize_trainable_parameters,
 )
-from utils.distributed_utils import get_rank, rank_zero_print
 from utils.test_only_checkpoint_restore import (
     _load_ckpt,
     _load_selected_weights,
