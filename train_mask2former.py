@@ -5,6 +5,11 @@ import os
 import warnings
 from typing import Any, Dict, Optional
 
+# Must be called BEFORE importing transformers or lightning modules that depend on it
+from utils.distributed_utils import setup_cluster_env
+
+setup_cluster_env()
+
 import hydra
 import pytorch_lightning as pl
 import torch
@@ -32,7 +37,7 @@ from models.mask2former_model import (
     get_mask2former_processor,
     summarize_trainable_parameters,
 )
-from utils.distributed_utils import get_rank, rank_zero_print, setup_cluster_env
+from utils.distributed_utils import get_rank, rank_zero_print
 from utils.test_only_checkpoint_restore import (
     _load_ckpt,
     _load_selected_weights,
@@ -48,7 +53,6 @@ OmegaConf.register_new_resolver(
 )
 OmegaConf.register_new_resolver("oc.eval", eval, replace=True)
 
-setup_cluster_env()
 torch.set_float32_matmul_precision("medium")
 
 
