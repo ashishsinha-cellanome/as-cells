@@ -9,6 +9,9 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --mem-per-gpu=32G
 #SBATCH --array=0-3
+#SBATCH --time=1-23:59:00
+#SBATCH --output=logs/%x-%A_%a.out
+#SBATCH --error=logs/%x-%A_%a.err
 
 set -e
 
@@ -22,7 +25,7 @@ echo "Array Task ID: $SLURM_ARRAY_TASK_ID"
 LRS=("1e-4" "5e-5")
 MODEL_SIZE=("m" "x")
 SCHEDULERS=("onecycle")
-DATA_CONFIG=("vulcan")
+DATA_CONFIG=("vulcan_no300_eval")
 CONFIGS=()
 for lr in "${LRS[@]}"; do
     for sched in "${SCHEDULERS[@]}"; do
