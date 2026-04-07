@@ -1,8 +1,9 @@
 defaults:
   - backbone: dinov2_mask2former
+  - override /trainer: default
 
 name: mask2former_${model.backbone.name}
-input_size: 512
+input_size: 640
 
 checkpointing:
   monitor: "val/segm_map"
@@ -10,7 +11,7 @@ checkpointing:
   visualize_samples: 100
 
 mask2former:
-  pretrained_name_or_path: facebook/mask2former-swin-large-coco-instance
+  pretrained_name_or_path: facebook/mask2former-swin-base-coco-instance
   local_files_only: false
   num_queries: 300
   threshold: 0.5
@@ -41,3 +42,7 @@ label_map:
 detection_threshold: 0.5
 draw_threshold: 0.5
 max_detections: 100
+
+# Override gradient clipping for Mask2Former stability (official FB impl uses 0.01)
+trainer:
+  max_grad_norm: 0.01

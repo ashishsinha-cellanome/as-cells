@@ -1,0 +1,8 @@
+# @package model.backbone
+
+type: "swin"
+pretrained_name_or_path: null  # null = use native Mask2Former Swin backbone
+name: "swin-base"
+model_name: "swin-base"
+training_mode: "full_finetune"  # frozen | full_finetune
+out_indices: [0, 1, 2, 3]  # Placeholder for Hydra merge; unused (backbone uses its own config)
