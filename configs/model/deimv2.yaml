@@ -1,0 +1,89 @@
+name: deimv2_${model.deimv2.size}
+input_size: 640
+
+deimv2:
+  size: m  # options: m, x
+  
+  backbone:
+    name: vit_tinyplus
+    embed_dim: 256
+    weights_path: DEIMv2/ckpts/vittplus_distill.pt
+    interaction_indexes: [3, 7, 11]
+    num_heads: 4
+    finetune: True
+    conv_inplane: 16
+    hidden_dim: 256
+    use_sta: True
+
+  encoder:
+    in_channels: [256, 256, 256]
+    feat_strides: [8, 16, 32]
+    hidden_dim: 256
+    use_encoder_idx: [2]
+    num_encoder_layers: 1
+    nhead: 8
+    dim_feedforward: 512
+    dropout: 0.0
+    enc_act: 'gelu'
+    expansion: 0.67
+    depth_mult: 1
+    act: 'silu'
+    version: deim
+    csp_type: csp2
+    fuse_op: sum
+
+  decoder:
+    feat_channels: [256, 256, 256]
+    feat_strides: [8, 16, 32]
+    hidden_dim: 256
+    num_levels: 3
+    num_layers: 4
+    eval_idx: -1
+    num_queries: 300
+    num_denoising: 100
+    label_noise_ratio: 0.5
+    box_noise_scale: 1.0
+    reg_max: 32
+    reg_scale: 4.0
+    layer_scale: 1
+    num_points: [3, 6, 3]
+    cross_attn_method: default
+    query_select_method: default
+    activation: silu
+    mlp_act: silu
+    dim_feedforward: 512
+  
+  criterion:
+    weight_dict: {loss_mal: 1, loss_bbox: 5, loss_giou: 2, loss_fgl: 0.15, loss_ddf: 1.5}
+    losses: ['mal', 'boxes', 'local']
+    gamma: 1.5
+    alpha: 0.75
+    reg_max: 32
+    matcher:
+      weight_dict: {cost_class: 2, cost_bbox: 5, cost_giou: 2}
+      alpha: 0.25
+      gamma: 2.0
+      change_matcher: True
+      iou_order_alpha: 4.0
+      matcher_change_epoch: 45
+
+  postprocessor:
+    num_top_queries: 300
+    use_focal_loss: True
+
+# --- General ---
+label_map:
+  0: "cell"
+  1: "bead"
+  2: "cell-adhered"
+  3: "soma"
+
+detection_threshold: 0.05
+draw_threshold: 0.4
+max_detections: 300
+
+ema:
+  enabled: true
+  decay: 0.9998 # matches DEIM default
+  tau: 2000
+  warmup_steps: 500
