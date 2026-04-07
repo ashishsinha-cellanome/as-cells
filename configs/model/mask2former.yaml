@@ -1,6 +1,5 @@
 defaults:
   - backbone: dinov2_mask2former
-  - override /trainer: default
 
 name: mask2former_${model.backbone.name}
 input_size: 640
