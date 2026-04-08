@@ -38,7 +38,7 @@ label_map:
   2: "cell-adhered"
   3: "soma"
 
-detection_threshold: 0.5
+detection_threshold: 0.05
 draw_threshold: 0.5
 max_detections: 100
 
