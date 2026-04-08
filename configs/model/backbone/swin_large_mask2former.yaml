@@ -4,5 +4,5 @@ type: "swin"
 pretrained_name_or_path: null  # null = use native Mask2Former Swin backbone
 name: "swin-large"
 model_name: "swin-large"
-training_mode: "full_finetune"  # frozen | full_finetune
+training_mode: "frozen"  # frozen | full_finetune
 out_indices: [0, 1, 2, 3]  # Placeholder for Hydra merge; unused (backbone uses its own config)
