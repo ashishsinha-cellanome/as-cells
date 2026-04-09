@@ -1,0 +1,6 @@
+model:
+  mask2former:
+    model_type: "base"
+    with_registers: false
+    input_h: 640
+    input_w: 640
