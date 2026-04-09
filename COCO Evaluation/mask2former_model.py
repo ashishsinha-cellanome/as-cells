@@ -261,6 +261,46 @@ def to_numpy(tensor):
     )
 
 
+
+class Dinov2WithSFP(torch.nn.Module):
+    """
+    Simple Feature Pyramid (SFP) adapter to convert DINOv2's flat stride-14
+    feature maps into a multi-scale FPN (stride ~4, 8, 16, 32) expected by Mask2Former.
+    """
+    def __init__(self, original_encoder):
+        super().__init__()
+        self.original_encoder = original_encoder
+        self.channels = original_encoder.channels
+        
+        # DINOv2 channels (e.g., 768)
+        c = self.channels[0]
+        
+        # Stride 4 (Upscale 4x from stride 14)
+        self.fpn1 = torch.nn.Sequential(
+            torch.nn.ConvTranspose2d(c, c, kernel_size=2, stride=2),
+            torch.nn.SyncBatchNorm(c) if torch.cuda.device_count() > 1 else torch.nn.BatchNorm2d(c),
+            torch.nn.GELU(),
+            torch.nn.ConvTranspose2d(c, c, kernel_size=2, stride=2),
+        )
+        # Stride 8 (Upscale 2x from stride 14)
+        self.fpn2 = torch.nn.ConvTranspose2d(c, c, kernel_size=2, stride=2)
+        # Stride 16 (Identity ~ Stride 14)
+        self.fpn3 = torch.nn.Identity()
+        # Stride 32 (Downscale 2x from stride 14)
+        self.fpn4 = torch.nn.MaxPool2d(kernel_size=2, stride=2)
+
+    def forward(self, pixel_values):
+        outputs = self.original_encoder(pixel_values)
+        feats = outputs.feature_maps
+        
+        f1 = self.fpn1(feats[0])
+        f2 = self.fpn2(feats[1])
+        f3 = self.fpn3(feats[2])
+        f4 = self.fpn4(feats[3])
+        
+        outputs.feature_maps = (f1, f2, f3, f4)
+        return outputs
+
 def get_mask2former_instance_segmentation_model_with_dinov2_backbone(
     id2label: Dict[int, str], model_type: str, with_registers: bool
 ):
@@ -326,6 +366,8 @@ def get_mask2former_instance_segmentation_model_with_dinov2_backbone(
     # this is for freezing the backbone in Mask2Former, it should be the same as above
     for param in model.model.pixel_level_module.encoder.parameters():
         param.requires_grad_(False)
+
+    model.model.pixel_level_module.encoder = Dinov2WithSFP(model.model.pixel_level_module.encoder)
 
     return model
 
