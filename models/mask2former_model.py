@@ -161,6 +161,49 @@ def summarize_trainable_parameters(
     }
 
 
+class Dinov2WithSFP(torch.nn.Module):
+    """
+    Simple Feature Pyramid (SFP) adapter to convert DINOv2's flat stride-14
+    feature maps into a multi-scale FPN (stride ~4, 8, 16, 32) expected by Mask2Former.
+    """
+
+    def __init__(self, original_encoder):
+        super().__init__()
+        self.original_encoder = original_encoder
+        self.channels = original_encoder.channels
+
+        # DINOv2 channels (e.g., 768)
+        c = self.channels[0]
+
+        # Stride 4 (Upscale 4x from stride 14)
+        self.fpn1 = torch.nn.Sequential(
+            torch.nn.ConvTranspose2d(c, c, kernel_size=2, stride=2),
+            torch.nn.SyncBatchNorm(c)
+            if torch.cuda.device_count() > 1
+            else torch.nn.BatchNorm2d(c),
+            torch.nn.GELU(),
+            torch.nn.ConvTranspose2d(c, c, kernel_size=2, stride=2),
+        )
+        # Stride 8 (Upscale 2x from stride 14)
+        self.fpn2 = torch.nn.ConvTranspose2d(c, c, kernel_size=2, stride=2)
+        # Stride 16 (Identity ~ Stride 14)
+        self.fpn3 = torch.nn.Identity()
+        # Stride 32 (Downscale 2x from stride 14)
+        self.fpn4 = torch.nn.MaxPool2d(kernel_size=2, stride=2)
+
+    def forward(self, pixel_values):
+        outputs = self.original_encoder(pixel_values)
+        feats = outputs.feature_maps
+
+        f1 = self.fpn1(feats[0])
+        f2 = self.fpn2(feats[1])
+        f3 = self.fpn3(feats[2])
+        f4 = self.fpn4(feats[3])
+
+        outputs.feature_maps = (f1, f2, f3, f4)
+        return outputs
+
+
 def build_mask2former_with_dinov2_backbone(
     *,
     id2label: Dict[int, str],
@@ -221,6 +264,9 @@ def build_mask2former_with_dinov2_backbone(
     }
     model.model.pixel_level_module.encoder.load_state_dict(dinov2_state, strict=False)
     _apply_backbone_training_mode(model, training_mode)
+    model.model.pixel_level_module.encoder = Dinov2WithSFP(
+        model.model.pixel_level_module.encoder
+    )
     if str(training_mode).lower() == "lora":
         if not lora_config or not bool(lora_config.get("enabled", False)):
             raise ValueError(

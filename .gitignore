@@ -1,4 +1,6 @@
 **/*.ipynb
+*.log
+*.err
 .codex
 .hydra
 .opencode
