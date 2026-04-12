@@ -79,11 +79,11 @@ label_map:
   3: "soma"
 
 detection_threshold: 0.05
-draw_threshold: 0.4
+draw_threshold: 0.5
 max_detections: 100
 
 ema:
   enabled: true
   decay: 0.9998 # matches DEIM default
   tau: 2000
-  warmup_steps: 500
+  warmup_steps: 1000

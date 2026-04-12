@@ -2,7 +2,7 @@ defaults:
   - backbone: dinov2_mask2former
 
 name: mask2former_${model.backbone.name}
-input_size: 640
+input_size: 672
 
 checkpointing:
   monitor: "val/segm_map"

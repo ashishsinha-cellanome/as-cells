@@ -8,6 +8,115 @@ from transformers import PreTrainedModel, Dinov2Model, Dinov2Config
 from safetensors.torch import save_file as safe_save
 from safetensors.torch import load_file as safe_load
 
+class FusedFPN_New(nn.Module):
+    def __init__(
+        self, 
+        input_dim: int,                    # DINOv2 embedding size
+        output_dims: List[int],            # the list of feature sizes for each feature map
+        resolutions: List[Tuple[int, int]] = None
+    ):
+        # resolutions is a list of the same size as output_dims indicating the requires resolution (in (height, width) for each feature map
+        # when None is passed, the last feature map will be L/2 x L/2, where L is the DINOv2 feature resolution (image size / patch size) 
+        # and each layer down will be doubled, e.g., for 4 layers, the sizes will be 4L x 4L, 2L x 2L, L x L and L/2 x L/2 
+        super().__init__()
+
+        self.output_dims = output_dims
+        self.resolutions = resolutions
+        if resolutions is not None:
+            assert len(output_dims) == len(resolutions), "The number of output resolutions and dimentions should be the same"
+        # convolutions to change the embeddings dimensions
+        self.lateral_convs = nn.ModuleList(
+            [
+                nn.Sequential(
+                    nn.Conv2d(input_dim, output_dim, kernel_size=1, bias=False),
+                    nn.GroupNorm(32, output_dim),
+                )
+                for output_dim in output_dims
+            ]
+        )
+
+        # fusion convolusions, top-down
+        # this is how the feature map fusion is done
+        # the last/top feature map (the lowest resolution, richest semantics) is obtained by downsampling the 
+        # last DINOv2 hidden layer by a factor of 2 and potentially resizing to an exact size (needed for Mask2Former); no fusion is done
+        # with other layers for this top feature map layer
+        # then for any i < last, feature map i and i + 1 will be extrapolated to the expected size for map i, concatenated and then fused
+        self.fusion_convs = nn.ModuleList(
+            [
+                nn.Sequential(
+                    nn.Conv2d(output_dims[i] + output_dims[i + 1], output_dims[i], kernel_size=3, stride=1, padding=1),
+                    nn.GroupNorm(32, output_dims[i]),
+                    nn.GELU(),
+                )
+                for i in range(len(output_dims) - 1) # exclude the last feature map that we will downsampled by a factor of two
+            ] + [ # last feature map, downsampling by a factor of 2 through convolution and no fusion
+                nn.Sequential(
+                    nn.Conv2d(output_dims[-1], output_dims[-1], kernel_size=3, stride=2, padding=1),
+                    nn.GroupNorm(32, output_dims[-1]),
+                    nn.GELU(),
+                )
+            ]
+        )
+        
+    def forward(self, features):
+        assert len(features) == len(self.output_dims), "The number of input features should be the same as the number of output features"
+        # features = list of feature maps from DINOv2, each feature map is B x 1024 x L x L (L = 48 for input size 672)
+        fused_features = [None] * len(features)
+        # last_feature_map is B x output_dims[-1] x L/2 x L/2 here
+        last_feature_map = self.fusion_convs[-1](self.lateral_convs[-1](features[-1]))
+        if self.resolutions is not None:
+            # resize to the exact size needed for this feature map, otherwise, leave it at B x output_dims[-1] x L/2 x L/2
+            nn.functional.interpolate(last_feature_map, size=self.resolutions[-1], mode="bilinear", align_corners=False)
+
+        fused_features[-1] = last_feature_map
+
+        # i goes over [0, 1, 2, ..., len(self.output_dims) -2] in reverse order
+        for i in range(len(self.output_dims) - 2, -1, -1):
+            # layer_i_features is of size
+            # B x output_dims[i - 1] x L x L
+            layer_i_features = self.lateral_convs[i](features[i])
+            if i == len(self.output_dims) - 2:
+                # for the next of last (top) feature, use the unfused feature map as top level because it has higher resolution
+                # and hence more info (this is consistent with the old implementation)
+                next_layer_features = features[i + 1]
+            else:
+                next_layer_features = fused_features[i + 1]
+            if self.resolutions is not None:
+                # resize to the exact size needed for this feature map
+                layer_i_features_up = nn.functional.interpolate(
+                    layer_i_features, 
+                    size=self.resolutions[i], 
+                    mode="bilinear",
+                    align_corners=False
+                )
+                next_layer_features_up = nn.functional.interpolate(
+                    next_layer_features, 
+                    size=self.resolutions[i],
+                    mode="bilinear", 
+                    align_corners=False
+                )
+            else:
+                # when no size specified, the last feature map will be L/2 x L/2 and each layer down will be doubles, 
+                # e.g., for 4 layers, the sizes will be 4L x 4L, 2L x 2L, L x L and L/2 x L/2 
+                scale = 2 ** (len(self.output_dims) - 2 - i)
+                out_features_size = (layer_i_features.shape[-2] * scale, layer_i_features.shape[-1] * scale)
+                layer_i_features_up = nn.functional.interpolate(
+                    layer_i_features, 
+                    size=out_features_size, 
+                    mode="bilinear",
+                    align_corners=False
+                )
+                next_layer_features_up = nn.functional.interpolate(
+                    next_layer_features, 
+                    size=out_features_size, 
+                    mode="bilinear", 
+                    align_corners=False
+                )
+
+            fused = self.fusion_convs[i](torch.cat([layer_i_features_up, next_layer_features_up], dim=1))
+            fused_features[i] = fused
+       
+        return fused_features
 
 class FusedFPN(nn.Module):
     def __init__(self, input_dim, out_dims):

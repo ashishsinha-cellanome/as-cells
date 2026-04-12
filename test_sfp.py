@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+from transformers import DinoV2Model, DinoV2Config
 
 class Dinov2WithSFP(nn.Module):
     def __init__(self, original_encoder):
@@ -36,9 +37,10 @@ config = Mask2FormerConfig.from_pretrained('facebook/mask2former-swin-large-coco
 config.backbone_config = Dinov2Config.from_pretrained('facebook/dinov2-base', out_indices=[6,8,10,12])
 model = Mask2FormerForUniversalSegmentation(config)
 
-model.model.pixel_level_module.encoder = Dinov2WithSFP(model.model.pixel_level_module.encoder)
+# model.model.pixel_level_module.encoder = Dinov2WithSFP(model.model.pixel_level_module.encoder)
+model.model.pixel_level_module.encoder = Dinov2Model(model.model.pixel_level_module.encoder)
 
-dummy = torch.randn(1, 3, 640, 640)
+dummy = torch.randn(1, 3, 672, 672)
 out = model(dummy)
 print("Forward pass successful!")
 for i, f in enumerate(model.model.pixel_level_module.encoder(dummy).feature_maps):

@@ -29,10 +29,11 @@ def test_dinov2_feature_resolutions(cfg: DictConfig):
     # Extract the Mask2Former Pixel Level Module Encoder (which is your Dinov2 backbone)
     encoder = model.model.pixel_level_module.encoder
     encoder.eval()
-
+    # breakpoint()
     # Create a dummy image tensor based on Hydra config sizes
     h = cfg.model.mask2former.input_h
     w = cfg.model.mask2former.input_w
+    h, w = 672, 672  # Override to test the specific resolution of interest
     dummy_input = torch.randn(1, 3, h, w)
 
     print(

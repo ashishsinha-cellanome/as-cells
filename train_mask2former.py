@@ -133,6 +133,7 @@ def _setup_callbacks(config: DictConfig):
             verbose=True,
         ),
     ]
+    
     if hasattr(config.model, "ema") and config.model.ema.enabled:
         from utils.ema import EMACallback
 
