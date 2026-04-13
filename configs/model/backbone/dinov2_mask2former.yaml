@@ -5,4 +5,6 @@ pretrained_name_or_path: "facebook/dinov2-base"
 name: "dinov2-base"
 model_name: "${extract_name:${.pretrained_name_or_path}}"
 training_mode: "frozen"  # frozen | lora | full_finetune
-out_indices: [6, 8, 10, 12]
+out_indices: [3, 6, 9, 12]
+fpn_type: "fused"        # fused | tiny | simple | sfp
+intermediate_resolutions: [168, 84, 42, 21]

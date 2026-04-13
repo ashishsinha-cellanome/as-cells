@@ -214,12 +214,57 @@ def build_mask2former_with_dinov2_backbone(
     num_queries: Optional[int] = None,
     out_indices: Optional[List[int]] = None,
     local_files_only: bool = False,
+    fpn_type: str = "fused",
+    intermediate_resolutions: Optional[List[int]] = None,
 ) -> Mask2FormerForUniversalSegmentation:
+
     label2id = {str(name): int(idx) for idx, name in id2label.items()}
     out_indices = out_indices or _default_dinov2_out_indices(
         backbone_pretrained_name_or_path
     )
 
+    # 1. Load the original Mask2Former config to get Swin dimensions
+    orig_config = _from_pretrained_cached_first(
+        Mask2FormerConfig.from_pretrained,
+        repo_id=mask2former_pretrained_name_or_path,
+        local_files_only=local_files_only,
+    )
+
+    # Extract native embed_dim from Swin config (128 for base, 192 for large)
+    embed_dim = orig_config.backbone_config.embed_dim
+    # Automatically generate [embed_dim, 2*embed_dim, 4*embed_dim, 8*embed_dim]
+    intermediate_channel_sizes = [embed_dim * (2**i) for i in range(4)]
+
+    # 2. Import your generic custom config and backbone
+    from models.custom_mask2former_with_dinov2_backbone import (
+        Mask2FormerConfigWithCustomBackBone,
+        Mask2FormerSegmentationWithCustomBackbone,
+    )
+    from models.dinov2_backbone_with_fpn import Dinov2BackBoneWithFPNConfig
+
+    model_config = _from_pretrained_cached_first(
+        Mask2FormerConfigWithCustomBackBone.from_pretrained,
+        repo_id=mask2former_pretrained_name_or_path,
+        id2label=id2label,
+        label2id=label2id,
+        ignore_mismatched_sizes=True,
+    )
+
+    if num_queries is not None:
+        model_config.num_queries = int(num_queries)
+
+    model_config.backbone_config = Dinov2BackBoneWithFPNConfig.from_pretrained(
+        backbone_pretrained_name_or_path,
+        output_indices_for_fpn=out_indices,
+        intermediate_channel_sizes=intermediate_channel_sizes,
+        intermediate_resolutions=intermediate_resolutions,
+        fpn_type=fpn_type,
+    )
+
+    # 3. Instantiate your custom model wrapper
+    model = Mask2FormerSegmentationWithCustomBackbone(model_config)
+
+    # 4. Transfer the pre-trained COCO Mask2Former decoder weights
     pretrained_model = _from_pretrained_cached_first(
         Mask2FormerForUniversalSegmentation.from_pretrained,
         repo_id=mask2former_pretrained_name_or_path,
@@ -228,20 +273,8 @@ def build_mask2former_with_dinov2_backbone(
         ignore_mismatched_sizes=True,
     )
     pretrained_state = pretrained_model.state_dict()
-    model_config = pretrained_model.config
-    model_config.num_labels = len(id2label)
-    model_config.id2label = id2label
-    model_config.label2id = label2id
-    if num_queries is not None:
-        model_config.num_queries = int(num_queries)
-    model_config.backbone_config = _from_pretrained_cached_first(
-        Dinov2Config.from_pretrained,
-        repo_id=backbone_pretrained_name_or_path,
-        out_indices=out_indices,
-    )
-
-    model = Mask2FormerForUniversalSegmentation(model_config)
     current_state = model.state_dict()
+
     transferable_state = {
         key: value
         for key, value in pretrained_state.items()
@@ -251,27 +284,13 @@ def build_mask2former_with_dinov2_backbone(
     }
     model.load_state_dict(transferable_state, strict=False)
 
-    dinov2_model = _from_pretrained_cached_first(
-        Dinov2Model.from_pretrained,
-        repo_id=backbone_pretrained_name_or_path,
-        out_indices=out_indices,
-    )
-    encoder_state = model.model.pixel_level_module.encoder.state_dict()
-    dinov2_state = {
-        key: value
-        for key, value in dinov2_model.state_dict().items()
-        if key in encoder_state and value.shape == encoder_state[key].shape
-    }
-    model.model.pixel_level_module.encoder.load_state_dict(dinov2_state, strict=False)
     _apply_backbone_training_mode(model, training_mode)
-    model.model.pixel_level_module.encoder = Dinov2WithSFP(
-        model.model.pixel_level_module.encoder
-    )
+
+    # Handle LoRA if enabled
     if str(training_mode).lower() == "lora":
         if not lora_config or not bool(lora_config.get("enabled", False)):
             raise ValueError(
-                "Mask2Former LoRA requires model.backbone.training_mode=lora "
-                "and model.lora.enabled=true."
+                "Mask2Former LoRA requires model.backbone.training_mode=lora and model.lora.enabled=true."
             )
         model = _apply_backbone_lora(
             model,
@@ -284,6 +303,7 @@ def build_mask2former_with_dinov2_backbone(
                 str(x) for x in lora_config.get("modules_to_save", []) or []
             ],
         )
+
     return model
 
 

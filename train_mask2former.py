@@ -363,6 +363,12 @@ def main(config: DictConfig):
             local_files_only=bool(
                 config.model.mask2former.get("local_files_only", False)
             ),
+            fpn_type=str(config.model.backbone.get("fpn_type", "fused")),
+            intermediate_resolutions=list(
+                config.model.backbone.get("intermediate_resolutions", [168, 84, 42, 21])
+            )
+            if config.model.backbone.get("intermediate_resolutions")
+            else None,
         )
     else:
         # Original Swin backbone path

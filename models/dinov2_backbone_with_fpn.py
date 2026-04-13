@@ -1,184 +1,275 @@
 import os
-from typing import List
+from typing import Tuple, Union, List, Dict, Final, Optional
 
 import torch
 import torch.nn as nn
 
-from transformers import PreTrainedModel, Dinov2Model, Dinov2Config
+from transformers import PreTrainedModel, PretrainedConfig, Dinov2Model, Dinov2Config
+from transformers.modeling_outputs import BackboneOutput
 from safetensors.torch import save_file as safe_save
 from safetensors.torch import load_file as safe_load
 
-from .dinov2_backbone_with_tiny_fpn import TinyFPN
-import torchshow as ts
 
-
-def plot_embeddings(features, title="Feature Maps"):
-    # features: list of fqeature maps from DINOv2
-    # only plot a max of 8 feature maps
-    feat = features[:, 1:, :]  # remove class token
-    B, N, C = feat.shape
-    grid_size = min(int(C**0.5), 4)
-    H = W = int((N) ** 0.5)
-    # take the first image in the batch
-    feat_img = feat.permute(0, 2, 1).view(B, C, H, W)[0]  # C x H x W
-    # normalize to [0, 1]
-    feat_img = (feat_img - feat_img.min()) / (feat_img.max() - feat_img.min() + 1e-5)
-    # feat_img = feat.norm(dim=-1)
-    # reshape to grid
-
-    feat_img = feat_img[: grid_size * grid_size].reshape(grid_size, grid_size, H, W)
-    feat_img = feat_img.permute(0, 2, 1, 3).reshape(grid_size * H, grid_size * W)
-    # breakpoint()
-    ts.save(feat_img, title=f"{title}.png", cmap="magma")
-
-
-class NoneFPN(nn.Module):
-    def __init__(self, input_dim, out_dims, scale_factor=1):
-        """
-        performs dimensionality reduction and upscales the spatial resolution if needed
-
-        """
+class FusedFPN(nn.Module):
+    def __init__(
+        self,
+        input_dim: int,  # DINOv2 embedding size
+        out_dims: List[int],  # the list of feature sizes for each feature map
+        resolutions: Optional[List[int]] = None,
+    ):
         super().__init__()
-        self.scale_factor = scale_factor
-        self.input_dim = input_dim
+
         self.out_dims = out_dims
+        self.resolutions = resolutions
+        if resolutions is not None:
+            assert len(out_dims) == len(resolutions), (
+                "The number of output resolutions and dimensions should be the same"
+            )
+
+        # convolutions to change the embeddings dimensions
+        self.lateral_convs = nn.ModuleList(
+            [
+                nn.Sequential(
+                    nn.Conv2d(input_dim, output_dim, kernel_size=1, bias=False),
+                    nn.GroupNorm(32, output_dim),
+                )
+                for output_dim in out_dims
+            ]
+        )
+
+        self.fusion_convs = nn.ModuleList(
+            [
+                nn.Sequential(
+                    nn.Conv2d(
+                        out_dims[i] + out_dims[i + 1],
+                        out_dims[i],
+                        kernel_size=3,
+                        stride=1,
+                        padding=1,
+                    ),
+                    nn.GroupNorm(32, out_dims[i]),
+                    nn.GELU(),
+                )
+                for i in range(len(out_dims) - 1)
+            ]
+            + [
+                nn.Sequential(
+                    nn.Conv2d(
+                        out_dims[-1], out_dims[-1], kernel_size=3, stride=1, padding=1
+                    ),
+                    nn.GroupNorm(32, out_dims[-1]),
+                    nn.GELU(),
+                )
+            ]
+        )
 
     def forward(self, features):
-        features_2, features_3, features_4 = features
-        return features
+        assert len(features) == len(self.out_dims), (
+            "The number of input features should be the same as the number of output features"
+        )
+        fused_features = [None] * len(features)
+
+        last_feature_map = self.lateral_convs[-1](features[-1])
+        if self.resolutions is not None:
+            res = self.resolutions[-1]
+            last_feature_map_resized = nn.functional.interpolate(
+                last_feature_map, size=(res, res), mode="bilinear", align_corners=False
+            )
+        else:
+            last_feature_map_resized = nn.functional.interpolate(
+                last_feature_map, scale_factor=0.5, mode="bilinear", align_corners=False
+            )
+
+        fused_features[-1] = self.fusion_convs[-1](
+            last_feature_map_resized
+        )  # no concatenation here
+
+        for i in range(len(self.out_dims) - 2, -1, -1):
+            layer_i_features = self.lateral_convs[i](features[i])
+            if i == len(self.out_dims) - 2:
+                next_layer_features = last_feature_map
+            else:
+                next_layer_features = fused_features[i + 1]
+            if self.resolutions is not None:
+                res = self.resolutions[i]
+                layer_i_features_resized = nn.functional.interpolate(
+                    layer_i_features,
+                    size=(res, res),
+                    mode="bilinear",
+                    align_corners=False,
+                )
+                next_layer_features_resized = nn.functional.interpolate(
+                    next_layer_features,
+                    size=(res, res),
+                    mode="bilinear",
+                    align_corners=False,
+                )
+            else:
+                scale = 2 ** (len(self.out_dims) - 2 - i)
+                out_features_size = (
+                    layer_i_features.shape[-2] * scale,
+                    layer_i_features.shape[-1] * scale,
+                )
+                layer_i_features_resized = nn.functional.interpolate(
+                    layer_i_features,
+                    size=out_features_size,
+                    mode="bilinear",
+                    align_corners=False,
+                )
+                next_layer_features_resized = nn.functional.interpolate(
+                    next_layer_features,
+                    size=out_features_size,
+                    mode="bilinear",
+                    align_corners=False,
+                )
+
+            fused_features[i] = self.fusion_convs[i](
+                torch.cat(
+                    [layer_i_features_resized, next_layer_features_resized], dim=1
+                )
+            )
+
+        return fused_features
+
+
+class TinyFPN(nn.Module):
+    def __init__(
+        self,
+        input_dim: int,
+        out_dims: List[int],
+        resolutions: Optional[List[int]] = None,
+    ):
+        super().__init__()
+        self.resolutions = resolutions
+
+        self.lateral_convs = nn.ModuleList(
+            [nn.Conv2d(input_dim, out_dim, kernel_size=1) for out_dim in out_dims]
+        )
+
+        self.feature_pyramid = nn.ModuleList(
+            [
+                nn.Sequential(
+                    nn.Conv2d(out_dim, out_dim, kernel_size=3, stride=1, padding=1),
+                    nn.GroupNorm(32, out_dim),
+                    nn.ReLU(inplace=True),
+                )
+                for out_dim in out_dims
+            ]
+        )
+
+    def forward(self, features):
+        outs = []
+        for i, (x, conv, py) in enumerate(
+            zip(features, self.lateral_convs, self.feature_pyramid)
+        ):
+            feat = conv(x)
+            if self.resolutions is not None:
+                res = self.resolutions[i]
+                feat = nn.functional.interpolate(
+                    feat, size=(res, res), mode="bilinear", align_corners=False
+                )
+            else:
+                scale = 2 ** (len(features) - 1 - i)
+                if scale > 1:
+                    feat = nn.functional.interpolate(
+                        feat, scale_factor=scale, mode="bilinear", align_corners=False
+                    )
+            outs.append(py(feat))
+        return outs
 
 
 class SimpleFPN(nn.Module):
-    def __init__(self, input_dim, out_dims, scale_factor=1):
+    def __init__(
+        self,
+        input_dim: int,
+        out_dims: List[int],
+        resolutions: Optional[List[int]] = None,
+    ):
         super().__init__()
-        self.scale_factor = scale_factor
-        self.input_dim = input_dim
-        self.out_dims = out_dims
-        self.upsampler = nn.Upsample(
-            scale_factor=scale_factor, mode="bilinear", align_corners=False
-        )
-        self.scale_2x = lambda x, y: nn.functional.interpolate(
-            x, scale_factor=y, mode="bilinear", align_corners=False
-        )
-        # 1x1 lateral convolutions (projections to change the number of channels)
-        self.lateral_conv_2 = nn.Sequential(
-            nn.Conv2d(input_dim, out_dims[0], kernel_size=1),
-            nn.ReLU(),
-            nn.Upsample(scale_factor=4),
-        )
-        self.lateral_conv_3 = nn.Sequential(
-            nn.Conv2d(input_dim, out_dims[1], kernel_size=1),
-            nn.ReLU(),
-            nn.Upsample(scale_factor=2),
-        )
-        self.lateral_conv_4 = nn.Sequential(
-            nn.Conv2d(input_dim, out_dims[2], kernel_size=1), nn.ReLU()
+        self.resolutions = resolutions
+
+        self.lateral_convs = nn.ModuleList(
+            [
+                nn.Sequential(nn.Conv2d(input_dim, out_dim, kernel_size=1), nn.ReLU())
+                for out_dim in out_dims
+            ]
         )
 
     def forward(self, features):
-        # import pdb; pdb.set_trace()
-        # features = list of feature maps from DINOv2
-        features_2, features_3, features_4 = (
-            features  # each feature map is B x 1024 x L x L (L = 48 for input size 672)
-        )
-        p_4 = self.lateral_conv_4(features_4)
-        p_3 = self.lateral_conv_3(features_3)
-        p_2 = self.lateral_conv_2(features_2)
-        if self.scale_factor == 1:
-            return [p_2, p_3, p_4]
-        elif self.scale_factor == 2:
-            return [self.upsampler(p_2), self.upsampler(p_3), self.upsampler(p_4)]
+        outs = []
+        for i, (feat, conv) in enumerate(zip(features, self.lateral_convs)):
+            x = conv(feat)
+            if self.resolutions is not None:
+                res = self.resolutions[i]
+                x = nn.functional.interpolate(
+                    x, size=(res, res), mode="bilinear", align_corners=False
+                )
+            else:
+                scale = 2 ** (len(features) - 1 - i)
+                if scale > 1:
+                    x = nn.functional.interpolate(
+                        x, scale_factor=scale, mode="bilinear", align_corners=False
+                    )
+            outs.append(x)
+        return outs
 
 
-class FusedFPN(nn.Module):
-    def __init__(self, input_dim, out_dims, scale_factor=1):
+class SFP(nn.Module):
+    def __init__(
+        self,
+        input_dim: int,
+        out_dims: List[int],
+        resolutions: Optional[List[int]] = None,
+    ):
         super().__init__()
-        self.scale_factor = scale_factor
-        # 1x1 lateral convolutions (projections to change the number of channels)
-        self.lateral_conv_2 = nn.Conv2d(input_dim, out_dims[0], kernel_size=1)
-        self.lateral_conv_3 = nn.Conv2d(input_dim, out_dims[1], kernel_size=1)
-        self.lateral_conv_4 = nn.Conv2d(input_dim, out_dims[2], kernel_size=1)
+        self.resolutions = resolutions
+        c = input_dim
 
-        # fusion (3x3 convs after addition)
-        # we down-sample the resolution of only the last layer by a factor of 2
-        # we add that at the end
-        self.fusion_conv_2 = nn.Sequential(
-            nn.Conv2d(
-                out_dims[0] + out_dims[1],
-                out_dims[0],
-                kernel_size=3,
-                stride=1,
-                padding=1,
-            ),
-            nn.GroupNorm(32, out_dims[0]),
-            nn.ReLU(inplace=True),
-        )
-        self.fusion_conv_3 = nn.Sequential(
-            nn.Conv2d(
-                out_dims[1] + out_dims[2],
-                out_dims[1],
-                kernel_size=3,
-                stride=1,
-                padding=1,
-            ),
-            nn.GroupNorm(32, out_dims[1]),
-            nn.ReLU(inplace=True),
-        )
+        self.fpns = nn.ModuleList()
+        for i, out_dim in enumerate(out_dims):
+            layers = []
+            if i == 0 and len(out_dims) == 4:
+                layers.extend(
+                    [
+                        nn.ConvTranspose2d(c, c, kernel_size=2, stride=2),
+                        nn.SyncBatchNorm(c)
+                        if torch.cuda.device_count() > 1
+                        else nn.BatchNorm2d(c),
+                        nn.GELU(),
+                        nn.ConvTranspose2d(c, c, kernel_size=2, stride=2),
+                    ]
+                )
+            elif i == len(out_dims) - 3:
+                layers.append(nn.ConvTranspose2d(c, c, kernel_size=2, stride=2))
+            elif i == len(out_dims) - 2:
+                layers.append(nn.Identity())
+            elif i == len(out_dims) - 1:
+                layers.append(nn.MaxPool2d(kernel_size=2, stride=2))
+            else:
+                layers.append(nn.Identity())  # Fallback
 
-        # the last later, since this layer will not be fused with any other layer, out_dims[2]
-        # is the input channel dimention
-        self.fusion_conv_4 = nn.Sequential(
-            nn.Conv2d(out_dims[2], out_dims[2], kernel_size=3, stride=2, padding=1),
-            nn.GroupNorm(32, out_dims[2]),
-            nn.ReLU(inplace=True),
-        )
+            layers.append(nn.Conv2d(c, out_dim, kernel_size=1))
+            self.fpns.append(nn.Sequential(*layers))
 
     def forward(self, features):
-        # features = list of feature maps from DINOv2
-        # breakpoint()
-        features_2, features_3, features_4 = (
-            features  # each feature map is B x 1024 x L x L (L = 48 for input size 672)
-        )
-        # l_4 is B x 512 x L x L
-        l_4 = self.lateral_conv_4(features_4)
-        # p_4 is B x 512 x L/2 x L/2
-        p_4 = self.fusion_conv_4(l_4)
-        # upsample p_4 to L x L
-        p_4_up = nn.functional.interpolate(
-            p_4, scale_factor=2.0, mode="bilinear", align_corners=False
-        )
-        # l_3 is B x 256 x L x L
-        l_3 = self.lateral_conv_3(features_3)
-        # torch.cat([l_3, l_4], dim=1) is B x (256 + 512) x L x L
-        # p_3 is B x 256, L X L
-        p_3 = self.fusion_conv_3(torch.cat([l_3, l_4], dim=1))
-        # upsample p_3 to 2L x 2L
-        p_3_up = nn.functional.interpolate(
-            p_3, scale_factor=2.0, mode="bilinear", align_corners=False
-        )
-        # l_2 is B x 128 x L x L
-        l_2 = self.lateral_conv_2(features_2)
-        # l_2_up is B x 128 x 2*L x 2*L
-        # TODO: upsample from 2x -> 4x
-        l_2_up = nn.functional.interpolate(
-            l_2, scale_factor=2.0, mode="bilinear", align_corners=False
-        )
-        # l_3_up is B x 256 x 2*L x 2*L
-        l_3_up = nn.functional.interpolate(
-            l_3, scale_factor=2.0, mode="bilinear", align_corners=False
-        )
-        # torch.cat([l_2_up, l_3_up], dim=1) is B x (128 + 256) x 2*L x 2*L
-        # p_2 is B x 128, 2*L x 2*L
-        p_2 = self.fusion_conv_2(torch.cat([l_2_up, l_3_up], dim=1))
-
-        p_2_up = nn.functional.interpolate(
-            p_2, scale_factor=2.0, mode="bilinear", align_corners=False
-        )
-        # breakpoint()
-        if self.scale_factor == 1:
-            return [p_2, p_3, p_4]
-        elif self.scale_factor == 2:
-            return [p_2_up, p_3_up, p_4_up]
+        outs = []
+        for i, (feat, py) in enumerate(zip(features, self.fpns)):
+            x = py(feat)
+            if self.resolutions is not None:
+                res = self.resolutions[i]
+                x = nn.functional.interpolate(
+                    x, size=(res, res), mode="bilinear", align_corners=False
+                )
+            else:
+                scale = 2 ** (len(features) - 1 - i)
+                if (
+                    scale > 1 and len(features) != 4
+                ):  # generic scaling if not matching exact SFP expectations
+                    x = nn.functional.interpolate(
+                        x, scale_factor=scale, mode="bilinear", align_corners=False
+                    )
+            outs.append(x)
+        return outs
 
 
 class Dinov2BackBoneWithFPNConfig(Dinov2Config):
@@ -187,19 +278,10 @@ class Dinov2BackBoneWithFPNConfig(Dinov2Config):
     def __init__(
         self,
         dinov2_pretrained_backbone_name_or_path: str = "",
-        first_layer_dims: list[int, int] = [
-            80,
-            80,
-        ],  # to be consistent with the feature map dims of RT-DETRv2 default backbone
         output_indices_for_fpn: List[int] = [8, 10, 12],
-        intermediate_channel_sizes: List[int] = [
-            128,
-            256,
-            512,
-        ],  # to be consistent with the feature map dims of RT-DETRv2 default backbone
-        fpn_type: str = "fused",  # choices fused/tiny/none
-        scale_factor: int = 1,
-        upscale_method: str = "none",  # choices bilinear/deconv/none
+        intermediate_channel_sizes: List[int] = [128, 256, 512],
+        intermediate_resolutions: Optional[List[int]] = None,
+        fpn_type: str = "fused",
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -209,10 +291,8 @@ class Dinov2BackBoneWithFPNConfig(Dinov2Config):
         self.num_fpn_layers: int = len(output_indices_for_fpn)
         self.output_indices_for_fpn: List[int] = output_indices_for_fpn
         self.intermediate_channel_sizes: List[int] = intermediate_channel_sizes
-        self.first_layer_dims: List[int, int] = first_layer_dims
-        self.fpn_type: str = fpn_type
-        self.scale_factor: int = scale_factor
-        self.upscale_method: str = upscale_method
+        self.intermediate_resolutions: Optional[List[int]] = intermediate_resolutions
+        self.fpn_type = fpn_type
 
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path, **kwargs):
@@ -240,7 +320,6 @@ class Dinov2BackBoneWithFPN(PreTrainedModel):
         cls, pretrained_model_name_or_path, *model_args, config=None, **kwargs
     ):
         # if config isn't passed, load it manually
-        # breakpoint()
         if config is None:
             config = Dinov2BackBoneWithFPNConfig.from_pretrained(
                 pretrained_model_name_or_path, **kwargs
@@ -269,17 +348,10 @@ class Dinov2BackBoneWithFPN(PreTrainedModel):
 
     def __init__(self, config):
         super().__init__(config)
-        # breakpoint()
-        # config.fpn_type = 'FusedFPN'  # default FPN type
-        # needed to be used as a backbone for RT-DETR (it is used to build encoder projection conv layers)
+
         self.intermediate_channel_sizes = config.intermediate_channel_sizes
         self.output_indices_for_fpn = config.output_indices_for_fpn
-        self.fpn_type = config.fpn_type
-        self.first_layer_dims = config.first_layer_dims
-        self.scale_factor = config.scale_factor
-        self.upscale_method = config.upscale_method
-        if config.dinov2_pretrained_backbone_name_or_path:
-            # load pre-trained DINOv2 weights if a given path is specified in the config
+        if getattr(config, "dinov2_pretrained_backbone_name_or_path", ""):
             self.backbone = Dinov2Model.from_pretrained(
                 config.dinov2_pretrained_backbone_name_or_path
             )
@@ -288,103 +360,49 @@ class Dinov2BackBoneWithFPN(PreTrainedModel):
                 f"[INFO]: DINOv2 parameters loaded from pretrained path: {config.dinov2_pretrained_backbone_name_or_path}"
             )
         else:
-            # otherwise, randomly initialize the weights for DINOv2
             print(
                 "[WARN]: No path was provided in the config to load DINOv2 parameters. This backbone has to be trained!"
             )
             self.backbone = Dinov2Model(config)
             freeze_dinov2_weights: bool = False
 
-        # freeze backbone parameters
         if freeze_dinov2_weights:
             for param in self.backbone.parameters():
                 param.requires_grad_(False)
 
-        # the DINOv2 hidden later outputs are a list of tensors of size (B, C, H, W) with C=768 or 1024
-        # apply TinyFPN to create multi-scale features
-        # breakpoint()
-        if config.fpn_type == "tiny":
-            self.fpn = TinyFPN(
-                input_dim=config.hidden_size,
-                out_dims=config.intermediate_channel_sizes,
-                first_layer_dims=config.first_layer_dims,
-                scale_factor=config.scale_factor,
-            )
-        elif config.fpn_type == "fused":
-            self.fpn = FusedFPN(
-                input_dim=config.hidden_size,
-                out_dims=config.intermediate_channel_sizes,
-                scale_factor=config.scale_factor,
-            )
-        elif config.fpn_type == "simple":
-            self.fpn = SimpleFPN(
-                input_dim=config.hidden_size,
-                out_dims=config.intermediate_channel_sizes,
-                scale_factor=config.scale_factor,
-            )
+        fpn_args = {
+            "input_dim": config.hidden_size,
+            "out_dims": config.intermediate_channel_sizes,
+            "resolutions": getattr(config, "intermediate_resolutions", None),
+        }
+
+        fpn_type = getattr(config, "fpn_type", "fused")
+        if fpn_type == "fused":
+            self.fpn = FusedFPN(**fpn_args)
+        elif fpn_type == "tiny":
+            self.fpn = TinyFPN(**fpn_args)
+        elif fpn_type == "simple":
+            self.fpn = SimpleFPN(**fpn_args)
+        elif fpn_type == "sfp":
+            self.fpn = SFP(**fpn_args)
         else:
-            # self.fpn = FusedFPN(
-            #     input_dim=config.hidden_size,
-            #     out_dims=config.intermediate_channel_sizes,
-            # )
-            raise ValueError(f"Unsupported FPN type: {config.fpn_type}")
+            raise ValueError(f"Unsupported FPN type: {fpn_type}")
 
         self.post_init()
 
-    def forward(
-        self, pixel_values, pixel_mask=None
-    ):  # pixel_mask incldued for compatibility with RT-DETR backbone
-        # step 1: extract multiple feature maps
-        # breakpoint()
+    def forward(self, pixel_values):
         backbone_outputs = self.backbone(pixel_values, output_hidden_states=True)
         feature_maps = [
             backbone_outputs.hidden_states[i] for i in self.output_indices_for_fpn
-        ]  # 3 layers (8, 10, 12 for the base)
-        # plot_embeddings(feature_maps[0], title="DINOv2_Feature_Map_Layer_" + str(self.output_indices_for_fpn[0]))
-        # plot_embeddings(feature_maps[1], title="DINOv2_Feature_Map_Layer_" + str(self.output_indices_for_fpn[1]))
-        # plot_embeddings(feature_maps[2], title="DINOv2_Feature_Map_Layer_" + str(self.output_indices_for_fpn[2]))
-        # reshape feature maps to (B, C, H, W)
+        ]
+
         processed_feats = []
         for features in feature_maps:
-            # reshape if needed (ViT outputs may be (B, N, C))
             B, N, C = features.shape
-            # subtract the class token
             H = W = int((N - 1) ** 0.5)
-            # TODO: replace transpose with permute?
-            # breakpoint()
             processed_feats.append(
-                features[:, 1:, :].transpose(1, 2).contiguous().reshape(B, C, H, W)
+                features[:, 1:, :].transpose(1, 2).reshape(B, C, H, W)
             )
 
-        # step 2: Apply FPN
-        # upscale the dinov2 features before passing to FPN if needed
-        # import pdb; pdb.set_trace()
-        if self.upscale_method == "dino":
-            # upscale DINOv2 feature maps before FPN
-            # TODO: replace with FeatUp later
-            upsampled_feats = []
-            for feat in processed_feats:
-                upsampled_feat = nn.functional.interpolate(
-                    feat,
-                    scale_factor=self.scale_factor,
-                    mode="bilinear",
-                    align_corners=False,
-                )
-                upsampled_feats.append(upsampled_feat)
-            processed_feats = upsampled_feats
-
-        # breakpoint()
         multi_scale_feats = self.fpn(processed_feats)
-        # print([feat.shape for feat in multi_scale_feats])
-        # breakpoint()
-        out = []
-        for feature_map in multi_scale_feats:
-            if pixel_mask is not None:
-                mask = nn.functional.interpolate(
-                    pixel_mask[None].float(), size=feature_map.shape[-2:]
-                ).to(torch.bool)[0]
-                out.append((feature_map, mask))
-            else:
-                out.append((feature_map,))
-
-        return out
+        return BackboneOutput(feature_maps=tuple(multi_scale_feats))

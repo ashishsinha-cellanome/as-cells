@@ -54,9 +54,9 @@ OmegaConf.register_new_resolver("oc.eval", eval, replace=True)
 torch.set_float32_matmul_precision("medium")
 
 _DEFAULT_PRETRAIN_WEIGHTS_BY_SIZE: Dict[str, str] = {
-    "small": "rf-detr-seg-small.pth",
-    "medium": "rf-detr-seg-medium.pth",
-    "large": "rf-detr-seg-large.pth",
+    "small": "rf-detr-seg-small.pt",
+    "medium": "rf-detr-seg-medium.pt",
+    "large": "rf-detr-seg-large.pt",
 }
 
 _PRETRAIN_DOWNLOAD_WAIT_TIMEOUT_SEC = 300
