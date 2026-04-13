@@ -1,5 +1,5 @@
 name: rf_detr_seg_${model.rfdetr.size}
-input_size: 1024
+input_size: 672
 
 rfdetr:
   size: medium             # small|medium|large
@@ -11,7 +11,7 @@ rfdetr:
   # RF-DETR data/training behavior
   multi_scale: true
   expanded_scales: true
-  do_random_resize_via_padding: true
+  do_random_resize_via_padding: false
   square_resize_div_64: true
   use_ema: true
   ema_decay: 0.993
