@@ -1,17 +1,17 @@
 name: rf_detr_seg_${model.rfdetr.size}
-input_size: 672
+input_size: 1024
 
 rfdetr:
   size: medium             # small|medium|large
   pretrain_weights: null # auto-select size-matched defaults unless explicitly overridden
-  num_queries: 300
+  num_queries: 200
   num_select: ${model.rfdetr.num_queries}
   finetune_mode: queries_head # full|queries_head|queries_decoder_head
 
   # RF-DETR data/training behavior
   multi_scale: true
   expanded_scales: true
-  do_random_resize_via_padding: false
+  do_random_resize_via_padding: true
   square_resize_div_64: true
   use_ema: true
   ema_decay: 0.993
