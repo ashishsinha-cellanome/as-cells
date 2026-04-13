@@ -763,6 +763,19 @@ def main(config: DictConfig):
 
     ckpt_path = _resolve_ckpt_path(config, run_save_dir=config.checkpointing.save_dir)
 
+    # Auto-load RF-DETR specific transforms into the global config for logging/printing
+    transforms_path = os.path.join(
+        hydra.utils.get_original_cwd(), "configs/data/rfdetr_transforms.yaml"
+    )
+    if os.path.exists(transforms_path):
+        rfd_cfg = OmegaConf.load(transforms_path)
+        if hasattr(rfd_cfg, "rfdetr_transforms"):
+            OmegaConf.set_struct(config, False)
+            if not hasattr(config, "data"):
+                config.data = OmegaConf.create({})
+            config.data.transforms = rfd_cfg.rfdetr_transforms
+            OmegaConf.set_struct(config, True)
+
     rank_zero_print(OmegaConf.to_yaml(config))
     if config.test_only:
         if not ckpt_path:

@@ -10,7 +10,7 @@ checkpointing:
   visualize_samples: 100
 
 mask2former:
-  pretrained_name_or_path: facebook/mask2former-swin-base-coco-instance
+  pretrained_name_or_path: "facebook/mask2former-${model.backbone.name}-coco-instance"
   local_files_only: false
   num_queries: 300
   threshold: 0.5
