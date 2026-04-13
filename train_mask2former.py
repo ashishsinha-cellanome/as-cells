@@ -443,6 +443,20 @@ def main(config: DictConfig):
     )
 
     ckpt_path = _resolve_ckpt_path(config, run_save_dir=config.checkpointing.save_dir)
+
+    # Auto-load Mask2Former specific transforms into the global config for logging/printing
+    transforms_path = os.path.join(
+        hydra.utils.get_original_cwd(), "configs/data/mask2former_transforms.yaml"
+    )
+    if os.path.exists(transforms_path):
+        m2f_cfg = OmegaConf.load(transforms_path)
+        if hasattr(m2f_cfg, "transforms"):
+            OmegaConf.set_struct(config, False)
+            if not hasattr(config, "data"):
+                config.data = OmegaConf.create({})
+            config.data.transforms = m2f_cfg.transforms
+            OmegaConf.set_struct(config, True)
+
     rank_zero_print(OmegaConf.to_yaml(config))
 
     if config.test_only:
