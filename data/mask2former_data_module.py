@@ -506,11 +506,19 @@ class Mask2FormerDataModule(pl.LightningDataModule):
                 build_segmentation_coco_gt(ann_path, mask_root)
 
     def setup(self, stage: Optional[str] = None):
+        from utils.distributed_utils import rank_zero_print
+
         if stage in (None, "fit"):
             if self.train_dataset is None:
                 self.train_dataset = self._build_dataset(self.config.train_name)
+                rank_zero_print(
+                    f"[Data] Mask2Former Training Transforms:\n{self.train_dataset.transforms}"
+                )
             if self.val_dataset is None:
                 self.val_dataset = self._build_dataset(self.config.val_name)
+                rank_zero_print(
+                    f"[Data] Mask2Former Validation Transforms:\n{self.val_dataset.transforms}"
+                )
             # COCO objects are now lazy-loaded via properties
 
         if stage in (None, "test"):
@@ -521,6 +529,9 @@ class Mask2FormerDataModule(pl.LightningDataModule):
                     else self.config.test_name
                 )
                 self.test_dataset = self._build_dataset(split_name)
+                rank_zero_print(
+                    f"[Data] Mask2Former Test Transforms:\n{self.test_dataset.transforms}"
+                )
             # COCO objects are now lazy-loaded via properties
 
     @staticmethod
