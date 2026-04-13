@@ -65,10 +65,13 @@ def setup_cluster_env():
     os.environ.setdefault("NCCL_IB_DISABLE", "1")
 
     # Shared Hugging Face cache directory to prevent redownloads across SLURM compute nodes
-    os.environ.setdefault(
-        "HF_HOME",
-        "/project/aip-robsc/asinha/cellanome/DATA/checkpoints/backbones/huggingface_cache",
-    )
+    hostname = socket.gethostname()
+    if "odin" in hostname:
+        hf_cache_dir = "/mnt/direct-attached/checkpoints/backbones/huggingface_cache"
+    else:
+        hf_cache_dir = "/project/aip-robsc/asinha/cellanome/DATA/checkpoints/backbones/huggingface_cache"
+
+    os.environ.setdefault("HF_HOME", hf_cache_dir)
 
 
 def get_rank():
