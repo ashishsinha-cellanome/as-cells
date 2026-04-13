@@ -8,6 +8,7 @@ import torch
 from transformers import (
     Dinov2Config,
     Dinov2Model,
+    Mask2FormerConfig,
     Mask2FormerForUniversalSegmentation,
     Mask2FormerImageProcessor,
 )
