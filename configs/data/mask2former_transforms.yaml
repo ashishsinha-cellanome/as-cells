@@ -1,0 +1,40 @@
+transforms:
+  train:
+    - name: RandomScale
+      params:
+        scale_limit: [ -0.5, 1.0 ]
+        p: 1.0
+    - name: PadIfNeeded
+      params:
+        min_height: ${model.input_size}
+        min_width: ${model.input_size}
+        position: 'random'
+        p: 1.0
+    - name: RandomCrop
+      params:
+        height: ${model.input_size}
+        width: ${model.input_size}
+        pad_if_needed: False
+        p: 1.0
+    - name: HorizontalFlip
+      params: 
+        p: 0.5
+    - name: VerticalFlip
+      params: 
+        p: 0.5
+    - name: RandomRotate90
+      params: 
+        p: 0.5
+    - name: RandomBrightnessContrast
+      params:
+        p: 0.25 
+    - name: HueSaturationValue
+      params:
+        p: 0.25 
+    - name: GaussNoise
+      params:
+        p: 0.25 
+
+  test:
+    - name: NoOp
+      params: {}

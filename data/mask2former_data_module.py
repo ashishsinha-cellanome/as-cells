@@ -233,11 +233,13 @@ class Mask2FormerDataset(Dataset):
         image_root: str | Path,
         mask_root: str | Path,
         image_processor,
+        transforms=None,
     ):
         self.annotation_path = Path(annotation_path)
         self.image_root = Path(image_root)
         self.mask_root = Path(mask_root)
         self.image_processor = image_processor
+        self.transforms = transforms
 
         import time
 
@@ -303,18 +305,37 @@ class Mask2FormerDataset(Dataset):
         image_np = np.array(image)
         sidecar_annotations = self._load_sidecar_annotations(image_info)
 
+        masks = []
+        semantic_ids = []
+        for ann in sidecar_annotations:
+            full_mask = _decode_sidecar_annotation_mask(ann, image_height, image_width)
+            if int(full_mask.sum()) == 0:
+                continue
+            masks.append(full_mask)
+            semantic_ids.append(int(ann["category_id"]))
+
+        # Apply spatial/color augmentations
+        if self.transforms is not None and len(masks) > 0:
+            transformed = self.transforms(image=image_np, masks=masks)
+            image_np = transformed["image"]
+            masks = transformed["masks"]
+        elif self.transforms is not None and len(masks) == 0:
+            transformed = self.transforms(image=image_np)
+            image_np = transformed["image"]
+
+        # Recompute image dimensions post-transform
+        image_height, image_width = image_np.shape[:2]
         instance_map = np.full(
             (image_height, image_width), fill_value=-1, dtype=np.int64
         )
         instance_id_to_semantic_id: dict[int, int] = {}
         instance_id = 1
 
-        for ann in sidecar_annotations:
-            full_mask = _decode_sidecar_annotation_mask(ann, image_height, image_width)
-            if int(full_mask.sum()) == 0:
+        for mask, sem_id in zip(masks, semantic_ids):
+            if int(mask.sum()) == 0:
                 continue
-            instance_map[full_mask > 0] = instance_id
-            instance_id_to_semantic_id[instance_id] = int(ann["category_id"])
+            instance_map[mask > 0] = instance_id
+            instance_id_to_semantic_id[instance_id] = sem_id
             instance_id += 1
 
         processed = self.image_processor(
@@ -365,12 +386,57 @@ class Mask2FormerDataModule(pl.LightningDataModule):
     def _mask_root(self, split_name: str) -> Path:
         return Path(self.dataset_path) / "masks" / split_name
 
+    def _build_transforms(self, split_name: str):
+        import albumentations as A
+        from omegaconf import OmegaConf
+        from utils.dataset_utils import build_transforms_from_config
+
+        is_train = split_name == getattr(self.config, "train_name", "train")
+
+        transforms_path = Path("configs/data/mask2former_transforms.yaml")
+        transform_cfg = None
+
+        if transforms_path.exists():
+            cfg = OmegaConf.load(transforms_path)
+            if hasattr(cfg, "transforms"):
+                transform_cfg = (
+                    cfg.transforms.train if is_train else cfg.transforms.test
+                )
+                if transform_cfg:
+                    # Resolve model input size since OmegaConf.load doesn't have global context
+                    raw_yaml = OmegaConf.to_yaml(transform_cfg)
+                    raw_yaml = raw_yaml.replace(
+                        "${model.input_size}", str(self.config.model.input_size)
+                    )
+                    transform_cfg = OmegaConf.create(raw_yaml)
+
+        if not transform_cfg:
+            if not hasattr(self.config, "data") or not hasattr(
+                self.config.data, "transforms"
+            ):
+                return None
+            transform_cfg = (
+                self.config.data.transforms.train
+                if is_train
+                else self.config.data.transforms.test
+            )
+
+        if not transform_cfg:
+            return None
+
+        trsfms_list = OmegaConf.to_container(transform_cfg, resolve=True)
+        albumentation_list = build_transforms_from_config(trsfms_list)
+
+        # For Mask2Former we only need masks and images to be transformed (no bboxes required)
+        return A.Compose(albumentation_list)
+
     def _build_dataset(self, split_name: str) -> Mask2FormerDataset:
         return Mask2FormerDataset(
             annotation_path=self._annotation_path(split_name),
             image_root=self._image_root(split_name),
             mask_root=self._mask_root(split_name),
             image_processor=self.image_processor,
+            transforms=self._build_transforms(split_name),
         )
 
     def _load_coco(self, split_name: str) -> COCO:
