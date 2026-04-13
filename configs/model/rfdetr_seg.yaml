@@ -15,7 +15,7 @@ rfdetr:
   square_resize_div_64: true
   use_ema: true
   ema_decay: 0.993
-  ema_tau: 100
+  ema_tau: 1000
   lr_scheduler: cosine
   warmup_epochs: 1.0
   lr_min_factor: 0.0
@@ -34,5 +34,5 @@ max_detections: 100 # for crowded scenes, set >= model.rfdetr.num_select (or ove
 ema:
   enabled: true
   decay: 0.993
-  tau: 100
-  warmup_steps: 100
+  tau: 1000
+  warmup_steps: 2000
