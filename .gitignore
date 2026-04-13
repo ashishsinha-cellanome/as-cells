@@ -39,3 +39,6 @@ benchmark_results/
 .gemini/
 gha-creds-*.json
 logs/
+.superpowers/
+docs/superpowers/
+plan2.md
