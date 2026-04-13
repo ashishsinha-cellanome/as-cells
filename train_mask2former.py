@@ -133,7 +133,7 @@ def _setup_callbacks(config: DictConfig):
             verbose=True,
         ),
     ]
-    
+
     if hasattr(config.model, "ema") and config.model.ema.enabled:
         from utils.ema import EMACallback
 
@@ -224,6 +224,14 @@ def main(config: DictConfig):
             "monitor", "val/map"
         )
         config.checkpointing.mode = config.model.checkpointing.get("mode", "max")
+        if "visualize_samples" in config.model.checkpointing:
+            config.checkpointing.visualize_samples = (
+                config.model.checkpointing.visualize_samples
+            )
+        if "visualize_every_n_epochs" in config.model.checkpointing:
+            config.checkpointing.visualize_every_n_epochs = (
+                config.model.checkpointing.visualize_every_n_epochs
+            )
     else:
         config.checkpointing.monitor = "val/map"
         config.checkpointing.mode = "max"
@@ -247,13 +255,20 @@ def main(config: DictConfig):
             sweep_id = os.path.basename(os.path.normpath(hydra_cfg.sweep.dir))
             config.logging.wandb.group = f"sweep_{sweep_id}"
 
+    if getattr(config.data, "num_overfit_samples", 0) > 0:
+        config.debug = True
+
     if config.debug:
         rank_zero_print(
             f"{'!' * 80}\n[DEBUG] Running in DEBUG/OVERFIT mode\n{'!' * 80}"
         )
-        config.trainer.num_overfit_samples = 1
+        overfit_samples = getattr(config.data, "num_overfit_samples", 1)
+        config.trainer.num_overfit_samples = (
+            overfit_samples if overfit_samples > 0 else 1
+        )
         config.data.eval_batch_size = config.data.batch_size
-        config.run_name = f"DEBUG_{config.run_name}"
+        if not str(config.run_name).startswith("DEBUG_"):
+            config.run_name = f"DEBUG_{config.run_name}"
 
     base_save_dir = to_absolute_path(config.checkpointing.save_dir)
     run_save_dir = os.path.join(base_save_dir, config.run_name)
