@@ -2,8 +2,6 @@ import torch
 import torchvision.transforms.functional as F
 
 from packaging import version
-from typing import Optional, List
-from torch import Tensor
 
 # needed due to empty tensor bug in pytorch and torchvision 0.5
 import torchvision

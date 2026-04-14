@@ -12,7 +12,7 @@ from torch.cuda.amp.grad_scaler import GradScaler
 from torch.utils.tensorboard import SummaryWriter
 
 from pathlib import Path
-from typing import Callable, List, Dict
+from typing import Callable
 
 
 __all__ = [

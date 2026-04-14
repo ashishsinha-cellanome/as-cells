@@ -6,9 +6,7 @@ Modified from D-FINE (https://github.com/Peterande/D-FINE/)
 Copyright (c) 2024 D-FINE Authors. All Rights Reserved.
 """
 
-import math
 import copy
-import functools
 from collections import OrderedDict
 
 import torch
@@ -20,8 +18,6 @@ from typing import List
 from ..core import register
 from .denoising import get_contrastive_denoising_training_group
 from .utils import (
-    deformable_attention_core_func_v2,
-    get_activation,
     inverse_sigmoid,
     bias_init_with_prob,
 )

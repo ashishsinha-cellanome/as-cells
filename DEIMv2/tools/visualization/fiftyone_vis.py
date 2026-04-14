@@ -9,7 +9,6 @@ import sys
 import time
 
 import fiftyone as fo
-import fiftyone.core.fields as fof
 import fiftyone.core.labels as fol
 import fiftyone.core.models as fom
 import fiftyone.zoo as foz

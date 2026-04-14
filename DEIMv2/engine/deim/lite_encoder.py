@@ -9,10 +9,8 @@ Copyright (c) 2024 D-FINE Authors. All Rights Reserved.
 import copy
 from collections import OrderedDict
 
-import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from functools import partial
 
 from .utils import get_activation
 
