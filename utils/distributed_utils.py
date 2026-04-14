@@ -71,7 +71,9 @@ def setup_cluster_env():
     else:
         hf_cache_dir = "/project/aip-robsc/asinha/cellanome/DATA/checkpoints/backbones/huggingface_cache"
 
-    os.environ.setdefault("HF_HOME", hf_cache_dir)
+    # Force HF_HOME to the cluster-specific path, ignoring prior shell settings
+    # to avoid PermissionErrors when trying to write to read-only mounts.
+    os.environ["HF_HOME"] = hf_cache_dir
 
 
 def get_rank():
