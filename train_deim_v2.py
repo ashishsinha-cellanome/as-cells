@@ -178,13 +178,20 @@ def main(config: DictConfig):
             sweep_id = os.path.basename(os.path.normpath(hydra_cfg.sweep.dir))
             config.logging.wandb.group = f"sweep_{sweep_id}"
 
+    if getattr(config.data, "num_overfit_samples", 0) > 0:
+        config.debug = True
+
     if config.debug:
         rank_zero_print(
             f"{'!' * 80}\n[DEBUG] Running in DEBUG/OVERFIT mode\n{'!' * 80}"
         )
-        config.trainer.num_overfit_samples = 10
+        overfit_samples = getattr(config.data, "num_overfit_samples", 1)
+        config.trainer.num_overfit_samples = (
+            overfit_samples if overfit_samples > 0 else 1
+        )
         config.data.eval_batch_size = config.data.batch_size
-        config.run_name = f"DEBUG_{config.run_name}"
+        if not str(config.run_name).startswith("DEBUG_"):
+            config.run_name = f"DEBUG_{config.run_name}"
 
     base_save_dir = to_absolute_path(config.checkpointing.save_dir)
     run_save_dir = os.path.join(base_save_dir, config.run_name)
@@ -235,12 +242,16 @@ def main(config: DictConfig):
 
     val_annot_path = os.path.join(dataset_path, "images", config.val_name)
     val_json_path = os.path.join(dataset_path, f"{config.val_name}_annotations.json")
-    val_coco_dataset = CocoDetection(root=val_annot_path, annFile=val_json_path, transforms=None)
+    val_coco_dataset = CocoDetection(
+        root=val_annot_path, annFile=val_json_path, transforms=None
+    )
     val_coco_gt = val_coco_dataset.coco
 
     test_annot_path = os.path.join(dataset_path, "images", config.test_name)
     test_json_path = os.path.join(dataset_path, f"{config.test_name}_annotations.json")
-    test_coco_dataset = CocoDetection(root=test_annot_path, annFile=test_json_path, transforms=None)
+    test_coco_dataset = CocoDetection(
+        root=test_annot_path, annFile=test_json_path, transforms=None
+    )
     test_coco_gt = test_coco_dataset.coco
 
     lightning_model = DeimV2LightningModule(
