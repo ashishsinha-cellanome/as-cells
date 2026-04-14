@@ -168,6 +168,12 @@ def _build_query_compatible_pretrain_weights(
         new_query[source_rows:] = _init_rows_from_pretrained_stats(
             query_tensor, extra_rows
         )
+        extra_queries = int(requested_num_queries) - source_num_queries
+        rank_zero_print(
+            f"[Startup] ⚠️  Expanded queries from {source_num_queries} to {int(requested_num_queries)}. "
+            f"The {extra_queries} extra queries were initialized randomly using a Normal distribution "
+            f"derived from the pretrained query statistics (mean and scaled standard deviation)."
+        )
 
     compatible_ckpt = copy.deepcopy(checkpoint)
     compatible_model_state = dict(model_state)
