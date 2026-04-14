@@ -30,7 +30,7 @@ for lr in "${LRS[@]}"; do
   for sched in "${SCHEDULERS[@]}"; do
     for fpn in "${FPN_TYPES[@]}"; do
       for data_path in "${DATA_CONFIG[@]}"; do
-        CONFIGS+=("model.input_size=512 optimizer.optimizer.lr=${lr} scheduler=${sched} model.backbone.fpn_type=${fpn} data=${data_path}")
+        CONFIGS+=("model.input_size=672 optimizer.optimizer.lr=${lr} scheduler=${sched} model.backbone.fpn_type=${fpn} data=${data_path}")
       done
     done
   done

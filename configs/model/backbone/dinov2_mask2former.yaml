@@ -4,6 +4,7 @@ type: "dinov2"
 pretrained_name_or_path: "facebook/dinov2-base"
 name: "dinov2-base"
 model_name: "${extract_name:${.pretrained_name_or_path}}"
+decoder_name: "swin-large"
 training_mode: "frozen"  # frozen | lora | full_finetune
 out_indices: [3, 6, 9, 12]
 fpn_type: "fused"        # fused | tiny | simple | sfp
