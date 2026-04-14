@@ -658,12 +658,6 @@ def main(config: DictConfig):
             ),
             run_save_dir=run_save_dir,
         )
-    _maybe_raise_max_detections(
-        config=config,
-        requested_num_select=(
-            int(model_kwargs["num_select"]) if "num_select" in model_kwargs else None
-        ),
-    )
     _log_effective_model_config(config.model.rfdetr.size, model_kwargs)
 
     rf_wrapper = rf_model_cls(**model_kwargs)
