@@ -28,7 +28,7 @@ label_map:
   3: "soma"
 
 detection_threshold: 0.05
-draw_threshold: 0.4
+draw_threshold: 0.5
 max_detections: 100 # for crowded scenes, set >= model.rfdetr.num_select (or override via CLI)
 
 ema:
