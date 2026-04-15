@@ -1,11 +1,11 @@
 #!/bin/bash
 #SBATCH --job-name=deimv2
 #SBATCH --account=aip-robsc
-#SBATCH --nodes=1
+#SBATCH --nodes=4
 #SBATCH --mail-user=ashish.sinha@amii.ca
 #SBATCH --mail-type=END,FAIL,BEGIN
-#SBATCH --gpus-per-node=4
-#SBATCH --ntasks-per-node=4
+#SBATCH --gpus-per-node=1
+#SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem-per-gpu=32G
 #SBATCH --array=0-3
@@ -28,13 +28,13 @@ SCHEDULERS=("onecycle")
 DATA_CONFIG=("vulcan_no300_eval")
 CONFIGS=()
 for lr in "${LRS[@]}"; do
-    for sched in "${SCHEDULERS[@]}"; do
-        for model_size in "${MODEL_SIZE[@]}"; do
-            for data_path in "${DATA_CONFIG[@]}"; do
-                CONFIGS+=("optimizer.optimizer.lr=${lr} model.deimv2.size=${model_size} scheduler=${sched} data=${data_path}")
-            done
-        done
+  for sched in "${SCHEDULERS[@]}"; do
+    for model_size in "${MODEL_SIZE[@]}"; do
+      for data_path in "${DATA_CONFIG[@]}"; do
+        CONFIGS+=("model.deimv2.decoder.num_denoising=0 optimizer.optimizer.lr=${lr} model.deimv2.size=${model_size} scheduler=${sched} data=${data_path}")
+      done
     done
+  done
 done
 
 # Extract the specific config string for this task's ID
@@ -47,6 +47,6 @@ echo "========================================================"
 
 # Run the training command
 srun uv run train_deim_v2.py \
-    model=deimv2 \
-    trainer.max_epochs=100 \
-    ${MY_CONFIG}
+  model=deimv2 \
+  trainer.max_epochs=50 \
+  ${MY_CONFIG}

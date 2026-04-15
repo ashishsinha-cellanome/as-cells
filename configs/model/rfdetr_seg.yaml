@@ -7,7 +7,7 @@ rfdetr:
   num_queries: null
   expand_query: false
   num_select: ${model.rfdetr.num_queries}
-  finetune_mode: queries_head # full|queries_head|queries_decoder_head
+  finetune_mode: queries_decoder_head # full|queries_head|queries_decoder_head
 
   # RF-DETR data/training behavior
   multi_scale: true

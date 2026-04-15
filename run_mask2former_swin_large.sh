@@ -1,11 +1,11 @@
 #!/bin/bash
 #SBATCH --job-name=m2f_swinL
 #SBATCH --account=aip-robsc
-#SBATCH --nodes=1
+#SBATCH --nodes=4
 #SBATCH --mail-user=ashish.sinha@amii.ca
 #SBATCH --mail-type=END,FAIL,BEGIN
-#SBATCH --gpus-per-node=4
-#SBATCH --ntasks-per-node=4
+#SBATCH --gpus-per-node=1
+#SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=2
 #SBATCH --mem-per-gpu=32G
 #SBATCH --array=0-3
@@ -28,7 +28,7 @@ CONFIGS=()
 for lr in "${LRS[@]}"; do
   for sched in "${SCHEDULERS[@]}"; do
     for data_path in "${DATA_CONFIG[@]}"; do
-      CONFIGS+=("model.input_size=512 optimizer.optimizer.lr=${lr} scheduler=${sched} data=${data_path}")
+      CONFIGS+=("model.input_size=640 optimizer.optimizer.lr=${lr} scheduler=${sched} data=${data_path}")
     done
   done
 done
