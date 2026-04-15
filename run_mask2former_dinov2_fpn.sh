@@ -1,11 +1,11 @@
 #!/bin/bash
 #SBATCH --job-name=m2f_dinoFPN
 #SBATCH --account=aip-robsc
-#SBATCH --nodes=1
+#SBATCH --nodes=8
 #SBATCH --mail-user=ashish.sinha@amii.ca
 #SBATCH --mail-type=END,FAIL,BEGIN
-#SBATCH --gpus-per-node=4
-#SBATCH --ntasks-per-node=4
+#SBATCH --gpus-per-node=1
+#SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=2
 #SBATCH --mem-per-gpu=32G
 #SBATCH --array=0-11
@@ -23,7 +23,7 @@ echo "Array Task ID: $SLURM_ARRAY_TASK_ID"
 LRS=("3e-4" "5e-5")
 SCHEDULERS=("onecycle" "multistep")
 FPN_TYPES=("fused" "sfp" "tiny")
-DATA_CONFIG=("vulcan_no300_eval_train_plus_valgt300")
+DATA_CONFIG=("vulcan_no300_eval")
 
 CONFIGS=()
 for lr in "${LRS[@]}"; do
