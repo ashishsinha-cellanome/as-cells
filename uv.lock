@@ -722,6 +722,7 @@ name = "dl-mehdi"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "accelerate" },
     { name = "albumentations" },
     { name = "black" },
     { name = "calflops" },
@@ -763,6 +764,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "accelerate", specifier = ">=1.13.0" },
     { name = "albumentations", specifier = ">=1.4" },
     { name = "black", specifier = ">=26.1.0" },
     { name = "calflops", specifier = ">=0.3.2" },

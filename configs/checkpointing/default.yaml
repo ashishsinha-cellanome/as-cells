@@ -18,4 +18,4 @@ rtdetr_initial_checkpoint: "${hydra:runtime.cwd}/checkpoints/${checkpointing._fo
 val_image_dir: "${hydra:runtime.cwd}"
 visualization_dir: "predictions"
 visualize_every_n_epochs: 5
-visualize_samples: -1 # set -1 to save all samples (can be very slow on large val/test sets)
+visualize_samples: 100 # set -1 to save all samples (can be very slow on large val/test sets)
