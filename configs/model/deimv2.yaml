@@ -86,4 +86,4 @@ ema:
   enabled: true
   decay: 0.9998 # matches DEIM default
   tau: 2000
-  warmup_steps: 1000
+  warmup_steps: 2000

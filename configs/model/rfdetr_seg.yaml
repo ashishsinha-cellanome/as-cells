@@ -4,7 +4,8 @@ input_size: 672
 rfdetr:
   size: medium             # small|medium|large
   pretrain_weights: null # auto-select size-matched defaults unless explicitly overridden
-  num_queries: 200
+  num_queries: null
+  expand_query: false
   num_select: ${model.rfdetr.num_queries}
   finetune_mode: queries_decoder_head # full|queries_head|queries_decoder_head
 

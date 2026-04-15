@@ -98,6 +98,7 @@ def _build_query_compatible_pretrain_weights(
     pretrain_weights: str,
     requested_num_queries: Optional[int],
     run_save_dir: str,
+    expand_query: bool = False,
 ) -> str:
     if requested_num_queries is None:
         return pretrain_weights
@@ -140,10 +141,14 @@ def _build_query_compatible_pretrain_weights(
 
     source_num_queries = _extract_checkpoint_num_queries(checkpoint)
     if source_num_queries is None or source_num_queries <= 0:
+        source_num_queries = ref_tensor.shape[0] // 13
         rank_zero_print(
-            "[Startup] Query-compat skipped: could not infer source num_queries from checkpoint args."
+            f"[Startup] Query-compat: inferred source num_queries={source_num_queries} from tensor shape."
         )
-        return pretrain_weights
+
+    if requested_num_queries is not None and requested_num_queries > source_num_queries:
+        if not expand_query:
+            raise ValueError(f"Requested num_queries={requested_num_queries} is greater than source num_queries={source_num_queries}. Please pass model.rfdetr.expand_query=True to allow increasing the number of queries.")
 
     source_rows = int(ref_tensor.shape[0])
     if source_rows % source_num_queries != 0:
@@ -654,6 +659,7 @@ def main(config: DictConfig):
     )
 
     requested_num_queries = model_kwargs.get("num_queries")
+    expand_query = config.model.rfdetr.get("expand_query", False)
     if "pretrain_weights" in model_kwargs:
         model_kwargs["pretrain_weights"] = _build_query_compatible_pretrain_weights(
             pretrain_weights=str(model_kwargs["pretrain_weights"]),
@@ -663,6 +669,7 @@ def main(config: DictConfig):
                 else None
             ),
             run_save_dir=run_save_dir,
+            expand_query=expand_query,
         )
     _log_effective_model_config(config.model.rfdetr.size, model_kwargs)
 

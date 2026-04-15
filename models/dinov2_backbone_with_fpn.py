@@ -63,14 +63,18 @@ class FusedFPN(nn.Module):
             ]
         )
 
-    def forward(self, features):
+    def forward(self, features, target_sizes=None):
         assert len(features) == len(self.out_dims), (
             "The number of input features should be the same as the number of output features"
         )
         fused_features = [None] * len(features)
 
         last_feature_map = self.lateral_convs[-1](features[-1])
-        if self.resolutions is not None:
+        if target_sizes is not None:
+            last_feature_map_resized = nn.functional.interpolate(
+                last_feature_map, size=target_sizes[-1], mode="bilinear", align_corners=False
+            )
+        elif self.resolutions is not None:
             res = self.resolutions[-1]
             last_feature_map_resized = nn.functional.interpolate(
                 last_feature_map, size=(res, res), mode="bilinear", align_corners=False
@@ -90,7 +94,20 @@ class FusedFPN(nn.Module):
                 next_layer_features = last_feature_map
             else:
                 next_layer_features = fused_features[i + 1]
-            if self.resolutions is not None:
+            if target_sizes is not None:
+                layer_i_features_resized = nn.functional.interpolate(
+                    layer_i_features,
+                    size=target_sizes[i],
+                    mode="bilinear",
+                    align_corners=False,
+                )
+                next_layer_features_resized = nn.functional.interpolate(
+                    next_layer_features,
+                    size=target_sizes[i],
+                    mode="bilinear",
+                    align_corners=False,
+                )
+            elif self.resolutions is not None:
                 res = self.resolutions[i]
                 layer_i_features_resized = nn.functional.interpolate(
                     layer_i_features,
@@ -157,13 +174,17 @@ class TinyFPN(nn.Module):
             ]
         )
 
-    def forward(self, features):
+    def forward(self, features, target_sizes=None):
         outs = []
         for i, (x, conv, py) in enumerate(
             zip(features, self.lateral_convs, self.feature_pyramid)
         ):
             feat = conv(x)
-            if self.resolutions is not None:
+            if target_sizes is not None:
+                feat = nn.functional.interpolate(
+                    feat, size=target_sizes[i], mode="bilinear", align_corners=False
+                )
+            elif self.resolutions is not None:
                 res = self.resolutions[i]
                 feat = nn.functional.interpolate(
                     feat, size=(res, res), mode="bilinear", align_corners=False
@@ -195,11 +216,15 @@ class SimpleFPN(nn.Module):
             ]
         )
 
-    def forward(self, features):
+    def forward(self, features, target_sizes=None):
         outs = []
         for i, (feat, conv) in enumerate(zip(features, self.lateral_convs)):
             x = conv(feat)
-            if self.resolutions is not None:
+            if target_sizes is not None:
+                x = nn.functional.interpolate(
+                    x, size=target_sizes[i], mode="bilinear", align_corners=False
+                )
+            elif self.resolutions is not None:
                 res = self.resolutions[i]
                 x = nn.functional.interpolate(
                     x, size=(res, res), mode="bilinear", align_corners=False
@@ -251,11 +276,15 @@ class SFP(nn.Module):
             layers.append(nn.Conv2d(c, out_dim, kernel_size=1))
             self.fpns.append(nn.Sequential(*layers))
 
-    def forward(self, features):
+    def forward(self, features, target_sizes=None):
         outs = []
         for i, (feat, py) in enumerate(zip(features, self.fpns)):
             x = py(feat)
-            if self.resolutions is not None:
+            if target_sizes is not None:
+                x = nn.functional.interpolate(
+                    x, size=target_sizes[i], mode="bilinear", align_corners=False
+                )
+            elif self.resolutions is not None:
                 res = self.resolutions[i]
                 x = nn.functional.interpolate(
                     x, size=(res, res), mode="bilinear", align_corners=False
@@ -376,15 +405,25 @@ class Dinov2BackBoneWithFPN(PreTrainedModel):
             backbone_outputs.hidden_states[i] for i in self.output_indices_for_fpn
         ]
 
+        orig_B, orig_C, orig_H, orig_W = pixel_values.shape
+        H = orig_H // 14
+        W = orig_W // 14
+
         processed_feats = []
         for features in feature_maps:
             B, N, C = features.shape
-            H = W = int((N - 1) ** 0.5)
             processed_feats.append(
                 features[:, 1:, :].transpose(1, 2).reshape(B, C, H, W)
             )
 
-        multi_scale_feats = self.fpn(processed_feats)
+        target_sizes = [
+            (orig_H // 4, orig_W // 4),
+            (orig_H // 8, orig_W // 8),
+            (orig_H // 16, orig_W // 16),
+            (orig_H // 32, orig_W // 32),
+        ]
+        
+        multi_scale_feats = self.fpn(processed_feats, target_sizes=target_sizes[:len(processed_feats)])
 
         if pixel_mask is not None:
             out = []
