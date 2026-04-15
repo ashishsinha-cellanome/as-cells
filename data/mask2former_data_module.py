@@ -604,6 +604,7 @@ class Mask2FormerDataModule(pl.LightningDataModule):
             shuffle=True,
             num_workers=int(self.config.data.num_workers),
             collate_fn=self.collate_fn,
+            drop_last=True,
             pin_memory=True,
         )
 
@@ -616,6 +617,7 @@ class Mask2FormerDataModule(pl.LightningDataModule):
             num_workers=int(self.config.data.num_workers),
             collate_fn=self.collate_fn,
             pin_memory=True,
+            drop_last=True
         )
 
     def test_dataloader(self):
@@ -627,4 +629,5 @@ class Mask2FormerDataModule(pl.LightningDataModule):
             num_workers=int(self.config.data.num_workers),
             collate_fn=self.collate_fn,
             pin_memory=True,
+            drop_last=True
         )
