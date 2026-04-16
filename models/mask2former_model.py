@@ -247,7 +247,7 @@ def build_mask2former_with_dinov2_backbone(
         Mask2FormerSegmentationWithCustomBackbone,
     )
     from models.dinov2_backbone_with_fpn import Dinov2BackBoneWithFPNConfig
-    from models.dinov2_adapter import Dinov2AdapterConfig, Dinov2Adapter
+    from models.dinov2_adapter import Dinov2AdapterConfig
 
     model_config = _from_pretrained_cached_first(
         Mask2FormerConfigWithCustomBackBone.from_pretrained,

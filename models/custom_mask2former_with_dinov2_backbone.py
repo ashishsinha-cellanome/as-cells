@@ -10,7 +10,7 @@ from models.dinov2_backbone_with_fpn import (
     Dinov2BackBoneWithFPNConfig,
     Dinov2BackBoneWithFPN,
 )
-from models.dinov2_adapter import Dinov2AdapterConfig
+from models.dinov2_adapter import Dinov2AdapterConfig, Dinov2Adapter
 
 
 class Mask2FormerConfigWithCustomBackBone(Mask2FormerConfig):
@@ -129,9 +129,7 @@ class Mask2FormerSegmentationWithCustomBackbone(Mask2FormerForUniversalSegmentat
             # now configure the backbone, the backbone here may not be consistent with the rest of the model if the ERROR above is shown
             # note that Dinov2BackBoneWithFPN(backbone_config) automatically load the DINOv2 pre-trained weights from the checkpoint
             # included in backbone_config and freeze them
-            if type(backbone_config).__name__ == "Dinov2AdapterConfig":
-                from models.dinov2_adapter import Dinov2Adapter
-
+            if isinstance(backbone_config, Dinov2AdapterConfig):
                 self.model.pixel_level_module.encoder = Dinov2Adapter(backbone_config)
             else:
                 self.model.pixel_level_module.encoder = Dinov2BackBoneWithFPN(
