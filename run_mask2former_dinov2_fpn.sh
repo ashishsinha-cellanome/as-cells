@@ -47,6 +47,6 @@ srun uv run train_mask2former.py \
   model=mask2former \
   model/backbone=dinov2_mask2former \
   trainer.max_epochs=50 \
-  data.batch_size=16 \
+  data.batch_size=8 \
   model.mask2former.num_queries=300 \
   ${MY_CONFIG}
