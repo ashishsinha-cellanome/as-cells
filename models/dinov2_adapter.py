@@ -1,7 +1,5 @@
 import torch
 import torch.nn as nn
-from transformers import Dinov2Model, Dinov2Config
-from transformers import PreTrainedModel
 
 
 class SpatialPriorModule(nn.Module):
@@ -12,40 +10,30 @@ class SpatialPriorModule(nn.Module):
         # Extract Stride 4 (Initial spatial resolution)
         self.stem = nn.Sequential(
             nn.Conv2d(in_channels, embed_dim // 4, kernel_size=3, stride=2, padding=1),
-            nn.SyncBatchNorm(embed_dim // 4)
-            if torch.cuda.device_count() > 1
-            else nn.BatchNorm2d(embed_dim // 4),
+            nn.BatchNorm2d(embed_dim // 4),
             nn.GELU(),
             nn.Conv2d(
                 embed_dim // 4, embed_dim // 2, kernel_size=3, stride=2, padding=1
             ),
-            nn.SyncBatchNorm(embed_dim // 2)
-            if torch.cuda.device_count() > 1
-            else nn.BatchNorm2d(embed_dim // 2),
+            nn.BatchNorm2d(embed_dim // 2),
             nn.GELU(),
             nn.Conv2d(
                 embed_dim // 2, embed_dim // 2, kernel_size=3, stride=1, padding=1
             ),
-            nn.SyncBatchNorm(embed_dim // 2)
-            if torch.cuda.device_count() > 1
-            else nn.BatchNorm2d(embed_dim // 2),
+            nn.BatchNorm2d(embed_dim // 2),
             nn.GELU(),
         )
 
         # Stride 8 downsample
         self.down1 = nn.Sequential(
             nn.Conv2d(embed_dim // 2, embed_dim, kernel_size=3, stride=2, padding=1),
-            nn.SyncBatchNorm(embed_dim)
-            if torch.cuda.device_count() > 1
-            else nn.BatchNorm2d(embed_dim),
+            nn.BatchNorm2d(embed_dim),
         )
 
         # Stride 16 downsample
         self.down2 = nn.Sequential(
             nn.Conv2d(embed_dim, embed_dim, kernel_size=3, stride=2, padding=1),
-            nn.SyncBatchNorm(embed_dim)
-            if torch.cuda.device_count() > 1
-            else nn.BatchNorm2d(embed_dim),
+            nn.BatchNorm2d(embed_dim),
         )
 
     def forward(self, x):
