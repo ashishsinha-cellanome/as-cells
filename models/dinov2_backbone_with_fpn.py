@@ -10,6 +10,22 @@ from safetensors.torch import save_file as safe_save
 from safetensors.torch import load_file as safe_load
 
 
+def _init_fpn_weights(m):
+    if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
+        nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
+        if m.bias is not None:
+            nn.init.constant_(m.bias, 0)
+    elif (
+        isinstance(m, nn.GroupNorm)
+        or isinstance(m, nn.BatchNorm2d)
+        or isinstance(m, nn.SyncBatchNorm)
+    ):
+        if m.weight is not None:
+            nn.init.constant_(m.weight, 1)
+        if m.bias is not None:
+            nn.init.constant_(m.bias, 0)
+
+
 class FusedFPN(nn.Module):
     def __init__(
         self,
@@ -63,6 +79,8 @@ class FusedFPN(nn.Module):
             ]
         )
 
+        self.apply(_init_fpn_weights)
+
     def forward(self, features, target_sizes=None):
         assert len(features) == len(self.out_dims), (
             "The number of input features should be the same as the number of output features"
@@ -72,7 +90,10 @@ class FusedFPN(nn.Module):
         last_feature_map = self.lateral_convs[-1](features[-1])
         if target_sizes is not None:
             last_feature_map_resized = nn.functional.interpolate(
-                last_feature_map, size=target_sizes[-1], mode="bilinear", align_corners=False
+                last_feature_map,
+                size=target_sizes[-1],
+                mode="bilinear",
+                align_corners=False,
             )
         elif self.resolutions is not None:
             res = self.resolutions[-1]
@@ -422,8 +443,10 @@ class Dinov2BackBoneWithFPN(PreTrainedModel):
             (orig_H // 16, orig_W // 16),
             (orig_H // 32, orig_W // 32),
         ]
-        
-        multi_scale_feats = self.fpn(processed_feats, target_sizes=target_sizes[:len(processed_feats)])
+
+        multi_scale_feats = self.fpn(
+            processed_feats, target_sizes=target_sizes[: len(processed_feats)]
+        )
 
         if pixel_mask is not None:
             out = []

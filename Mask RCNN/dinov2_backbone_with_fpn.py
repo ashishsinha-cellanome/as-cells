@@ -8,65 +8,76 @@ from transformers import PreTrainedModel, Dinov2Model, Dinov2Config
 from safetensors.torch import save_file as safe_save
 from safetensors.torch import load_file as safe_load
 
+
+def _init_fpn_weights(m):
+    if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
+        nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
+        if m.bias is not None:
+            nn.init.constant_(m.bias, 0)
+    elif (
+        isinstance(m, nn.GroupNorm)
+        or isinstance(m, nn.BatchNorm2d)
+        or isinstance(m, nn.SyncBatchNorm)
+    ):
+        if m.weight is not None:
+            nn.init.constant_(m.weight, 1)
+        if m.bias is not None:
+            nn.init.constant_(m.bias, 0)
+
+
 class FusedFPN_New(nn.Module):
     def __init__(
-        self, 
-        input_dim: int,                    # DINOv2 embedding size
-        output_dims: List[int],            # the list of feature sizes for each feature map
-        resolutions: List[Tuple[int, int]] = None
+        self,
+        input_dim: int,  # DINOv2 embedding size
+        output_dims: List[int],  # the list of feature sizes for each feature map
+        resolutions: List[Tuple[int, int]] = None,
     ):
         # resolutions is a list of the same size as output_dims indicating the requires resolution (in (height, width) for each feature map
-        # when None is passed, the last feature map will be L/2 x L/2, where L is the DINOv2 feature resolution (image size / patch size) 
-        # and each layer down will be doubled, e.g., for 4 layers, the sizes will be 4L x 4L, 2L x 2L, L x L and L/2 x L/2 
+        # when None is passed, the last feature map will be L/2 x L/2, where L is the DINOv2 feature resolution (image size / patch size)
+        # and each layer down will be doubled, e.g., for 4 layers, the sizes will be 4L x 4L, 2L x 2L, L x L and L/2 x L/2
         super().__init__()
 
         self.output_dims = output_dims
         self.resolutions = resolutions
         if resolutions is not None:
-            assert len(output_dims) == len(resolutions), "The number of output resolutions and dimentions should be the same"
+            assert len(output_dims) == len(resolutions), (
+                "The number of output resolutions and dimentions should be the same"
+            )
         # convolutions to change the embeddings dimensions
         self.lateral_convs = nn.ModuleList(
             [
                 nn.Sequential(
-                    nn.Conv2d(input_dim, output_dim, kernel_size=1, bias=False),
-                    nn.GroupNorm(32, output_dim),
-                )
-                for output_dim in output_dims
-            ]
-        )
-
-        # fusion convolusions, top-down
-        # this is how the feature map fusion is done
-        # the last/top feature map (the lowest resolution, richest semantics) is obtained by downsampling the 
-        # last DINOv2 hidden layer by a factor of 2 and potentially resizing to an exact size (needed for Mask2Former); no fusion is done
-        # with other layers for this top feature map layer
-        # then for any i < last, feature map i and i + 1 will be extrapolated to the expected size for map i, concatenated and then fused
-        self.fusion_convs = nn.ModuleList(
-            [
-                nn.Sequential(
-                    nn.Conv2d(output_dims[i] + output_dims[i + 1], output_dims[i], kernel_size=3, stride=1, padding=1),
-                    nn.GroupNorm(32, output_dims[i]),
-                    nn.GELU(),
-                )
-                for i in range(len(output_dims) - 1) # exclude the last feature map that we will downsampled by a factor of two
-            ] + [ # last feature map, downsampling by a factor of 2 through convolution and no fusion
-                nn.Sequential(
-                    nn.Conv2d(output_dims[-1], output_dims[-1], kernel_size=3, stride=2, padding=1),
+                    nn.Conv2d(
+                        output_dims[-1],
+                        output_dims[-1],
+                        kernel_size=3,
+                        stride=2,
+                        padding=1,
+                    ),
                     nn.GroupNorm(32, output_dims[-1]),
                     nn.GELU(),
                 )
             ]
         )
-        
+
+        self.apply(_init_fpn_weights)
+
     def forward(self, features):
-        assert len(features) == len(self.output_dims), "The number of input features should be the same as the number of output features"
+        assert len(features) == len(self.output_dims), (
+            "The number of input features should be the same as the number of output features"
+        )
         # features = list of feature maps from DINOv2, each feature map is B x 1024 x L x L (L = 48 for input size 672)
         fused_features = [None] * len(features)
         # last_feature_map is B x output_dims[-1] x L/2 x L/2 here
         last_feature_map = self.fusion_convs[-1](self.lateral_convs[-1](features[-1]))
         if self.resolutions is not None:
             # resize to the exact size needed for this feature map, otherwise, leave it at B x output_dims[-1] x L/2 x L/2
-            nn.functional.interpolate(last_feature_map, size=self.resolutions[-1], mode="bilinear", align_corners=False)
+            nn.functional.interpolate(
+                last_feature_map,
+                size=self.resolutions[-1],
+                mode="bilinear",
+                align_corners=False,
+            )
 
         fused_features[-1] = last_feature_map
 
@@ -84,39 +95,45 @@ class FusedFPN_New(nn.Module):
             if self.resolutions is not None:
                 # resize to the exact size needed for this feature map
                 layer_i_features_up = nn.functional.interpolate(
-                    layer_i_features, 
-                    size=self.resolutions[i], 
+                    layer_i_features,
+                    size=self.resolutions[i],
                     mode="bilinear",
-                    align_corners=False
+                    align_corners=False,
                 )
                 next_layer_features_up = nn.functional.interpolate(
-                    next_layer_features, 
+                    next_layer_features,
                     size=self.resolutions[i],
-                    mode="bilinear", 
-                    align_corners=False
+                    mode="bilinear",
+                    align_corners=False,
                 )
             else:
-                # when no size specified, the last feature map will be L/2 x L/2 and each layer down will be doubles, 
-                # e.g., for 4 layers, the sizes will be 4L x 4L, 2L x 2L, L x L and L/2 x L/2 
+                # when no size specified, the last feature map will be L/2 x L/2 and each layer down will be doubles,
+                # e.g., for 4 layers, the sizes will be 4L x 4L, 2L x 2L, L x L and L/2 x L/2
                 scale = 2 ** (len(self.output_dims) - 2 - i)
-                out_features_size = (layer_i_features.shape[-2] * scale, layer_i_features.shape[-1] * scale)
+                out_features_size = (
+                    layer_i_features.shape[-2] * scale,
+                    layer_i_features.shape[-1] * scale,
+                )
                 layer_i_features_up = nn.functional.interpolate(
-                    layer_i_features, 
-                    size=out_features_size, 
+                    layer_i_features,
+                    size=out_features_size,
                     mode="bilinear",
-                    align_corners=False
+                    align_corners=False,
                 )
                 next_layer_features_up = nn.functional.interpolate(
-                    next_layer_features, 
-                    size=out_features_size, 
-                    mode="bilinear", 
-                    align_corners=False
+                    next_layer_features,
+                    size=out_features_size,
+                    mode="bilinear",
+                    align_corners=False,
                 )
 
-            fused = self.fusion_convs[i](torch.cat([layer_i_features_up, next_layer_features_up], dim=1))
+            fused = self.fusion_convs[i](
+                torch.cat([layer_i_features_up, next_layer_features_up], dim=1)
+            )
             fused_features[i] = fused
-       
+
         return fused_features
+
 
 class FusedFPN(nn.Module):
     def __init__(self, input_dim, out_dims):
@@ -160,6 +177,8 @@ class FusedFPN(nn.Module):
             nn.GroupNorm(32, out_dims[2]),
             nn.ReLU(inplace=True),
         )
+
+        self.apply(_init_fpn_weights)
 
     def forward(self, features):
         # features = list of feature maps from DINOv2

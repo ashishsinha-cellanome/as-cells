@@ -162,6 +162,9 @@ def summarize_trainable_parameters(
     }
 
 
+from models.dinov2_backbone_with_fpn import _init_fpn_weights
+
+
 class Dinov2WithSFP(torch.nn.Module):
     """
     Simple Feature Pyramid (SFP) adapter to convert DINOv2's flat stride-14
@@ -191,6 +194,8 @@ class Dinov2WithSFP(torch.nn.Module):
         self.fpn3 = torch.nn.Identity()
         # Stride 32 (Downscale 2x from stride 14)
         self.fpn4 = torch.nn.MaxPool2d(kernel_size=2, stride=2)
+
+        self.apply(_init_fpn_weights)
 
     def forward(self, pixel_values):
         outputs = self.original_encoder(pixel_values)
