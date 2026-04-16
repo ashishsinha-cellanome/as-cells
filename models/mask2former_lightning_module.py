@@ -581,11 +581,44 @@ class Mask2FormerLightningModule(pl.LightningModule):
         opt_config = self.config.optimizer.optimizer
         sch_config = self.config.scheduler
 
-        optimizer = torch.optim.AdamW(
-            [p for p in self.model.parameters() if p.requires_grad],
-            lr=float(opt_config.lr),
-            weight_decay=float(opt_config.weight_decay),
-        )
+        # Parameter Groups to protect pretrained Mask2Former decoder
+        base_lr = float(opt_config.lr)
+        weight_decay = float(opt_config.weight_decay)
+
+        # Identify FPN/Backbone parameters vs Pretrained Decoder parameters
+        fpn_params = []
+        decoder_params = []
+        backbone_params = []
+
+        for name, param in self.model.named_parameters():
+            if not param.requires_grad:
+                continue
+            if (
+                "pixel_level_module.encoder.fpn" in name
+                or "pixel_level_module.encoder.original_encoder" in name
+            ):
+                fpn_params.append(param)
+            elif "pixel_level_module.encoder.backbone" in name:
+                backbone_params.append(param)
+            else:
+                # This includes the pretrained Pixel Decoder and Transformer Decoder
+                decoder_params.append(param)
+
+        param_groups = [
+            {
+                "params": fpn_params,
+                "lr": base_lr,
+            },  # FPN needs full LR to learn from scratch
+            {
+                "params": decoder_params,
+                "lr": base_lr * 0.1,
+            },  # Pretrained decoder needs much lower LR
+        ]
+
+        if backbone_params:
+            param_groups.append({"params": backbone_params, "lr": base_lr * 0.01})
+
+        optimizer = torch.optim.AdamW(param_groups, weight_decay=weight_decay)
 
         if sch_config.type == "reduce_lr_on_plateau":
             scheduler = {
