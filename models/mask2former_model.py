@@ -247,6 +247,7 @@ def build_mask2former_with_dinov2_backbone(
         Mask2FormerSegmentationWithCustomBackbone,
     )
     from models.dinov2_backbone_with_fpn import Dinov2BackBoneWithFPNConfig
+    from models.dinov2_adapter import Dinov2AdapterConfig, Dinov2Adapter
 
     model_config = _from_pretrained_cached_first(
         Mask2FormerConfigWithCustomBackBone.from_pretrained,
@@ -259,13 +260,20 @@ def build_mask2former_with_dinov2_backbone(
     if num_queries is not None:
         model_config.num_queries = int(num_queries)
 
-    model_config.backbone_config = Dinov2BackBoneWithFPNConfig.from_pretrained(
-        backbone_pretrained_name_or_path,
-        output_indices_for_fpn=out_indices,
-        intermediate_channel_sizes=intermediate_channel_sizes,
-        intermediate_resolutions=intermediate_resolutions,
-        fpn_type=fpn_type,
-    )
+    if fpn_type.lower() == "adapter":
+        model_config.backbone_config = Dinov2AdapterConfig.from_pretrained(
+            backbone_pretrained_name_or_path,
+            output_indices_for_fpn=out_indices,
+            intermediate_channel_sizes=intermediate_channel_sizes,
+        )
+    else:
+        model_config.backbone_config = Dinov2BackBoneWithFPNConfig.from_pretrained(
+            backbone_pretrained_name_or_path,
+            output_indices_for_fpn=out_indices,
+            intermediate_channel_sizes=intermediate_channel_sizes,
+            intermediate_resolutions=intermediate_resolutions,
+            fpn_type=fpn_type,
+        )
 
     # 3. Instantiate your custom model wrapper
     model = Mask2FormerSegmentationWithCustomBackbone(model_config)

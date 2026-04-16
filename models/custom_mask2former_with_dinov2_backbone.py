@@ -10,12 +10,15 @@ from models.dinov2_backbone_with_fpn import (
     Dinov2BackBoneWithFPNConfig,
     Dinov2BackBoneWithFPN,
 )
+from models.dinov2_adapter import Dinov2AdapterConfig
 
 
 class Mask2FormerConfigWithCustomBackBone(Mask2FormerConfig):
     def save_pretrained(self, save_directory, **kwargs):
         os.makedirs(save_directory, exist_ok=True)
-        if isinstance(self.backbone_config, Dinov2BackBoneWithFPNConfig):
+        if isinstance(
+            self.backbone_config, (Dinov2BackBoneWithFPNConfig, Dinov2AdapterConfig)
+        ):
             # save the backbone config before replacing the backbone config with a default one
             # and saving the rest of the model
             self.backbone_config.save_pretrained(
@@ -91,9 +94,11 @@ class Mask2FormerSegmentationWithCustomBackbone(Mask2FormerForUniversalSegmentat
         return model
 
     def __init__(self, config):
-        if isinstance(config.backbone_config, Dinov2BackBoneWithFPNConfig):
+        if isinstance(
+            config.backbone_config, (Dinov2BackBoneWithFPNConfig, Dinov2AdapterConfig)
+        ):
             print(
-                f"[INFO]: The passed config.backbone_config is a custom one of type Dinov2BackBoneWithFPNConfig. "
+                f"[INFO]: The passed config.backbone_config is a custom one of type {type(config.backbone_config).__name__}. "
                 f"The model and the backbone are instantiated separately as the backbone is not supported by the original model."
             )
             # save the backbone config before initializing the model
@@ -124,9 +129,14 @@ class Mask2FormerSegmentationWithCustomBackbone(Mask2FormerForUniversalSegmentat
             # now configure the backbone, the backbone here may not be consistent with the rest of the model if the ERROR above is shown
             # note that Dinov2BackBoneWithFPN(backbone_config) automatically load the DINOv2 pre-trained weights from the checkpoint
             # included in backbone_config and freeze them
-            self.model.pixel_level_module.encoder = Dinov2BackBoneWithFPN(
-                backbone_config
-            )
+            if type(backbone_config).__name__ == "Dinov2AdapterConfig":
+                from models.dinov2_adapter import Dinov2Adapter
+
+                self.model.pixel_level_module.encoder = Dinov2Adapter(backbone_config)
+            else:
+                self.model.pixel_level_module.encoder = Dinov2BackBoneWithFPN(
+                    backbone_config
+                )
 
             # In the original implementation, the Swin transformer returns feature maps with dimensions
             # - 192 (1/4 resolution)
