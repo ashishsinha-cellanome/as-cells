@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils.checkpoint import checkpoint
 
 
 class SpatialPriorModule(nn.Module):
@@ -143,9 +144,15 @@ from models.dinov2_backbone_with_fpn import Dinov2BackBoneWithFPNConfig
 class Dinov2AdapterConfig(Dinov2BackBoneWithFPNConfig):
     model_type = "dinov2_adapter"
 
-    def __init__(self, interaction_indices=[2, 5, 8, 11], **kwargs):
+    def __init__(
+        self,
+        interaction_indices=[2, 5, 8, 11],
+        gradient_checkpointing: bool = False,
+        **kwargs,
+    ):
         super().__init__(**kwargs)
         self.interaction_indices = interaction_indices
+        self.gradient_checkpointing = gradient_checkpointing
 
 
 class Dinov2Adapter(PreTrainedModel):
@@ -156,6 +163,9 @@ class Dinov2Adapter(PreTrainedModel):
         self.intermediate_channel_sizes = config.intermediate_channel_sizes
         self.output_indices_for_fpn = config.output_indices_for_fpn
         self.interaction_indices = config.interaction_indices
+        self.gradient_checkpointing = bool(
+            getattr(config, "gradient_checkpointing", False)
+        )
 
         # ViT Backbone (Frozen)
         if config.dinov2_pretrained_backbone_name_or_path:
@@ -164,6 +174,11 @@ class Dinov2Adapter(PreTrainedModel):
             )
         else:
             self.backbone = Dinov2Model(config)
+
+        if self.gradient_checkpointing and hasattr(
+            self.backbone, "gradient_checkpointing_enable"
+        ):
+            self.backbone.gradient_checkpointing_enable()
 
         for param in self.backbone.parameters():
             param.requires_grad_(False)
@@ -211,9 +226,21 @@ class Dinov2Adapter(PreTrainedModel):
 
         self.post_init()
 
-    def forward(self, pixel_values, pixel_mask=None):
-        B, C, H, W = pixel_values.shape
+    def _run_backbone_layer(
+        self, layer_module: nn.Module, hidden_states: torch.Tensor
+    ) -> torch.Tensor:
+        if not (self.training and self.gradient_checkpointing):
+            return layer_module(hidden_states)[0]
 
+        if not hidden_states.requires_grad:
+            hidden_states = hidden_states.requires_grad_(True)
+
+        def custom_forward(inputs: torch.Tensor) -> torch.Tensor:
+            return layer_module(inputs)[0]
+
+        return checkpoint(custom_forward, hidden_states, use_reentrant=False)
+
+    def forward(self, pixel_values, pixel_mask=None):
         # Extract initial spatial features
         spm_features = self.spm(pixel_values)
         f4, f8, f16 = spm_features
@@ -230,7 +257,7 @@ class Dinov2Adapter(PreTrainedModel):
                 # Inject Spatial info (stride 16) into ViT tokens
                 hidden_states = self.injectors[interaction_idx](hidden_states, f16)
 
-            hidden_states = layer_module(hidden_states)[0]
+            hidden_states = self._run_backbone_layer(layer_module, hidden_states)
 
             if i in self.interaction_indices:
                 # Extract ViT semantics back to spatial features

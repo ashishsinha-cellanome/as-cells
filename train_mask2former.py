@@ -190,6 +190,40 @@ OmegaConf.register_new_resolver("oc.eval", eval, replace=True)
 torch.set_float32_matmul_precision("medium")
 
 
+def _runtime_launch_summary(config: DictConfig) -> str:
+    world_size = int(
+        os.environ.get("WORLD_SIZE")
+        or os.environ.get("SLURM_NTASKS")
+        or os.environ.get("LOCAL_WORLD_SIZE")
+        or 1
+    )
+    local_rank = int(os.environ.get("LOCAL_RANK", os.environ.get("SLURM_LOCALID", 0)))
+    accelerator = str(config.trainer.accelerator)
+    device_count = torch.cuda.device_count() if torch.cuda.is_available() else 0
+    return (
+        "[Startup] Runtime launch:\n"
+        f"  -> rank={get_rank()} local_rank={local_rank} world_size={world_size}\n"
+        f"  -> accelerator={accelerator} devices={config.trainer.devices} "
+        f"strategy={config.trainer.strategy}\n"
+        f"  -> cuda_available={torch.cuda.is_available()} cuda_device_count={device_count}"
+    )
+
+
+def _warn_if_accelerate_launch() -> None:
+    accelerate_env_vars = (
+        "ACCELERATE_MIXED_PRECISION",
+        "ACCELERATE_CONFIG_DS_FIELDS",
+        "ACCELERATE_DYNAMO_BACKEND",
+        "ACCELERATE_USE_FSDP",
+    )
+    if any(var in os.environ for var in accelerate_env_vars):
+        rank_zero_print(
+            "[Startup] Detected Accelerate launcher environment. "
+            "Run Mask2Former directly with `uv run train_mask2former.py ...` "
+            "so Lightning handles process launch."
+        )
+
+
 def _get_profiler(config: DictConfig):
     ptype = config.training.profiler.type
     if ptype == "simple":
@@ -432,9 +466,11 @@ def main(config: DictConfig):
     _validate_lora_config(config)
 
     pl.seed_everything(config.seed, workers=True)
+    _warn_if_accelerate_launch()
 
     dataset_path = to_absolute_path(config.data.path)
     rank_zero_print(f"[Startup] Using Mask2Former dataset path: {dataset_path}")
+    rank_zero_print(_runtime_launch_summary(config))
     rank_zero_print(
         f"[Startup] Mask2Former backbone training_mode: "
         f"{config.model.backbone.training_mode}"
@@ -499,6 +535,9 @@ def main(config: DictConfig):
                 config.model.mask2former.get("local_files_only", False)
             ),
             fpn_type=str(config.model.backbone.get("fpn_type", "fused")),
+            gradient_checkpointing=bool(
+                config.model.backbone.get("gradient_checkpointing", False)
+            ),
             intermediate_resolutions=list(
                 config.model.backbone.get("intermediate_resolutions", [168, 84, 42, 21])
             )
@@ -565,6 +604,7 @@ def main(config: DictConfig):
         max_epochs=config.trainer.max_epochs,
         log_every_n_steps=config.trainer.log_every_n_steps,
         val_check_interval=config.trainer.val_check_interval,
+        num_sanity_val_steps=int(config.trainer.num_sanity_val_steps),
         gradient_clip_val=config.trainer.max_grad_norm,
         gradient_clip_algorithm=config.trainer.gradient_clip_algo,
         accumulate_grad_batches=config.trainer.accumulate_grad_batches,

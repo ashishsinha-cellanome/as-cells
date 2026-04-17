@@ -6,6 +6,7 @@ name: "dinov2-base"
 model_name: "${extract_name:${.pretrained_name_or_path}}"
 decoder_name: "swin-large"
 training_mode: "frozen"  # frozen | lora | full_finetune
+gradient_checkpointing: false
 out_indices: [3, 6, 9, 12]
 fpn_type: "fused"        # fused | tiny | simple | sfp
 intermediate_resolutions: [168, 84, 42, 21]

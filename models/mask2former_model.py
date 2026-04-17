@@ -234,6 +234,7 @@ def build_mask2former_with_dinov2_backbone(
     out_indices: Optional[List[int]] = None,
     local_files_only: bool = False,
     fpn_type: str = "fused",
+    gradient_checkpointing: bool = False,
     intermediate_resolutions: Optional[List[int]] = None,
 ) -> Mask2FormerForUniversalSegmentation:
 
@@ -278,6 +279,7 @@ def build_mask2former_with_dinov2_backbone(
             backbone_pretrained_name_or_path,
             output_indices_for_fpn=out_indices,
             intermediate_channel_sizes=intermediate_channel_sizes,
+            gradient_checkpointing=gradient_checkpointing,
         )
     else:
         model_config.backbone_config = Dinov2BackBoneWithFPNConfig.from_pretrained(
