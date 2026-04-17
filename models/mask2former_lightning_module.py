@@ -593,15 +593,18 @@ class Mask2FormerLightningModule(pl.LightningModule):
         for name, param in self.model.named_parameters():
             if not param.requires_grad:
                 continue
+
+            # If it's in the encoder but NOT the backbone, it's the FPN or Adapter
             if (
-                "pixel_level_module.encoder.fpn" in name
-                or "pixel_level_module.encoder.original_encoder" in name
+                "pixel_level_module.encoder" in name
+                and "pixel_level_module.encoder.backbone" not in name
             ):
                 fpn_params.append(param)
+            # If it's the backbone
             elif "pixel_level_module.encoder.backbone" in name:
                 backbone_params.append(param)
+            # Everything else is the Mask2Former pretrained decoder
             else:
-                # This includes the pretrained Pixel Decoder and Transformer Decoder
                 decoder_params.append(param)
 
         param_groups = [
