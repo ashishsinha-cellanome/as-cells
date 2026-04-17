@@ -1,54 +1,57 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 
 class SpatialPriorModule(nn.Module):
     """CNN stem to extract multi-scale spatial features from the input image."""
 
-    def __init__(self, in_channels=3, embed_dim=768):
+    def __init__(self, in_channels=3, embed_dim=768, spm_dim=64):
         super().__init__()
         # Extract Stride 4 (Initial spatial resolution)
         self.stem = nn.Sequential(
-            nn.Conv2d(in_channels, embed_dim // 4, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm2d(embed_dim // 4),
+            nn.Conv2d(in_channels, spm_dim, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm2d(spm_dim),
             nn.GELU(),
-            nn.Conv2d(
-                embed_dim // 4, embed_dim // 2, kernel_size=3, stride=2, padding=1
-            ),
-            nn.BatchNorm2d(embed_dim // 2),
+            nn.Conv2d(spm_dim, spm_dim, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm2d(spm_dim),
             nn.GELU(),
-            nn.Conv2d(
-                embed_dim // 2, embed_dim // 2, kernel_size=3, stride=1, padding=1
-            ),
-            nn.BatchNorm2d(embed_dim // 2),
+            nn.Conv2d(spm_dim, spm_dim, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(spm_dim),
             nn.GELU(),
         )
 
         # Stride 8 downsample
         self.down1 = nn.Sequential(
-            nn.Conv2d(embed_dim // 2, embed_dim, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm2d(embed_dim),
+            nn.Conv2d(spm_dim, spm_dim * 2, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm2d(spm_dim * 2),
         )
 
         # Stride 16 downsample
         self.down2 = nn.Sequential(
-            nn.Conv2d(embed_dim, embed_dim, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm2d(embed_dim),
+            nn.Conv2d(spm_dim * 2, spm_dim * 4, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm2d(spm_dim * 4),
         )
+
+        self.proj_f4 = nn.Conv2d(spm_dim, embed_dim // 2, kernel_size=1)
+        self.proj_f8 = nn.Conv2d(spm_dim * 2, embed_dim, kernel_size=1)
+        self.proj_f16 = nn.Conv2d(spm_dim * 4, embed_dim, kernel_size=1)
 
     def forward(self, x):
         # x is B x 3 x H x W
-        f4 = self.stem(x)  # B x (C/2) x (H/4) x (W/4)
-        f8 = self.down1(f4)  # B x C x (H/8) x (W/8)
-        f16 = self.down2(f8)  # B x C x (H/16) x (W/16)
-        return [f4, f8, f16]
+        f4 = self.stem(x)  # B x 64 x (H/4) x (W/4)
+        f8 = self.down1(f4)  # B x 128 x (H/8) x (W/8)
+        f16 = self.down2(f8)  # B x 256 x (H/16) x (W/16)
+        return [self.proj_f4(f4), self.proj_f8(f8), self.proj_f16(f16)]
 
 
 class Injector(nn.Module):
     """Injects spatial CNN features into ViT tokens via cross-attention."""
 
-    def __init__(self, embed_dim):
+    def __init__(self, embed_dim, num_heads=12):
         super().__init__()
+        self.num_heads = num_heads
+        self.head_dim = embed_dim // num_heads
         self.query = nn.Linear(embed_dim, embed_dim)
         self.key = nn.Linear(embed_dim, embed_dim)
         self.value = nn.Linear(embed_dim, embed_dim)
@@ -77,10 +80,14 @@ class Injector(nn.Module):
         k = self.key(spatial_flat)
         v = self.value(spatial_flat)
 
-        attn = (q @ k.transpose(-2, -1)) * (C**-0.5)
-        attn = attn.softmax(dim=-1)
+        q = q.view(B, -1, self.num_heads, self.head_dim).transpose(1, 2)
+        k = k.view(B, -1, self.num_heads, self.head_dim).transpose(1, 2)
+        v = v.view(B, -1, self.num_heads, self.head_dim).transpose(1, 2)
 
-        out = query_tokens + (attn @ v)
+        attn_out = F.scaled_dot_product_attention(q, k, v)
+        attn_out = attn_out.transpose(1, 2).reshape(B, -1, C)
+
+        out = query_tokens + attn_out
         out = out + self.ffn(self.norm2(out))
         return out
 
@@ -88,8 +95,10 @@ class Injector(nn.Module):
 class Extractor(nn.Module):
     """Extracts semantic ViT tokens back to the spatial CNN pathway."""
 
-    def __init__(self, embed_dim):
+    def __init__(self, embed_dim, num_heads=12):
         super().__init__()
+        self.num_heads = num_heads
+        self.head_dim = embed_dim // num_heads
         self.query = nn.Linear(embed_dim, embed_dim)
         self.key = nn.Linear(embed_dim, embed_dim)
         self.value = nn.Linear(embed_dim, embed_dim)
@@ -113,10 +122,14 @@ class Extractor(nn.Module):
         k = self.key(normed_vit)
         v = self.value(normed_vit)
 
-        attn = (q @ k.transpose(-2, -1)) * (C**-0.5)
-        attn = attn.softmax(dim=-1)
+        q = q.view(B, -1, self.num_heads, self.head_dim).transpose(1, 2)
+        k = k.view(B, -1, self.num_heads, self.head_dim).transpose(1, 2)
+        v = v.view(B, -1, self.num_heads, self.head_dim).transpose(1, 2)
 
-        out_flat = spatial_flat + (attn @ v)
+        attn_out = F.scaled_dot_product_attention(q, k, v)
+        attn_out = attn_out.transpose(1, 2).reshape(B, -1, C)
+
+        out_flat = spatial_flat + attn_out
         out_flat = out_flat + self.ffn(self.norm3(out_flat))
 
         # Reshape back to spatial
