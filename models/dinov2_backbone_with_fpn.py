@@ -388,11 +388,13 @@ class Dinov2BackBoneWithFPN(PreTrainedModel):
                 config.dinov2_pretrained_backbone_name_or_path
             )
             freeze_dinov2_weights: bool = True
-            print(
+            from utils.distributed_utils import rank_zero_print
+            rank_zero_print(
                 f"[INFO]: DINOv2 parameters loaded from pretrained path: {config.dinov2_pretrained_backbone_name_or_path}"
             )
         else:
-            print(
+            from utils.distributed_utils import rank_zero_print
+            rank_zero_print(
                 "[WARN]: No path was provided in the config to load DINOv2 parameters. This backbone has to be trained!"
             )
             self.backbone = Dinov2Model(config)

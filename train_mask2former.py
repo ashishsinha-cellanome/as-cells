@@ -47,6 +47,59 @@ from utils.test_only_checkpoint_restore import (
 from utils.train_utils import BackupToNASCallback
 
 warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", message=".*Grad strides do not match bucket view strides.*", category=UserWarning)
+warnings.filterwarnings("ignore", message=".*The AccumulateGrad node's stream does not match the stream.*", category=UserWarning)
+
+# --- MEMORY EFFICIENT PATCH FOR MASK2FORMER LOSS ---
+import numpy as np
+from transformers.models.mask2former.modeling_mask2former import Mask2FormerLoss, sample_point, sigmoid_cross_entropy_loss, dice_loss
+
+def memory_efficient_loss_masks(
+    self,
+    masks_queries_logits: torch.Tensor,
+    mask_labels: list[torch.Tensor],
+    indices: tuple[np.ndarray],
+    num_masks: int,
+) -> dict[str, torch.Tensor]:
+    src_idx = self._get_predictions_permutation_indices(indices)
+    tgt_idx = self._get_targets_permutation_indices(indices)
+    
+    pred_masks = masks_queries_logits[src_idx]
+    
+    batch_idx, target_idx = tgt_idx
+    if len(batch_idx) == 0:
+        target_masks = torch.empty((0, masks_queries_logits.shape[-2], masks_queries_logits.shape[-1]), device=masks_queries_logits.device)
+    else:
+        target_masks = torch.stack([mask_labels[b][i] for b, i in zip(batch_idx, target_idx)])
+
+    pred_masks = pred_masks[:, None]
+    target_masks = target_masks[:, None].to(pred_masks)
+
+    with torch.no_grad():
+        point_coordinates = self.sample_points_using_uncertainty(
+            pred_masks,
+            lambda logits: self.calculate_uncertainty(logits),
+            self.num_points,
+            self.oversample_ratio,
+            self.importance_sample_ratio,
+        )
+
+        point_labels = sample_point(target_masks, point_coordinates, align_corners=False).squeeze(1)
+
+    point_logits = sample_point(pred_masks, point_coordinates, align_corners=False).squeeze(1)
+
+    losses = {
+        "loss_mask": sigmoid_cross_entropy_loss(point_logits, point_labels, num_masks),
+        "loss_dice": dice_loss(point_logits, point_labels, num_masks),
+    }
+
+    del pred_masks
+    del target_masks
+    return losses
+
+Mask2FormerLoss.loss_masks = memory_efficient_loss_masks
+# --------------------------------------------------
+
 OmegaConf.register_new_resolver(
     "extract_name", lambda path: path.split("/")[-1], replace=True
 )
