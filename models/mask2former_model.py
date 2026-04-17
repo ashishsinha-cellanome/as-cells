@@ -6,8 +6,6 @@ import cv2
 from PIL import Image
 import torch
 from transformers import (
-    Dinov2Config,
-    Dinov2Model,
     Mask2FormerConfig,
     Mask2FormerForUniversalSegmentation,
     Mask2FormerImageProcessor,
@@ -93,8 +91,12 @@ def _apply_backbone_training_mode(
     encoder = model.model.pixel_level_module.encoder
 
     if mode == "frozen":
-        for param in encoder.parameters():
-            param.requires_grad = False
+        if hasattr(encoder, "backbone"):
+            for param in encoder.backbone.parameters():
+                param.requires_grad = False
+        else:
+            for param in encoder.parameters():
+                param.requires_grad = False
         return
 
     if mode == "full_finetune":
@@ -103,8 +105,12 @@ def _apply_backbone_training_mode(
         return
 
     if mode == "lora":
-        for param in encoder.parameters():
-            param.requires_grad = False
+        if hasattr(encoder, "backbone"):
+            for param in encoder.backbone.parameters():
+                param.requires_grad = False
+        else:
+            for param in encoder.parameters():
+                param.requires_grad = False
         return
 
     raise ValueError(f"Unsupported Mask2Former backbone training_mode: {training_mode}")
@@ -129,8 +135,6 @@ def _apply_backbone_lora(
         ) from exc
 
     encoder = model.model.pixel_level_module.encoder
-    for param in encoder.parameters():
-        param.requires_grad = False
 
     lora_config = LoraConfig(
         r=int(rank),
@@ -140,7 +144,16 @@ def _apply_backbone_lora(
         target_modules=[str(module) for module in target_modules],
         modules_to_save=list(modules_to_save or []),
     )
-    model.model.pixel_level_module.encoder = get_peft_model(encoder, lora_config)
+
+    if hasattr(encoder, "backbone"):
+        for param in encoder.backbone.parameters():
+            param.requires_grad = False
+        encoder.backbone = get_peft_model(encoder.backbone, lora_config)
+    else:
+        for param in encoder.parameters():
+            param.requires_grad = False
+        model.model.pixel_level_module.encoder = get_peft_model(encoder, lora_config)
+
     return model
 
 

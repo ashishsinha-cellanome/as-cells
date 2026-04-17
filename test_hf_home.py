@@ -1,5 +1,4 @@
 import os
-from transformers import Dinov2Config
 from huggingface_hub import constants
 
 print("HF cache dir before:", constants.HF_HUB_CACHE)

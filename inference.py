@@ -4,7 +4,6 @@ import sys
 import torch
 import hydra
 from omegaconf import DictConfig, OmegaConf
-import pytorch_lightning as pl
 from tqdm import tqdm
 import numpy as np
 import pandas as pd
@@ -12,8 +11,7 @@ import json
 import shutil
 import cv2
 import logging
-import time
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw
 from typing import Dict, List, Tuple, Optional, Union
 
 from models.rt_detr_lightning_module import RTDETRLightningModule
@@ -302,7 +300,7 @@ def run_folder_mode(config: DictConfig, model, processor):
 
     if is_cellanome_dataset:
         print(
-            f"[folder mode] Found annotation_images_mapping.csv. Using Cellanome dataset loader..."
+            "[folder mode] Found annotation_images_mapping.csv. Using Cellanome dataset loader..."
         )
         # Invert label map for create_dataset_classes (name -> id)
         class_name_to_id = {v: k for k, v in label_map.items()}
@@ -350,7 +348,7 @@ def run_folder_mode(config: DictConfig, model, processor):
 
     else:
         # Standard flat folder mode
-        print(f"[folder mode] Using flat folder structure (no csv found).")
+        print("[folder mode] Using flat folder structure (no csv found).")
         valid_exts = (".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp")
         image_files = sorted(
             [f for f in os.listdir(folder_path) if f.lower().endswith(valid_exts)]
@@ -416,7 +414,7 @@ def run_folder_mode(config: DictConfig, model, processor):
 
     gt_remap = _build_gt_label_remap(coco_gt, config)
 
-    print(f"[folder mode] Starting inference on images...")
+    print("[folder mode] Starting inference on images...")
 
     for image_id, img_name, img_rgb, gt_boxes_list, gt_labels_list in tqdm(
         dataset_iterator, desc="Processing"
@@ -1009,9 +1007,9 @@ def _save_results(
         json.dump(agg_stats, f, indent=4)
 
     print(f"\nResults saved to {metrics_dir}")
-    print(f"  - coco_metrics.json")
-    print(f"  - per_image_analysis.csv")
-    print(f"  - aggregate_metrics.json")
+    print("  - coco_metrics.json")
+    print("  - per_image_analysis.csv")
+    print("  - aggregate_metrics.json")
     print(f"Visualizations saved to {viz_dir}")
 
 
@@ -1051,7 +1049,7 @@ def main(config: DictConfig):
         RTDetrV2ForObjectDetectionWithCustomBackbone,
         RTDetrV2ConfigWithCustomBackBone,
     )
-    from transformers import RTDetrV2ForObjectDetection, RTDetrForObjectDetection
+    from transformers import RTDetrForObjectDetection
 
     model_checkpoint_path = config.model.rtdetr.pretrained_name_or_path
     print(f"Loading base model from: {model_checkpoint_path}")

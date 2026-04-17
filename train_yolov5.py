@@ -44,7 +44,6 @@ from utils.test_only_checkpoint_restore import (
 )
 
 import torch.distributed as dist
-import wandb
 
 # setup_cluster_env()  # Moved inside main()
 torch.set_float32_matmul_precision("medium")
@@ -226,7 +225,6 @@ def main(config: DictConfig):
 
         # Inject YOLOv5 repo into sys.path so torch.load can deserialize native YOLOv5 model classes
         import sys
-        import importlib
 
         original_path = sys.path.copy()
         original_modules = {}

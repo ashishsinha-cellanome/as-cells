@@ -1,9 +1,6 @@
 import os
-from typing import Tuple, Union, List, Dict, Final, Optional
 
-from transformers import PreTrainedModel, PretrainedConfig
 from transformers import Mask2FormerConfig, Mask2FormerForUniversalSegmentation
-from safetensors.torch import save_file as safe_save
 from safetensors.torch import load_file as safe_load
 
 from models.dinov2_backbone_with_fpn import (
@@ -117,8 +114,8 @@ class Mask2FormerSegmentationWithCustomBackbone(Mask2FormerForUniversalSegmentat
                 # this part may lead to incorrectly built Mask2Former model; this is because the feature map resolutions of the
                 # backbone
                 print(
-                    f"[INFO]: The Mask2Former model is instantiated with the default backbone config!"
-                    f"This backbone will be replaced with the custom one once the Mask2Former model is instantiated."
+                    "[INFO]: The Mask2Former model is instantiated with the default backbone config!"
+                    "This backbone will be replaced with the custom one once the Mask2Former model is instantiated."
                 )
                 config.backbone_config = Mask2FormerConfig().backbone_config
 

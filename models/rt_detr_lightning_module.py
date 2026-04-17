@@ -5,13 +5,11 @@ import os
 import cv2
 import pytorch_lightning as pl
 from collections import Counter
-from tqdm import tqdm
 from pycocotools.cocoeval import COCOeval
 from PIL import Image, ImageDraw, ImageFont
 from models.custom_rt_detr_with_dinov2_backbone import (
     RTDetrV2ForObjectDetectionWithCustomBackbone,
 )
-from utils.distributed_utils import rank_print
 from utils.sahi_eval import run_sahi_sliced_eval
 from utils.coco_eval_utils import compute_coco_metrics
 
@@ -391,7 +389,7 @@ class RTDETRLightningModule(pl.LightningModule):
 
                     if all(params_equal):
                         self.print(
-                            f"⚠️  [Val] WARNING: EMA weights identical to model weights! EMA may not be updating."
+                            "⚠️  [Val] WARNING: EMA weights identical to model weights! EMA may not be updating."
                         )
                     else:
                         num_diff = sum(1 for eq in params_equal if not eq)

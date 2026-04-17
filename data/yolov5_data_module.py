@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict
 
 import cv2
 import numpy as np
@@ -187,7 +187,7 @@ class YOLOv5DataModule(pl.LightningDataModule):
 
         if self.config.debug:
             print(f"\n{'-' * 60}")
-            print(f"[DEBUG] Class Mapping Summary:")
+            print("[DEBUG] Class Mapping Summary:")
             print(f"  Target label_map: {target_label_map}")
             print(f"  COCO cat_to_model: {cat_to_model}")
             print(f"  Model_to_coco: {model_to_coco}")

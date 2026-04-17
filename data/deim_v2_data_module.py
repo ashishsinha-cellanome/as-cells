@@ -1,7 +1,6 @@
 import os
 import torch
 import numpy as np
-import albumentations as A
 from torch.utils.data import DataLoader
 import pytorch_lightning as pl
 from torchvision.datasets import CocoDetection

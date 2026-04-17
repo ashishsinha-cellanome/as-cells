@@ -1,7 +1,4 @@
-import random
 import torch
-import numpy as np
-from PIL import Image
 
 
 class CachedMosaicDataset(torch.utils.data.Dataset):

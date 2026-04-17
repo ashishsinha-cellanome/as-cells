@@ -8,7 +8,6 @@ from PIL import Image, ImageDraw, ImageFont
 
 import torch
 import pytorch_lightning as pl
-from tqdm import tqdm
 
 from utils.coco_eval_utils import (
     convert_preds_to_coco,
@@ -277,7 +276,7 @@ class YOLOv5LightningModule(pl.LightningModule):
         }
 
         model.load_state_dict(state_dict, strict=False)
-        print(f"[INFO] YOLOv5 Weights loaded successfully (backbone and neck only).")
+        print("[INFO] YOLOv5 Weights loaded successfully (backbone and neck only).")
 
     def on_sanity_check_start(self):
         """Move model to device before sanity check."""
@@ -1244,7 +1243,7 @@ class YOLOv5LightningModule(pl.LightningModule):
                 image_arr = cv2.imread(full_path)
                 image_arr = cv2.cvtColor(image_arr, cv2.COLOR_BGR2RGB)
                 image = Image.fromarray(image_arr)
-            except Exception as e:
+            except Exception:
                 self.print(f"[WARNING] Could not load {path}. Skipping viz.")
                 continue
 

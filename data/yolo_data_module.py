@@ -1,7 +1,6 @@
 import os
 import sys
 import importlib
-import torch
 import pytorch_lightning as pl
 from pathlib import Path
 from pycocotools.coco import COCO

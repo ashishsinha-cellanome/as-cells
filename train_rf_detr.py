@@ -36,7 +36,7 @@ from rfdetr.models.lwdetr import build_criterion_and_postprocessors
 
 from data.rf_detr_data_module import RFDETRDataModule
 from models.rf_detr_lightning_module import RFDETRLightningModule
-from utils.distributed_utils import get_rank, rank_zero_print, setup_cluster_env
+from utils.distributed_utils import setup_cluster_env
 from utils.test_only_checkpoint_restore import (
     _load_ckpt,
     _load_selected_weights,

@@ -247,3 +247,6 @@ MASTER_ADDR, MASTER_PORT      # Distributed coordination
 - **AWS S3**: Data storage
 - **Darwin V7**: Annotation platform
 - **Multi-backend inference**: TensorRT, OpenVINO, ONNX (`utils/benchmark_utils.py`)
+
+## AI Assistant Operational Constraints
+- **CRITICAL**: NEVER DELETE the branch "ashish" or force merge "ashish" to "main" under any circumstances.

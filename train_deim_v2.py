@@ -2,10 +2,8 @@
 
 import datetime
 import os
-import time
-import copy
 import warnings
-from typing import Any, Dict, List, Literal, Optional, Tuple
+from typing import Any, Dict, Literal, Optional
 
 import hydra
 import pytorch_lightning as pl
@@ -15,7 +13,6 @@ import wandb
 from hydra.core.hydra_config import HydraConfig
 from hydra.types import RunMode
 from hydra.utils import to_absolute_path
-from lightning.pytorch.profilers import AdvancedProfiler, SimpleProfiler
 from omegaconf import DictConfig, OmegaConf
 from pytorch_lightning.callbacks import (
     EarlyStopping,
@@ -29,7 +26,7 @@ from pytorch_lightning.plugins.environments import SLURMEnvironment
 from data.deim_v2_data_module import DeimV2DataModule
 from torchvision.datasets import CocoDetection
 from models.deim_v2_lightning_module import DeimV2LightningModule
-from utils.distributed_utils import get_rank, rank_zero_print, setup_cluster_env
+from utils.distributed_utils import rank_zero_print, setup_cluster_env
 from utils.test_only_checkpoint_restore import (
     _load_ckpt,
     _load_selected_weights,

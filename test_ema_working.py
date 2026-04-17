@@ -5,7 +5,6 @@ Run this to check if EMA weights diverge from model weights during training.
 
 import torch
 import torch.nn as nn
-import copy
 from utils.ema import ModelEma
 
 

@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-from transformers import DinoV2Model, DinoV2Config
 
 class Dinov2WithSFP(nn.Module):
     def __init__(self, original_encoder):

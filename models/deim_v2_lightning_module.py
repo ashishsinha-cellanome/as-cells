@@ -1,10 +1,6 @@
 import os
-from collections import Counter
-from pathlib import Path
 
-import cv2
-from tqdm import tqdm
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageFont
 import torch
 import pytorch_lightning as pl
 import torchvision.transforms.functional as F

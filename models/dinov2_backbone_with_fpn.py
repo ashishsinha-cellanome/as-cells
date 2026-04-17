@@ -1,10 +1,10 @@
 import os
-from typing import Tuple, Union, List, Dict, Final, Optional
+from typing import List, Optional
 
 import torch
 import torch.nn as nn
 
-from transformers import PreTrainedModel, PretrainedConfig, Dinov2Model, Dinov2Config
+from transformers import PreTrainedModel, Dinov2Model, Dinov2Config
 from transformers.modeling_outputs import BackboneOutput
 from safetensors.torch import save_file as safe_save
 from safetensors.torch import load_file as safe_load

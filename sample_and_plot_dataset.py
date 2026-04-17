@@ -1,16 +1,13 @@
 #!/usr/bin/env python3
 import os
 import random
-import json
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
-import numpy as np
 from PIL import Image
 from pycocotools.coco import COCO
 import hydra
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig
 from pathlib import Path
-from tqdm import tqdm
 
 
 def sample_images_for_class(coco, category_id, num_samples):

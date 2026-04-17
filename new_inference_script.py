@@ -2,13 +2,11 @@ import os
 import torch
 import hydra
 from omegaconf import DictConfig, OmegaConf
-import pytorch_lightning as pl
 from tqdm import tqdm
 import numpy as np
 import pandas as pd
 import json
-import shutil
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image
 from pathlib import Path
 import time
 import logging
@@ -17,23 +15,18 @@ import cv2
 from models.rt_detr_lightning_module import (
     RTDETRLightningModule,
     to_cpu_device,
-    convert_to_xywh,
 )  # Re-import necessary helpers
 from data.coco_data_module import COCODataModule
 from transformers import RTDetrImageProcessor
-from pycocotools.cocoeval import COCOeval
 
 # Import VisionModel and related utilities for cropping
 from models.AbstractVisionModel import (
     VisionModel,
     run_model,
-    post_process_detections,
-    DEFAULT_DETECTION_CONFIDENCE,
 )
 from utils.ema import ModelEma
-from utils.json_parser import CellMaskDataset  # For creating a mock dataset for metrics
 from utils.precision_recall_eval import AnnotationFilter, evaluate_pr_per_image
-from typing import List, Dict, Union, Tuple, Optional, Final, Any
+from typing import List, Dict, Union, Any
 
 # Importing default crop corners and resize from models/rt_detr_model.py
 from models.rt_detr_model import (

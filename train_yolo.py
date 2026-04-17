@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
 import os
-import sys
-import datetime
 from typing import Any, Dict, Literal, Optional
 import torch
 import pytorch_lightning as pl
@@ -14,7 +12,6 @@ OmegaConf.register_new_resolver(
 )
 OmegaConf.register_new_resolver("oc.eval", eval, replace=True)
 import hydra
-from hydra.core.hydra_config import HydraConfig
 
 # Import your setup functions for callbacks, profilers, wandb, etc.
 from utils.distributed_utils import setup_cluster_env, rank_zero_print
@@ -28,7 +25,6 @@ from pytorch_lightning.callbacks import (
     ModelSummary,
 )
 from pytorch_lightning.loggers import WandbLogger
-from pytorch_lightning.plugins.environments import SLURMEnvironment
 
 from utils.train_utils import BackupToNASCallback
 from utils.ema import EMACallback
@@ -40,8 +36,6 @@ from utils.test_only_checkpoint_restore import (
     _select_eval_weights_source,
 )
 
-import torch.distributed as dist
-import wandb
 
 # setup_cluster_env()  # Moved inside main()
 torch.set_float32_matmul_precision("medium")
@@ -158,7 +152,6 @@ def main(config: DictConfig):
 
         # Inject YOLO repo into sys.path so torch.load can deserialize native YOLO model classes
         import sys
-        import importlib
 
         original_path = sys.path.copy()
         original_modules = {}
