@@ -347,7 +347,7 @@ class Mask2FormerDataset(Dataset):
         return {
             "pixel_values": processed["pixel_values"].squeeze(0),
             "pixel_mask": processed["pixel_mask"].squeeze(0),
-            "mask_labels": processed["mask_labels"][0],
+            "mask_labels": processed["mask_labels"][0].to(torch.bool),
             "class_labels": processed["class_labels"][0],
             "image_id": torch.tensor(image_id, dtype=torch.long),
             "orig_size": torch.tensor([image_height, image_width], dtype=torch.long),
