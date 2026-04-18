@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.checkpoint import checkpoint
+from torch.utils.checkpoint import checkpoint
 
 
 class SpatialPriorModule(nn.Module):
@@ -53,7 +54,7 @@ class Injector(nn.Module):
         self,
         token_dim: int,
         spatial_dim: int,
-        num_heads: int = 6,
+        num_heads: int = 4,
         token_mlp_ratio: float = 0.5,
     ):
         super().__init__()
@@ -114,7 +115,7 @@ class Extractor(nn.Module):
         self,
         token_dim: int,
         spatial_dim: int,
-        num_heads: int = 6,
+        num_heads: int = 4,
         spatial_mlp_ratio: float = 0.5,
     ):
         super().__init__()
@@ -172,11 +173,11 @@ class Dinov2AdapterConfig(Dinov2BackBoneWithFPNConfig):
 
     def __init__(
         self,
-        interaction_indices=[2, 7, 11],
+        interaction_indices=[3, 8, 12],
         gradient_checkpointing: bool = False,
         adapter_dim: int = 384,
         spm_dim: int = 32,
-        interaction_num_heads: int = 6,
+        interaction_num_heads: int = 4,
         token_mlp_ratio: float = 0.5,
         spatial_mlp_ratio: float = 0.5,
         **kwargs,
