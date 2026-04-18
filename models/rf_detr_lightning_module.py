@@ -171,6 +171,26 @@ class RFDETRLightningModule(pl.LightningModule):
         orig_sizes = torch.stack([t["orig_size"] for t in targets], dim=0)
         post = self.postprocess(outputs, orig_sizes)
         post = [to_cpu_device(pred) for pred in post]
+
+        import pycocotools.mask as mask_utils
+        import numpy as np
+
+        # Process masks into RLE to save memory
+        for pred in post:
+            if "masks" in pred:
+                masks = pred["masks"]  # Shape [num_select, 1, H, W]
+                segmentations = []
+                for i in range(masks.shape[0]):
+                    mask_np = masks[i, 0].numpy().astype(np.uint8)
+                    # Ensure Fortran contiguous order for pycocotools
+                    mask_np = np.asfortranarray(mask_np)
+                    rle = mask_utils.encode(mask_np)
+                    # Decode bytes to string so it can be JSON serialized/gathered easily
+                    rle["counts"] = rle["counts"].decode("utf-8")
+                    segmentations.append(rle)
+                pred["segmentation"] = segmentations
+                del pred["masks"]  # Free memory!
+
         result_map = {
             int(target["image_id"].item()): pred for target, pred in zip(targets, post)
         }
