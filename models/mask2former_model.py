@@ -235,6 +235,7 @@ def build_mask2former_with_dinov2_backbone(
     local_files_only: bool = False,
     fpn_type: str = "fused",
     gradient_checkpointing: bool = False,
+    adapter_config: Optional[Dict[str, Union[int, float, bool, List[int]]]] = None,
     intermediate_resolutions: Optional[List[int]] = None,
 ) -> Mask2FormerForUniversalSegmentation:
 
@@ -275,11 +276,20 @@ def build_mask2former_with_dinov2_backbone(
         model_config.num_queries = int(num_queries)
 
     if fpn_type.lower() == "adapter":
+        adapter_config = dict(adapter_config or {})
         model_config.backbone_config = Dinov2AdapterConfig.from_pretrained(
             backbone_pretrained_name_or_path,
             output_indices_for_fpn=out_indices,
             intermediate_channel_sizes=intermediate_channel_sizes,
             gradient_checkpointing=gradient_checkpointing,
+            interaction_indices=list(
+                adapter_config.get("interaction_indices", out_indices)
+            ),
+            adapter_dim=int(adapter_config.get("adapter_dim", 384)),
+            spm_dim=int(adapter_config.get("spm_dim", 32)),
+            interaction_num_heads=int(adapter_config.get("interaction_num_heads", 6)),
+            token_mlp_ratio=float(adapter_config.get("token_mlp_ratio", 0.5)),
+            spatial_mlp_ratio=float(adapter_config.get("spatial_mlp_ratio", 0.5)),
         )
     else:
         model_config.backbone_config = Dinov2BackBoneWithFPNConfig.from_pretrained(

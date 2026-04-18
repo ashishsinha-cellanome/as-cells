@@ -538,6 +538,10 @@ def main(config: DictConfig):
             gradient_checkpointing=bool(
                 config.model.backbone.get("gradient_checkpointing", False)
             ),
+            adapter_config=OmegaConf.to_container(config.model.backbone, resolve=True)
+            if str(config.model.backbone.get("fpn_type", "fused")).lower()
+            == "adapter"
+            else None,
             intermediate_resolutions=list(
                 config.model.backbone.get("intermediate_resolutions", [168, 84, 42, 21])
             )
