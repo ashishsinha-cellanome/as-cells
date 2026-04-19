@@ -475,6 +475,10 @@ def _setup_logger(config: DictConfig):
 
 def _setup_callbacks(config: DictConfig):
     ckpt_cfg = config.checkpointing
+    
+    if ckpt_cfg.monitor == "val/map" or ckpt_cfg.monitor == "val_map":
+        ckpt_cfg.monitor = "val/segm_map"
+        
     ckpt_dir = os.path.join(to_absolute_path(ckpt_cfg.save_dir), "ckpts")
     callbacks = [
         ModelCheckpoint(
