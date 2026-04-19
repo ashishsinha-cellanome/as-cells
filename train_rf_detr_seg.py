@@ -566,7 +566,7 @@ def main(config: DictConfig):
     OmegaConf.set_struct(config, False)
     _resolve_run_name(config)
 
-    if config.checkpointing.monitor == "val/map":
+    if config.checkpointing.monitor == "val/map" or config.checkpointing.monitor == "val_map":
         config.checkpointing.monitor = "val/segm_map"
 
     hydra_cfg = HydraConfig.get()
