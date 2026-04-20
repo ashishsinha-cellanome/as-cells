@@ -282,7 +282,7 @@ def _setup_callbacks(config: DictConfig):
     callbacks = [
         ModelCheckpoint(
             dirpath=ckpt_dir,
-            filename="mask2former-epoch{epoch:02d}-val_map{"
+            filename="mask2former-epoch{epoch:02d}-val_segm_map{"
             + ckpt_cfg.monitor.replace("/", "_")
             + ":.4f}",
             monitor=ckpt_cfg.monitor,
@@ -297,7 +297,7 @@ def _setup_callbacks(config: DictConfig):
         ModelSummary(max_depth=3),
         EarlyStopping(
             monitor=primary_early_stop_monitor,
-            patience=10,
+            patience=5,
             mode=ckpt_cfg.mode,
             verbose=True,
         ),
@@ -323,7 +323,7 @@ def _setup_callbacks(config: DictConfig):
         callbacks.append(
             ModelCheckpoint(
                 dirpath=ckpt_dir,
-                filename="mask2former-ema-epoch{epoch:02d}-val_map_ema{"
+                filename="mask2former-ema-epoch{epoch:02d}-val_segm_map_ema{"
                 + ema_monitor.replace("/", "_")
                 + ":.4f}",
                 monitor=ema_monitor,
