@@ -61,6 +61,7 @@ class LightningDetectionModel(DetectionModel):
         boxes = original_predictions.get("boxes", [])
         scores = original_predictions.get("scores", [])
         labels = original_predictions.get("labels", [])
+        segmentations = original_predictions.get("segmentation", [])
 
         # Convert to numpy if they are torch tensors
         if torch.is_tensor(boxes):
@@ -69,6 +70,8 @@ class LightningDetectionModel(DetectionModel):
             scores = scores.cpu().numpy()
         if torch.is_tensor(labels):
             labels = labels.cpu().numpy()
+
+        import pycocotools.mask as mask_utils
 
         for i in range(len(boxes)):
             box = boxes[i]
@@ -86,12 +89,19 @@ class LightningDetectionModel(DetectionModel):
                 box[3] + shift_amount_list[0][1],
             ]
 
+            bool_mask = None
+            if i < len(segmentations):
+                rle = segmentations[i].copy()
+                if isinstance(rle["counts"], str):
+                    rle["counts"] = rle["counts"].encode("utf-8")
+                bool_mask = mask_utils.decode(rle).astype(bool)
+
             object_prediction_list.append(
                 ObjectPrediction(
                     bbox=shifted_box,
                     category_id=category_id,
                     score=score,
-                    bool_mask=None,
+                    bool_mask=bool_mask,
                     category_name=category_name,
                     shift_amount=shift_amount_list[0],
                     full_shape=full_shape_list[0],
@@ -203,10 +213,18 @@ def run_sahi_sliced_eval(
     boxes = []
     scores = []
     labels = []
+    segmentations = []
+    import pycocotools.mask as mask_utils
+
     for obj in object_prediction_list:
         boxes.append([obj.bbox.minx, obj.bbox.miny, obj.bbox.maxx, obj.bbox.maxy])
         scores.append(obj.score.value)
         labels.append(obj.category.id)
+        if getattr(obj, "mask", None) is not None and obj.mask.bool_mask is not None:
+            mask_np = np.asfortranarray(obj.mask.bool_mask.astype(np.uint8))
+            rle = mask_utils.encode(mask_np)
+            rle["counts"] = rle["counts"].decode("utf-8")
+            segmentations.append(rle)
 
     if len(boxes) > 0:
         boxes = torch.tensor(boxes, dtype=torch.float32)
@@ -217,4 +235,7 @@ def run_sahi_sliced_eval(
         scores = torch.empty((0,), dtype=torch.float32)
         labels = torch.empty((0,), dtype=torch.int64)
 
-    return {"boxes": boxes, "scores": scores, "labels": labels}
+    result_dict = {"boxes": boxes, "scores": scores, "labels": labels}
+    if segmentations:
+        result_dict["segmentation"] = segmentations
+    return result_dict

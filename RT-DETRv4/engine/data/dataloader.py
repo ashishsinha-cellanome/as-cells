@@ -9,10 +9,14 @@ Copyright (c) 2024 D-FINE authors. All Rights Reserved.
 import torch
 import torch.utils.data as data
 import torch.nn.functional as F
+from torch.utils.data import default_collate
 
 import torchvision
+import torchvision.transforms.v2 as VT
+from torchvision.transforms.v2 import functional as VF, InterpolationMode
 
 import random
+from functools import partial
 
 from ..core import register
 torchvision.disable_beta_transforms_warning()

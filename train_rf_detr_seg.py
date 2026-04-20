@@ -45,7 +45,12 @@ from utils.test_only_checkpoint_restore import (
 )
 from utils.train_utils import BackupToNASCallback
 
+from utils.apply_rfdetr_patches import apply_patches
+apply_patches()
+
 warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", message=".*AccumulateGrad node.*")
+warnings.filterwarnings("ignore", message=".*Grad strides do not match bucket view strides.*")
 OmegaConf.register_new_resolver(
     "extract_name", lambda path: path.split("/")[-1], replace=True
 )
@@ -475,6 +480,10 @@ def _setup_logger(config: DictConfig):
 
 def _setup_callbacks(config: DictConfig):
     ckpt_cfg = config.checkpointing
+    
+    if ckpt_cfg.monitor == "val/map" or ckpt_cfg.monitor == "val_map":
+        ckpt_cfg.monitor = "val/segm_map"
+        
     ckpt_dir = os.path.join(to_absolute_path(ckpt_cfg.save_dir), "ckpts")
     callbacks = [
         ModelCheckpoint(
@@ -566,7 +575,7 @@ def main(config: DictConfig):
     OmegaConf.set_struct(config, False)
     _resolve_run_name(config)
 
-    if config.checkpointing.monitor == "val/map":
+    if config.checkpointing.monitor == "val/map" or config.checkpointing.monitor == "val_map":
         config.checkpointing.monitor = "val/segm_map"
 
     hydra_cfg = HydraConfig.get()

@@ -38,20 +38,22 @@ def convert_preds_to_coco(predictions, model_to_coco=None):
         boxes = convert_to_xywh(boxes).tolist()
         scores = prediction["scores"].tolist()
         labels = prediction["labels"].tolist()
+        segmentations = prediction.get("segmentation", None)
 
-        coco_results.extend(
-            [
-                {
-                    "image_id": int(image_id),
-                    "category_id": int(
-                        model_to_coco.get(int(labels[idx]), int(labels[idx]))
-                    ),
-                    "bbox": boxes[idx],
-                    "score": float(scores[idx]),
-                }
-                for idx in range(len(scores))
-            ]
-        )
+        for idx in range(len(scores)):
+            res = {
+                "image_id": int(image_id),
+                "category_id": int(
+                    model_to_coco.get(int(labels[idx]), int(labels[idx]))
+                ),
+                "bbox": boxes[idx],
+                "score": float(scores[idx]),
+            }
+            if segmentations is not None and idx < len(segmentations):
+                res["segmentation"] = segmentations[idx]
+
+            coco_results.append(res)
+
     return coco_results
 
 
@@ -93,26 +95,27 @@ def compute_coco_metrics(
     Returns a dict containing map/map_50/... and per-class map_* keys.
     When metric_prefix is provided, all returned keys are prefixed, e.g. segm_map.
     """
-    if coco_gt is None or len(predictions) == 0:
-        return {}
-
     base_metrics = {
-        "map": -1.0,
-        "map_50": -1.0,
-        "map_75": -1.0,
-        "map_small": -1.0,
-        "map_medium": -1.0,
-        "map_large": -1.0,
-        "mar_1": -1.0,
-        "mar_10": -1.0,
-        f"mar_{max_detections}": -1.0,
-        "mar_small": -1.0,
-        "mar_medium": -1.0,
-        "mar_large": -1.0,
+        "map": 0.0,
+        "map_50": 0.0,
+        "map_75": 0.0,
+        "map_small": 0.0,
+        "map_medium": 0.0,
+        "map_large": 0.0,
+        "mar_1": 0.0,
+        "mar_10": 0.0,
+        f"mar_{max_detections}": 0.0,
+        "mar_small": 0.0,
+        "mar_medium": 0.0,
+        "mar_large": 0.0,
     }
     metric_prefix = str(metric_prefix or "").strip()
     key_prefix = f"{metric_prefix}_" if metric_prefix else ""
     metrics = {f"{key_prefix}{key}": value for key, value in base_metrics.items()}
+
+    if coco_gt is None or len(predictions) == 0:
+        print(f"\n{prefix}: No predictions to evaluate.")
+        return metrics
 
     try:
         coco_dt = coco_gt.loadRes(predictions)
@@ -180,8 +183,8 @@ def compute_coco_metrics(
                         r_all = recalls[:, class_idx, 0, recall_idx]
                         valid_r_all = r_all[r_all > -1]
                         if len(valid_r_all) > 0:
-                            metrics[f"{key_prefix}mar_{recall_val}_{class_name}"] = round(
-                                float(np.mean(valid_r_all)), 4
+                            metrics[f"{key_prefix}mar_{recall_val}_{class_name}"] = (
+                                round(float(np.mean(valid_r_all)), 4)
                             )
 
                 # Compute best P and R at IoU 0.5 (index 0)
@@ -212,12 +215,8 @@ def compute_coco_metrics(
                         "Labels": labels_per_class.get(cat_id, 0),
                         "P": best_p,
                         "R": best_r,
-                        "mAP@.5": metrics.get(
-                            f"{key_prefix}map_50_{class_name}", 0.0
-                        ),
-                        "mAP@.5:.95": metrics.get(
-                            f"{key_prefix}map_{class_name}", 0.0
-                        ),
+                        "mAP@.5": metrics.get(f"{key_prefix}map_50_{class_name}", 0.0),
+                        "mAP@.5:.95": metrics.get(f"{key_prefix}map_{class_name}", 0.0),
                     }
                 )
 

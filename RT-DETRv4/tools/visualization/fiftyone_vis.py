@@ -14,6 +14,7 @@ import fiftyone.zoo as foz
 import torchvision.transforms as transforms
 from PIL import Image
 import fiftyone.core.labels as fol
+import fiftyone.core.fields as fof
 from fiftyone import ViewField as F
 import time
 import tqdm
