@@ -59,7 +59,7 @@ class RFDETRDataModule(pl.LightningDataModule):
         args.ema_decay = float(model_cfg.ema_decay)
         args.ema_tau = float(model_cfg.ema_tau)
         args.square_resize_div_64 = bool(model_cfg.square_resize_div_64)
-        args.segmentation_head = False
+        args.segmentation_head = True
         args.run_test = True
         args.device = "cuda"
         if model_cfg.get("num_queries") is not None:
@@ -121,7 +121,7 @@ class RFDETRDataModule(pl.LightningDataModule):
                 else ("val" if split_name == self.config.val_name else "train"),
                 aug_config=aug_config,
             ),
-            include_masks=False,
+            include_masks=True,
         )
 
     def setup(self, stage=None):
