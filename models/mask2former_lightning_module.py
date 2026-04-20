@@ -430,32 +430,35 @@ class Mask2FormerLightningModule(pl.LightningModule):
         bbox_metrics = self._default_eval_metrics()
         segm_metrics = self._default_eval_metrics("segm")
         if self.trainer.is_global_zero:
-            if bbox_predictions:
-                bbox_metrics = compute_coco_metrics(
-                    coco_gt=bbox_gt,
-                    predictions=bbox_predictions,
-                    image_ids=sorted(set(image_ids)),
-                    max_detections=int(self.config.model.max_detections),
-                    label_map=self.detection_label_map,
-                    prefix=prefix_label
-                    or f"{prefix.capitalize()} detection performance",
-                    iou_type="bbox",
-                )
-            if segm_predictions:
-                segm_metrics = compute_coco_metrics(
-                    coco_gt=segm_gt,
-                    predictions=segm_predictions,
-                    image_ids=sorted(set(image_ids)),
-                    max_detections=int(self.config.model.max_detections),
-                    label_map=self.detection_label_map,
-                    prefix=(
-                        prefix_label.replace("detection", "segmentation")
-                        if prefix_label
-                        else f"{prefix.capitalize()} segmentation performance"
-                    ),
-                    iou_type="segm",
-                    metric_prefix="segm",
-                )
+            # Check if this is a sanity check where self.trainer.sanity_checking might not be perfectly reliable depending on PL version
+            is_sanity = getattr(self.trainer, "sanity_checking", False)
+            if is_sanity:
+                return gathered_copy
+
+            # We enforce metrics calculation even if predictions are empty (returns 0.0s)
+            bbox_metrics = compute_coco_metrics(
+                coco_gt=bbox_gt,
+                predictions=bbox_predictions,
+                image_ids=sorted(set(image_ids)),
+                max_detections=int(self.config.model.max_detections),
+                label_map=self.detection_label_map,
+                prefix=prefix_label or f"{prefix.capitalize()} detection performance",
+                iou_type="bbox",
+            )
+            segm_metrics = compute_coco_metrics(
+                coco_gt=segm_gt,
+                predictions=segm_predictions,
+                image_ids=sorted(set(image_ids)),
+                max_detections=int(self.config.model.max_detections),
+                label_map=self.detection_label_map,
+                prefix=(
+                    prefix_label.replace("detection", "segmentation")
+                    if prefix_label
+                    else f"{prefix.capitalize()} segmentation performance"
+                ),
+                iou_type="segm",
+                metric_prefix="segm",
+            )
 
         bbox_metrics = broadcast_object(bbox_metrics, src=0)
         segm_metrics = broadcast_object(segm_metrics, src=0)
@@ -464,7 +467,7 @@ class Mask2FormerLightningModule(pl.LightningModule):
             self.log(
                 f"{prefix}/{key}{suffix}",
                 value,
-                prog_bar=(key in {"map", "map_50"}),
+                prog_bar=(key in {"map", "map_50", "map_75"}),
                 sync_dist=True,
             )
             if key == "map":
@@ -474,7 +477,7 @@ class Mask2FormerLightningModule(pl.LightningModule):
             self.log(
                 f"{prefix}/{key}{suffix}",
                 value,
-                prog_bar=(key in {"segm_map", "segm_map_50"}),
+                prog_bar=(key in {"segm_map", "segm_map_50", "segm_map_75"}),
                 sync_dist=True,
             )
 
@@ -483,6 +486,12 @@ class Mask2FormerLightningModule(pl.LightningModule):
         return gathered_copy
 
     def on_validation_epoch_end(self):
+        if self.trainer.sanity_checking:
+            self.validation_step_outputs.clear()
+            if hasattr(self, "validation_step_outputs_ema"):
+                self.validation_step_outputs_ema.clear()
+            return
+
         gathered_val = self._evaluate_and_log_epoch(
             outputs_list=self.validation_step_outputs,
             bbox_gt=self.val_coco_gt,

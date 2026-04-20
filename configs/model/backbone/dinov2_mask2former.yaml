@@ -7,12 +7,12 @@ model_name: "${extract_name:${.pretrained_name_or_path}}"
 decoder_name: "swin-large"
 training_mode: "frozen"  # frozen | lora | full_finetune
 gradient_checkpointing: false
-adapter_dim: 384
-spm_dim: 32
+adapter_dim: 768
+spm_dim: 64
 interaction_indices: [2, 7, 11]
-interaction_num_heads: 6
+interaction_num_heads: 12
 token_mlp_ratio: 0.5
 spatial_mlp_ratio: 0.5
 out_indices: [3, 6, 9, 12]
-fpn_type: "fused"        # fused | tiny | simple | sfp
+fpn_type: "fused"        # fused | tiny | simple | sfp | adapter
 intermediate_resolutions: [168, 84, 42, 21]
