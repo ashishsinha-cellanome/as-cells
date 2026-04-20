@@ -46,6 +46,8 @@ from utils.test_only_checkpoint_restore import (
 from utils.train_utils import BackupToNASCallback
 
 warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", message=".*AccumulateGrad node.*")
+warnings.filterwarnings("ignore", message=".*Grad strides do not match bucket view strides.*")
 OmegaConf.register_new_resolver(
     "extract_name", lambda path: path.split("/")[-1], replace=True
 )
