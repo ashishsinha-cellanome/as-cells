@@ -51,135 +51,135 @@ warnings.filterwarnings("ignore", message=".*Grad strides do not match bucket vi
 warnings.filterwarnings("ignore", message=".*The AccumulateGrad node's stream does not match the stream.*", category=UserWarning)
 
 # --- MEMORY EFFICIENT PATCH FOR MASK2FORMER LOSS ---
-import numpy as np
-from scipy.optimize import linear_sum_assignment
-from transformers.models.mask2former.modeling_mask2former import (
-    Mask2FormerLoss, 
-    Mask2FormerHungarianMatcher,
-    sample_point, 
-    sigmoid_cross_entropy_loss, 
-    dice_loss,
-    pair_wise_sigmoid_cross_entropy_loss,
-    pair_wise_dice_loss
-)
+# import numpy as np
+# from scipy.optimize import linear_sum_assignment
+# from transformers.models.mask2former.modeling_mask2former import (
+#     Mask2FormerLoss, 
+#     Mask2FormerHungarianMatcher,
+#     sample_point, 
+#     sigmoid_cross_entropy_loss, 
+#     dice_loss,
+#     pair_wise_sigmoid_cross_entropy_loss,
+#     pair_wise_dice_loss
+# )
 
-def memory_efficient_matcher_forward(
-    self,
-    masks_queries_logits: torch.Tensor,
-    class_queries_logits: torch.Tensor,
-    mask_labels: list[torch.Tensor],
-    class_labels: list[torch.Tensor],
-) -> list[tuple[torch.Tensor]]:
-    indices = []
-    batch_size = masks_queries_logits.shape[0]
+# def memory_efficient_matcher_forward(
+#     self,
+#     masks_queries_logits: torch.Tensor,
+#     class_queries_logits: torch.Tensor,
+#     mask_labels: list[torch.Tensor],
+#     class_labels: list[torch.Tensor],
+# ) -> list[tuple[torch.Tensor]]:
+#     indices = []
+#     batch_size = masks_queries_logits.shape[0]
     
-    for i in range(batch_size):
-        pred_probs = class_queries_logits[i].softmax(-1)
-        pred_mask = masks_queries_logits[i]
+#     for i in range(batch_size):
+#         pred_probs = class_queries_logits[i].softmax(-1)
+#         pred_mask = masks_queries_logits[i]
 
-        cost_class = -pred_probs[:, class_labels[i]]
+#         cost_class = -pred_probs[:, class_labels[i]]
         
-        target_mask_bool = mask_labels[i]
-        num_gt = target_mask_bool.shape[0]
+#         target_mask_bool = mask_labels[i]
+#         num_gt = target_mask_bool.shape[0]
         
-        pred_mask = pred_mask[:, None]
-        point_coordinates = torch.rand(1, self.num_points, 2, device=pred_mask.device)
-        pred_coordinates = point_coordinates.repeat(pred_mask.shape[0], 1, 1)
-        pred_mask_sampled = sample_point(pred_mask, pred_coordinates, align_corners=False).squeeze(1)
+#         pred_mask = pred_mask[:, None]
+#         point_coordinates = torch.rand(1, self.num_points, 2, device=pred_mask.device)
+#         pred_coordinates = point_coordinates.repeat(pred_mask.shape[0], 1, 1)
+#         pred_mask_sampled = sample_point(pred_mask, pred_coordinates, align_corners=False).squeeze(1)
         
-        CHUNK_SIZE = 256
-        cost_mask_list = []
-        cost_dice_list = []
+#         CHUNK_SIZE = 256
+#         cost_mask_list = []
+#         cost_dice_list = []
         
-        target_coordinates_chunk = point_coordinates.repeat(CHUNK_SIZE, 1, 1)
+#         target_coordinates_chunk = point_coordinates.repeat(CHUNK_SIZE, 1, 1)
         
-        for chunk_start in range(0, num_gt, CHUNK_SIZE):
-            chunk_end = min(num_gt, chunk_start + CHUNK_SIZE)
-            actual_chunk_size = chunk_end - chunk_start
+#         for chunk_start in range(0, num_gt, CHUNK_SIZE):
+#             chunk_end = min(num_gt, chunk_start + CHUNK_SIZE)
+#             actual_chunk_size = chunk_end - chunk_start
             
-            target_mask_chunk = target_mask_bool[chunk_start:chunk_end].to(pred_mask.dtype)[:, None]
+#             target_mask_chunk = target_mask_bool[chunk_start:chunk_end].to(pred_mask.dtype)[:, None]
             
-            if actual_chunk_size == CHUNK_SIZE:
-                coords = target_coordinates_chunk
-            else:
-                coords = point_coordinates.repeat(actual_chunk_size, 1, 1)
+#             if actual_chunk_size == CHUNK_SIZE:
+#                 coords = target_coordinates_chunk
+#             else:
+#                 coords = point_coordinates.repeat(actual_chunk_size, 1, 1)
                 
-            target_mask_sampled_chunk = sample_point(target_mask_chunk, coords, align_corners=False).squeeze(1)
+#             target_mask_sampled_chunk = sample_point(target_mask_chunk, coords, align_corners=False).squeeze(1)
             
-            cost_mask_chunk = pair_wise_sigmoid_cross_entropy_loss(pred_mask_sampled, target_mask_sampled_chunk)
-            cost_dice_chunk = pair_wise_dice_loss(pred_mask_sampled, target_mask_sampled_chunk)
+#             cost_mask_chunk = pair_wise_sigmoid_cross_entropy_loss(pred_mask_sampled, target_mask_sampled_chunk)
+#             cost_dice_chunk = pair_wise_dice_loss(pred_mask_sampled, target_mask_sampled_chunk)
             
-            cost_mask_list.append(cost_mask_chunk)
-            cost_dice_list.append(cost_dice_chunk)
+#             cost_mask_list.append(cost_mask_chunk)
+#             cost_dice_list.append(cost_dice_chunk)
             
-            del target_mask_chunk, target_mask_sampled_chunk
+#             del target_mask_chunk, target_mask_sampled_chunk
             
-        if len(cost_mask_list) > 0:
-            cost_mask = torch.cat(cost_mask_list, dim=1)
-            cost_dice = torch.cat(cost_dice_list, dim=1)
-        else:
-            cost_mask = torch.empty((pred_mask.shape[0], 0), device=pred_mask.device)
-            cost_dice = torch.empty((pred_mask.shape[0], 0), device=pred_mask.device)
+#         if len(cost_mask_list) > 0:
+#             cost_mask = torch.cat(cost_mask_list, dim=1)
+#             cost_dice = torch.cat(cost_dice_list, dim=1)
+#         else:
+#             cost_mask = torch.empty((pred_mask.shape[0], 0), device=pred_mask.device)
+#             cost_dice = torch.empty((pred_mask.shape[0], 0), device=pred_mask.device)
             
-        cost_matrix = self.cost_mask * cost_mask + self.cost_class * cost_class + self.cost_dice * cost_dice
-        cost_matrix = torch.minimum(cost_matrix, torch.tensor(1e10))
-        cost_matrix = torch.maximum(cost_matrix, torch.tensor(-1e10))
-        cost_matrix = torch.nan_to_num(cost_matrix, 0)
+#         cost_matrix = self.cost_mask * cost_mask + self.cost_class * cost_class + self.cost_dice * cost_dice
+#         cost_matrix = torch.minimum(cost_matrix, torch.tensor(1e10))
+#         cost_matrix = torch.maximum(cost_matrix, torch.tensor(-1e10))
+#         cost_matrix = torch.nan_to_num(cost_matrix, 0)
         
-        assigned_indices = linear_sum_assignment(cost_matrix.cpu())
-        indices.append(assigned_indices)
+#         assigned_indices = linear_sum_assignment(cost_matrix.cpu())
+#         indices.append(assigned_indices)
 
-    matched_indices = [
-        (torch.as_tensor(i, dtype=torch.int64), torch.as_tensor(j, dtype=torch.int64)) for i, j in indices
-    ]
-    return matched_indices
+#     matched_indices = [
+#         (torch.as_tensor(i, dtype=torch.int64), torch.as_tensor(j, dtype=torch.int64)) for i, j in indices
+#     ]
+#     return matched_indices
 
-Mask2FormerHungarianMatcher.forward = memory_efficient_matcher_forward
+# Mask2FormerHungarianMatcher.forward = memory_efficient_matcher_forward
 
-def memory_efficient_loss_masks(
-    self,
-    masks_queries_logits: torch.Tensor,
-    mask_labels: list[torch.Tensor],
-    indices: tuple[np.ndarray],
-    num_masks: int,
-) -> dict[str, torch.Tensor]:
-    src_idx = self._get_predictions_permutation_indices(indices)
-    tgt_idx = self._get_targets_permutation_indices(indices)
+# def memory_efficient_loss_masks(
+#     self,
+#     masks_queries_logits: torch.Tensor,
+#     mask_labels: list[torch.Tensor],
+#     indices: tuple[np.ndarray],
+#     num_masks: int,
+# ) -> dict[str, torch.Tensor]:
+#     src_idx = self._get_predictions_permutation_indices(indices)
+#     tgt_idx = self._get_targets_permutation_indices(indices)
     
-    pred_masks = masks_queries_logits[src_idx]
+#     pred_masks = masks_queries_logits[src_idx]
     
-    batch_idx, target_idx = tgt_idx
-    if len(batch_idx) == 0:
-        target_masks = torch.empty((0, masks_queries_logits.shape[-2], masks_queries_logits.shape[-1]), device=masks_queries_logits.device)
-    else:
-        target_masks = torch.stack([mask_labels[b][i] for b, i in zip(batch_idx, target_idx)])
+#     batch_idx, target_idx = tgt_idx
+#     if len(batch_idx) == 0:
+#         target_masks = torch.empty((0, masks_queries_logits.shape[-2], masks_queries_logits.shape[-1]), device=masks_queries_logits.device)
+#     else:
+#         target_masks = torch.stack([mask_labels[b][i] for b, i in zip(batch_idx, target_idx)])
 
-    pred_masks = pred_masks[:, None]
-    target_masks = target_masks[:, None].to(pred_masks)
+#     pred_masks = pred_masks[:, None]
+#     target_masks = target_masks[:, None].to(pred_masks)
 
-    with torch.no_grad():
-        point_coordinates = self.sample_points_using_uncertainty(
-            pred_masks,
-            lambda logits: self.calculate_uncertainty(logits),
-            self.num_points,
-            self.oversample_ratio,
-            self.importance_sample_ratio,
-        )
+#     with torch.no_grad():
+#         point_coordinates = self.sample_points_using_uncertainty(
+#             pred_masks,
+#             lambda logits: self.calculate_uncertainty(logits),
+#             self.num_points,
+#             self.oversample_ratio,
+#             self.importance_sample_ratio,
+#         )
 
-        point_labels = sample_point(target_masks, point_coordinates, align_corners=False).squeeze(1)
+#         point_labels = sample_point(target_masks, point_coordinates, align_corners=False).squeeze(1)
 
-    point_logits = sample_point(pred_masks, point_coordinates, align_corners=False).squeeze(1)
+#     point_logits = sample_point(pred_masks, point_coordinates, align_corners=False).squeeze(1)
 
-    losses = {
-        "loss_mask": sigmoid_cross_entropy_loss(point_logits, point_labels, num_masks),
-        "loss_dice": dice_loss(point_logits, point_labels, num_masks),
-    }
+#     losses = {
+#         "loss_mask": sigmoid_cross_entropy_loss(point_logits, point_labels, num_masks),
+#         "loss_dice": dice_loss(point_logits, point_labels, num_masks),
+#     }
 
-    del pred_masks
-    del target_masks
-    return losses
+#     del pred_masks
+#     del target_masks
+#     return losses
 
-Mask2FormerLoss.loss_masks = memory_efficient_loss_masks
+# Mask2FormerLoss.loss_masks = memory_efficient_loss_masks
 # --------------------------------------------------
 
 OmegaConf.register_new_resolver(

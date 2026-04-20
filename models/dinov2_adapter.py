@@ -100,7 +100,9 @@ class Injector(nn.Module):
         v = v.view(B, -1, self.num_heads, self.head_dim).transpose(1, 2)
 
         attn_out = F.scaled_dot_product_attention(q, k, v)
-        attn_out = attn_out.transpose(1, 2).reshape(B, -1, self.num_heads * self.head_dim)
+        attn_out = attn_out.transpose(1, 2).reshape(
+            B, -1, self.num_heads * self.head_dim
+        )
         attn_out = self.out_proj(attn_out)
 
         out = query_tokens + attn_out
@@ -143,7 +145,9 @@ class Extractor(nn.Module):
     def forward(self, spatial_features, vit_tokens):
         # spatial_features: B x C x H x W
         B, C, H, W = spatial_features.shape
-        spatial_flat = spatial_features.flatten(2).transpose(1, 2)  # B x N x spatial_dim
+        spatial_flat = spatial_features.flatten(2).transpose(
+            1, 2
+        )  # B x N x spatial_dim
 
         q = self.query(self.norm1(spatial_flat))
         normed_vit = self.norm2(vit_tokens)
@@ -249,9 +253,7 @@ class Dinov2Adapter(PreTrainedModel):
                     token_dim=token_dim,
                     spatial_dim=adapter_dim,
                     num_heads=int(getattr(config, "interaction_num_heads", 6)),
-                    spatial_mlp_ratio=float(
-                        getattr(config, "spatial_mlp_ratio", 0.5)
-                    ),
+                    spatial_mlp_ratio=float(getattr(config, "spatial_mlp_ratio", 0.5)),
                 )
                 for _ in self.interaction_indices
             ]
@@ -291,13 +293,19 @@ class Dinov2Adapter(PreTrainedModel):
         self, layer_module: nn.Module, hidden_states: torch.Tensor
     ) -> torch.Tensor:
         if not (self.training and self.gradient_checkpointing):
-            return layer_module(hidden_states)[0]
+            out = layer_module(hidden_states)
+            if isinstance(out, tuple):
+                return out[0]
+            return out
 
         if not hidden_states.requires_grad:
             hidden_states = hidden_states.requires_grad_(True)
 
         def custom_forward(inputs: torch.Tensor) -> torch.Tensor:
-            return layer_module(inputs)[0]
+            out = layer_module(inputs)
+            if isinstance(out, tuple):
+                return out[0]
+            return out
 
         return checkpoint(custom_forward, hidden_states, use_reentrant=False)
 
@@ -334,14 +342,15 @@ class Dinov2Adapter(PreTrainedModel):
 
         feature_maps = [out_4, out_8, out_16, out_32]
 
-        out = []
-        for feature_map in feature_maps:
-            if pixel_mask is not None:
+        if pixel_mask is not None:
+            out = []
+            for feature_map in feature_maps:
                 mask = nn.functional.interpolate(
                     pixel_mask[None].float(), size=feature_map.shape[-2:]
                 ).to(torch.bool)[0]
                 out.append((feature_map, mask))
-            else:
-                out.append((feature_map,))
+            return out
 
-        return out
+        from transformers.modeling_outputs import BackboneOutput
+
+        return BackboneOutput(feature_maps=tuple(feature_maps))
