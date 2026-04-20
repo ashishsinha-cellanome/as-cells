@@ -172,9 +172,16 @@ class Mask2FormerLightningModule(pl.LightningModule):
         image_ids: list[int],
         orig_sizes: list[tuple[int, int]],
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        # During validation/test, use a lower threshold to capture a full PR curve
+        # Otherwise, use the standard mask2former threshold.
+        if not self.training:
+            eval_threshold = float(getattr(self.config.model, "detection_threshold", 0.05))
+        else:
+            eval_threshold = float(self.config.model.mask2former.threshold)
+
         processed = self.image_processor.post_process_instance_segmentation(
             outputs,
-            threshold=float(self.config.model.mask2former.threshold),
+            threshold=eval_threshold,
             mask_threshold=float(self.config.model.mask2former.mask_threshold),
             overlap_mask_area_threshold=float(
                 self.config.model.mask2former.overlap_mask_area_threshold
@@ -430,32 +437,30 @@ class Mask2FormerLightningModule(pl.LightningModule):
         bbox_metrics = self._default_eval_metrics()
         segm_metrics = self._default_eval_metrics("segm")
         if self.trainer.is_global_zero:
-            if bbox_predictions:
-                bbox_metrics = compute_coco_metrics(
-                    coco_gt=bbox_gt,
-                    predictions=bbox_predictions,
-                    image_ids=sorted(set(image_ids)),
-                    max_detections=int(self.config.model.max_detections),
-                    label_map=self.detection_label_map,
-                    prefix=prefix_label
-                    or f"{prefix.capitalize()} detection performance",
-                    iou_type="bbox",
-                )
-            if segm_predictions:
-                segm_metrics = compute_coco_metrics(
-                    coco_gt=segm_gt,
-                    predictions=segm_predictions,
-                    image_ids=sorted(set(image_ids)),
-                    max_detections=int(self.config.model.max_detections),
-                    label_map=self.detection_label_map,
-                    prefix=(
-                        prefix_label.replace("detection", "segmentation")
-                        if prefix_label
-                        else f"{prefix.capitalize()} segmentation performance"
-                    ),
-                    iou_type="segm",
-                    metric_prefix="segm",
-                )
+            bbox_metrics = compute_coco_metrics(
+                coco_gt=bbox_gt,
+                predictions=bbox_predictions,
+                image_ids=sorted(set(image_ids)),
+                max_detections=int(self.config.model.max_detections),
+                label_map=self.detection_label_map,
+                prefix=prefix_label
+                or f"{prefix.capitalize()} detection performance",
+                iou_type="bbox",
+            )
+            segm_metrics = compute_coco_metrics(
+                coco_gt=segm_gt,
+                predictions=segm_predictions,
+                image_ids=sorted(set(image_ids)),
+                max_detections=int(self.config.model.max_detections),
+                label_map=self.detection_label_map,
+                prefix=(
+                    prefix_label.replace("detection", "segmentation")
+                    if prefix_label
+                    else f"{prefix.capitalize()} segmentation performance"
+                ),
+                iou_type="segm",
+                metric_prefix="segm",
+            )
 
         bbox_metrics = broadcast_object(bbox_metrics, src=0)
         segm_metrics = broadcast_object(segm_metrics, src=0)
