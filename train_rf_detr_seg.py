@@ -45,6 +45,9 @@ from utils.test_only_checkpoint_restore import (
 )
 from utils.train_utils import BackupToNASCallback
 
+from utils.apply_rfdetr_patches import apply_patches
+apply_patches()
+
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", message=".*AccumulateGrad node.*")
 warnings.filterwarnings("ignore", message=".*Grad strides do not match bucket view strides.*")
