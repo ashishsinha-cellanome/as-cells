@@ -5,10 +5,12 @@ Copyright (c) 2025 The RT-DETRv4 Authors. All Rights Reserved.
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from ..core import register
 import logging
 from torchvision.transforms import v2 as transforms
 import torchvision.transforms.functional as TF
+import math
 
 _logger = logging.getLogger(__name__)
 
@@ -34,7 +36,7 @@ class DINOv2TeacherModel(nn.Module):
         self.patch_size = patch_size
         self.target_downsample_factor = target_downsample_factor
 
-        _logger.info("[Teacher Model] Initializing DINOv2 teacher via torch.hub.load...")
+        _logger.info(f"[Teacher Model] Initializing DINOv2 teacher via torch.hub.load...")
         _logger.info(f"[Teacher Model] DINOv2 repo path: {dinov2_repo_path}")
         _logger.info(f"[Teacher Model] Model name: {model_name}")
 
@@ -70,7 +72,7 @@ class DINOv2TeacherModel(nn.Module):
         # Input normalization transform
         self.normalize_transform = transforms.Normalize(mean=mean, std=std)
 
-        _logger.info("[Teacher Model] DINOv2 (Hub) initialized.")
+        _logger.info(f"[Teacher Model] DINOv2 (Hub) initialized.")
 
     def forward(self, images: torch.Tensor):
         B, _, H_in, W_in = images.shape
