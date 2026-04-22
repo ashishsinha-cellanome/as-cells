@@ -601,20 +601,33 @@ class Mask2FormerLightningModule(pl.LightningModule):
         decoder_params = []
         backbone_params = []
 
+        is_native_swin = not hasattr(self.model.model.pixel_level_module.encoder, "backbone")
+
         for name, param in self.model.named_parameters():
             if not param.requires_grad:
                 continue
 
-            # If it's in the encoder but NOT the backbone, it's the FPN or Adapter
-            if (
-                "pixel_level_module.encoder" in name
-                and "pixel_level_module.encoder.backbone" not in name
-            ):
+            # Heads (class predictor & mask embedder) need to learn fast for new classes
+            if "class_predictor" in name or "mask_embedder" in name:
                 fpn_params.append(param)
-            # If it's the backbone
-            elif "pixel_level_module.encoder.backbone" in name:
-                backbone_params.append(param)
-            # Everything else is the Mask2Former pretrained decoder
+            # Encoder (Backbone + Adapter)
+            elif "pixel_level_module.encoder" in name:
+                if "backbone" in name:
+                    backbone_params.append(param)
+                elif not is_native_swin:
+                    # DINOv2 Adapter (needs to train from scratch)
+                    fpn_params.append(param)
+                else:
+                    # Native Swin Backbone
+                    backbone_params.append(param)
+            # Pixel Decoder
+            elif "pixel_level_module.decoder" in name:
+                if is_native_swin:
+                    # Treat pixel decoder like FPN for native Swin to adapt to new domain
+                    fpn_params.append(param)
+                else:
+                    decoder_params.append(param)
+            # Transformer Decoder & others
             else:
                 decoder_params.append(param)
 

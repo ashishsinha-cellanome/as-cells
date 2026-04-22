@@ -599,6 +599,12 @@ def main(config: DictConfig):
 
     callbacks = _setup_callbacks(config)
     profiler = _get_profiler(config)
+    
+    gradient_clip_val = float(config.trainer.get("max_grad_norm", 0.01))
+    if gradient_clip_val > 0.05:
+        rank_zero_print(f"⚠️  WARNING: max_grad_norm is {gradient_clip_val}. Mask2Former is unstable with > 0.01. Forcing 0.01!")
+        gradient_clip_val = 0.01
+
     trainer = pl.Trainer(
         accelerator=config.trainer.accelerator,
         devices=config.trainer.devices,
@@ -609,7 +615,7 @@ def main(config: DictConfig):
         log_every_n_steps=config.trainer.log_every_n_steps,
         val_check_interval=config.trainer.val_check_interval,
         num_sanity_val_steps=int(config.trainer.num_sanity_val_steps),
-        gradient_clip_val=config.trainer.max_grad_norm,
+        gradient_clip_val=gradient_clip_val,
         gradient_clip_algorithm=config.trainer.gradient_clip_algo,
         accumulate_grad_batches=config.trainer.accumulate_grad_batches,
         deterministic=config.trainer.deterministic,
