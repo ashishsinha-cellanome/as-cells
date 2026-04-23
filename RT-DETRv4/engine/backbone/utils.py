@@ -5,7 +5,7 @@ Copyright(c) 2023 lyuwenyu. All Rights Reserved.
 """
 
 from collections import OrderedDict
-from typing import List
+from typing import Dict, List
 
 
 import torch.nn as nn

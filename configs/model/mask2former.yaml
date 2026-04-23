@@ -29,7 +29,7 @@ lora:
 ema:
   enabled: true
   decay: 0.993
-  tau: 100
+  tau: 1000
   warmup_steps: 2000
 
 label_map:

@@ -7,7 +7,7 @@ import inspect
 import importlib
 import functools
 from collections import defaultdict
-from typing import Any
+from typing import Any, Dict, Optional, List
 
 
 GLOBAL_CONFIG = defaultdict(dict)

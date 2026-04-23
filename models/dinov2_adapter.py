@@ -1,12 +1,14 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils.checkpoint import checkpoint
+from torch.utils.checkpoint import checkpoint
 
 
 class SpatialPriorModule(nn.Module):
     """CNN stem to extract multi-scale spatial features from the input image."""
 
-    def __init__(self, in_channels=3, embed_dim=768, spm_dim=64):
+    def __init__(self, in_channels=3, adapter_dim=384, spm_dim=32):
         super().__init__()
         # Extract Stride 4 (Initial spatial resolution)
         self.stem = nn.Sequential(
@@ -33,9 +35,9 @@ class SpatialPriorModule(nn.Module):
             nn.BatchNorm2d(spm_dim * 4),
         )
 
-        self.proj_f4 = nn.Conv2d(spm_dim, embed_dim // 2, kernel_size=1)
-        self.proj_f8 = nn.Conv2d(spm_dim * 2, embed_dim, kernel_size=1)
-        self.proj_f16 = nn.Conv2d(spm_dim * 4, embed_dim, kernel_size=1)
+        self.proj_f4 = nn.Conv2d(spm_dim, adapter_dim // 2, kernel_size=1)
+        self.proj_f8 = nn.Conv2d(spm_dim * 2, adapter_dim, kernel_size=1)
+        self.proj_f16 = nn.Conv2d(spm_dim * 4, adapter_dim, kernel_size=1)
 
     def forward(self, x):
         # x is B x 3 x H x W
@@ -48,32 +50,45 @@ class SpatialPriorModule(nn.Module):
 class Injector(nn.Module):
     """Injects spatial CNN features into ViT tokens via cross-attention."""
 
-    def __init__(self, embed_dim, num_heads=12):
+    def __init__(
+        self,
+        token_dim: int,
+        spatial_dim: int,
+        num_heads: int = 4,
+        token_mlp_ratio: float = 0.5,
+    ):
         super().__init__()
         self.num_heads = num_heads
-        self.head_dim = embed_dim // num_heads
-        self.query = nn.Linear(embed_dim, embed_dim)
-        self.key = nn.Linear(embed_dim, embed_dim)
-        self.value = nn.Linear(embed_dim, embed_dim)
-        self.norm1 = nn.LayerNorm(embed_dim)
-        self.norm2 = nn.LayerNorm(embed_dim)
+        self.head_dim = spatial_dim // num_heads
+        if spatial_dim % num_heads != 0:
+            raise ValueError(
+                f"spatial_dim={spatial_dim} must be divisible by num_heads={num_heads}"
+            )
+        token_mlp_hidden = max(spatial_dim, int(token_dim * token_mlp_ratio))
+
+        self.query = nn.Linear(token_dim, spatial_dim)
+        self.key = nn.Linear(spatial_dim, spatial_dim)
+        self.value = nn.Linear(spatial_dim, spatial_dim)
+        self.out_proj = nn.Linear(spatial_dim, token_dim)
+        self.norm1 = nn.LayerNorm(token_dim)
+        self.norm2 = nn.LayerNorm(token_dim)
 
         self.ffn = nn.Sequential(
-            nn.Linear(embed_dim, embed_dim * 4),
+            nn.Linear(token_dim, token_mlp_hidden),
             nn.GELU(),
-            nn.Linear(embed_dim * 4, embed_dim),
+            nn.Linear(token_mlp_hidden, token_dim),
         )
 
         # Projection for multiscale spatial features
-        self.c_proj = nn.Conv2d(embed_dim, embed_dim, kernel_size=1)
+        self.c_proj = nn.Conv2d(spatial_dim, spatial_dim, kernel_size=1)
 
     def forward(self, query_tokens, spatial_features):
         # query_tokens: B x N x C
         # spatial_features: B x C x H x W (usually stride 16 flattened)
-        B, C, H, W = spatial_features.shape
+        B, _, H, W = spatial_features.shape
         spatial_flat = (
             self.c_proj(spatial_features).flatten(2).transpose(1, 2)
-        )  # B x (H*W) x C
+        )  # B x (H*W) x spatial_dim
 
         # Cross attention
         q = self.query(self.norm1(query_tokens))
@@ -85,7 +100,10 @@ class Injector(nn.Module):
         v = v.view(B, -1, self.num_heads, self.head_dim).transpose(1, 2)
 
         attn_out = F.scaled_dot_product_attention(q, k, v)
-        attn_out = attn_out.transpose(1, 2).reshape(B, -1, C)
+        attn_out = attn_out.transpose(1, 2).reshape(
+            B, -1, self.num_heads * self.head_dim
+        )
+        attn_out = self.out_proj(attn_out)
 
         out = query_tokens + attn_out
         out = out + self.ffn(self.norm2(out))
@@ -95,27 +113,41 @@ class Injector(nn.Module):
 class Extractor(nn.Module):
     """Extracts semantic ViT tokens back to the spatial CNN pathway."""
 
-    def __init__(self, embed_dim, num_heads=12):
+    def __init__(
+        self,
+        token_dim: int,
+        spatial_dim: int,
+        num_heads: int = 4,
+        spatial_mlp_ratio: float = 0.5,
+    ):
         super().__init__()
         self.num_heads = num_heads
-        self.head_dim = embed_dim // num_heads
-        self.query = nn.Linear(embed_dim, embed_dim)
-        self.key = nn.Linear(embed_dim, embed_dim)
-        self.value = nn.Linear(embed_dim, embed_dim)
-        self.norm1 = nn.LayerNorm(embed_dim)
-        self.norm2 = nn.LayerNorm(embed_dim)
-        self.norm3 = nn.LayerNorm(embed_dim)
+        self.head_dim = spatial_dim // num_heads
+        if spatial_dim % num_heads != 0:
+            raise ValueError(
+                f"spatial_dim={spatial_dim} must be divisible by num_heads={num_heads}"
+            )
+        spatial_mlp_hidden = max(spatial_dim, int(spatial_dim * spatial_mlp_ratio))
+
+        self.query = nn.Linear(spatial_dim, spatial_dim)
+        self.key = nn.Linear(token_dim, spatial_dim)
+        self.value = nn.Linear(token_dim, spatial_dim)
+        self.norm1 = nn.LayerNorm(spatial_dim)
+        self.norm2 = nn.LayerNorm(token_dim)
+        self.norm3 = nn.LayerNorm(spatial_dim)
 
         self.ffn = nn.Sequential(
-            nn.Linear(embed_dim, embed_dim * 4),
+            nn.Linear(spatial_dim, spatial_mlp_hidden),
             nn.GELU(),
-            nn.Linear(embed_dim * 4, embed_dim),
+            nn.Linear(spatial_mlp_hidden, spatial_dim),
         )
 
     def forward(self, spatial_features, vit_tokens):
         # spatial_features: B x C x H x W
         B, C, H, W = spatial_features.shape
-        spatial_flat = spatial_features.flatten(2).transpose(1, 2)  # B x N x C
+        spatial_flat = spatial_features.flatten(2).transpose(
+            1, 2
+        )  # B x N x spatial_dim
 
         q = self.query(self.norm1(spatial_flat))
         normed_vit = self.norm2(vit_tokens)
@@ -143,9 +175,25 @@ from models.dinov2_backbone_with_fpn import Dinov2BackBoneWithFPNConfig
 class Dinov2AdapterConfig(Dinov2BackBoneWithFPNConfig):
     model_type = "dinov2_adapter"
 
-    def __init__(self, interaction_indices=[2, 5, 8, 11], **kwargs):
+    def __init__(
+        self,
+        interaction_indices=[3, 8, 12],
+        gradient_checkpointing: bool = False,
+        adapter_dim: int = 384,
+        spm_dim: int = 32,
+        interaction_num_heads: int = 4,
+        token_mlp_ratio: float = 0.5,
+        spatial_mlp_ratio: float = 0.5,
+        **kwargs,
+    ):
         super().__init__(**kwargs)
         self.interaction_indices = interaction_indices
+        self.gradient_checkpointing = gradient_checkpointing
+        self.adapter_dim = adapter_dim
+        self.spm_dim = spm_dim
+        self.interaction_num_heads = interaction_num_heads
+        self.token_mlp_ratio = token_mlp_ratio
+        self.spatial_mlp_ratio = spatial_mlp_ratio
 
 
 class Dinov2Adapter(PreTrainedModel):
@@ -156,6 +204,10 @@ class Dinov2Adapter(PreTrainedModel):
         self.intermediate_channel_sizes = config.intermediate_channel_sizes
         self.output_indices_for_fpn = config.output_indices_for_fpn
         self.interaction_indices = config.interaction_indices
+        self.gradient_checkpointing = bool(
+            getattr(config, "gradient_checkpointing", False)
+        )
+        self.adapter_dim = int(getattr(config, "adapter_dim", config.hidden_size))
 
         # ViT Backbone (Frozen)
         if config.dinov2_pretrained_backbone_name_or_path:
@@ -165,20 +217,46 @@ class Dinov2Adapter(PreTrainedModel):
         else:
             self.backbone = Dinov2Model(config)
 
+        if self.gradient_checkpointing and hasattr(
+            self.backbone, "gradient_checkpointing_enable"
+        ):
+            self.backbone.gradient_checkpointing_enable()
+
         for param in self.backbone.parameters():
             param.requires_grad_(False)
 
-        embed_dim = config.hidden_size
+        token_dim = config.hidden_size
+        adapter_dim = self.adapter_dim
 
         # Spatial Pathway
-        self.spm = SpatialPriorModule(in_channels=3, embed_dim=embed_dim)
+        self.spm = SpatialPriorModule(
+            in_channels=3,
+            adapter_dim=adapter_dim,
+            spm_dim=int(getattr(config, "spm_dim", 32)),
+        )
 
         # Interaction layers
         self.injectors = nn.ModuleList(
-            [Injector(embed_dim) for _ in self.interaction_indices]
+            [
+                Injector(
+                    token_dim=token_dim,
+                    spatial_dim=adapter_dim,
+                    num_heads=int(getattr(config, "interaction_num_heads", 6)),
+                    token_mlp_ratio=float(getattr(config, "token_mlp_ratio", 0.5)),
+                )
+                for _ in self.interaction_indices
+            ]
         )
         self.extractors = nn.ModuleList(
-            [Extractor(embed_dim) for _ in self.interaction_indices]
+            [
+                Extractor(
+                    token_dim=token_dim,
+                    spatial_dim=adapter_dim,
+                    num_heads=int(getattr(config, "interaction_num_heads", 6)),
+                    spatial_mlp_ratio=float(getattr(config, "spatial_mlp_ratio", 0.5)),
+                )
+                for _ in self.interaction_indices
+            ]
         )
 
         # Final Multiscale Projections to match Mask2Former expected dimensions
@@ -186,34 +264,52 @@ class Dinov2Adapter(PreTrainedModel):
         out_dims = config.intermediate_channel_sizes
 
         self.proj_4 = nn.Sequential(
-            nn.Conv2d(embed_dim // 2, out_dims[0], kernel_size=1),
+            nn.Conv2d(adapter_dim // 2, out_dims[0], kernel_size=1),
             nn.BatchNorm2d(out_dims[0]),
         )
         self.proj_8 = nn.Sequential(
-            nn.Conv2d(embed_dim, out_dims[1], kernel_size=1),
+            nn.Conv2d(adapter_dim, out_dims[1], kernel_size=1),
             nn.BatchNorm2d(out_dims[1]),
         )
         self.proj_16 = nn.Sequential(
-            nn.Conv2d(embed_dim, out_dims[2], kernel_size=1),
+            nn.Conv2d(adapter_dim, out_dims[2], kernel_size=1),
             nn.BatchNorm2d(out_dims[2]),
         )
         # Stride 32 is created by pooling Stride 16
         self.proj_32 = nn.Sequential(
             nn.Conv2d(
-                embed_dim,
-                out_dims[3] if len(out_dims) > 3 else embed_dim,
+                adapter_dim,
+                out_dims[3] if len(out_dims) > 3 else adapter_dim,
                 kernel_size=3,
                 stride=2,
                 padding=1,
             ),
-            nn.BatchNorm2d(out_dims[3] if len(out_dims) > 3 else embed_dim),
+            nn.BatchNorm2d(out_dims[3] if len(out_dims) > 3 else adapter_dim),
         )
 
         self.post_init()
 
-    def forward(self, pixel_values, pixel_mask=None):
-        B, C, H, W = pixel_values.shape
+    def _run_backbone_layer(
+        self, layer_module: nn.Module, hidden_states: torch.Tensor
+    ) -> torch.Tensor:
+        if not (self.training and self.gradient_checkpointing):
+            out = layer_module(hidden_states)
+            if isinstance(out, tuple):
+                return out[0]
+            return out
 
+        if not hidden_states.requires_grad:
+            hidden_states = hidden_states.requires_grad_(True)
+
+        def custom_forward(inputs: torch.Tensor) -> torch.Tensor:
+            out = layer_module(inputs)
+            if isinstance(out, tuple):
+                return out[0]
+            return out
+
+        return checkpoint(custom_forward, hidden_states, use_reentrant=False)
+
+    def forward(self, pixel_values, pixel_mask=None):
         # Extract initial spatial features
         spm_features = self.spm(pixel_values)
         f4, f8, f16 = spm_features
@@ -230,7 +326,7 @@ class Dinov2Adapter(PreTrainedModel):
                 # Inject Spatial info (stride 16) into ViT tokens
                 hidden_states = self.injectors[interaction_idx](hidden_states, f16)
 
-            hidden_states = layer_module(hidden_states)[0]
+            hidden_states = self._run_backbone_layer(layer_module, hidden_states)
 
             if i in self.interaction_indices:
                 # Extract ViT semantics back to spatial features
@@ -246,14 +342,15 @@ class Dinov2Adapter(PreTrainedModel):
 
         feature_maps = [out_4, out_8, out_16, out_32]
 
-        out = []
-        for feature_map in feature_maps:
-            if pixel_mask is not None:
+        if pixel_mask is not None:
+            out = []
+            for feature_map in feature_maps:
                 mask = nn.functional.interpolate(
                     pixel_mask[None].float(), size=feature_map.shape[-2:]
                 ).to(torch.bool)[0]
                 out.append((feature_map, mask))
-            else:
-                out.append((feature_map,))
+            return out
 
-        return out
+        from transformers.modeling_outputs import BackboneOutput
+
+        return BackboneOutput(feature_maps=tuple(feature_maps))

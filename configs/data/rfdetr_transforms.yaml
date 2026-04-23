@@ -13,9 +13,9 @@ rfdetr_transforms:
   Perspective:
     p: 0.25
 
-  RandomScale:
-    scale_limit: [-0.3, 0.0]
-    p: 0.5
+  # RandomScale:
+  #   scale_limit: [-0.3, 0.0]
+  #   p: 0.5
 
   # Pixel-level augmentations (preserve bounding boxes)
   RandomBrightnessContrast:
