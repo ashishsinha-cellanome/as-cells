@@ -6,7 +6,7 @@ yolov26:
   dataset_cache_dir: ${hydra:runtime.cwd}/.cache/datasets/yolov26_${data.train_name}_${data.val_name}_${data.test_name}
   epochs: 100
   batch_size: 16
-  project: cellanome
+  project: ${checkpointing.save_dir}/yolov26
   name: yolov26_train
   
   # Hyperparameters for ultralytics
