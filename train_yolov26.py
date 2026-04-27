@@ -18,36 +18,40 @@ def main(config: DictConfig):
     
     yaml_path = os.path.join(cache_dir, "data.yaml")
     if get_rank() == 0:
-        # 1. Convert Data to YOLO format
-        convert_coco_to_yolo(
-            data_cfg.train_name,
-            os.path.join(dp, "images", data_cfg.train_name),
-            os.path.join(dp, f"{data_cfg.train_name}_annotations.json"),
-            cache_dir,
-            config.model.label_map
-        )
-        convert_coco_to_yolo(
-            data_cfg.val_name,
-            os.path.join(dp, "images", data_cfg.val_name),
-            os.path.join(dp, f"{data_cfg.val_name}_annotations.json"),
-            cache_dir,
-            config.model.label_map
-        )
-        convert_coco_to_yolo(
-            data_cfg.test_name,
-            os.path.join(dp, "images", data_cfg.test_name),
-            os.path.join(dp, f"{data_cfg.test_name}_annotations.json"),
-            cache_dir,
-            config.model.label_map
-        )
-        
-        create_data_yaml(
-            cache_dir, 
-            data_cfg.train_name, 
-            data_cfg.val_name, 
-            data_cfg.test_name, 
-            config.model.label_map
-        )
+        if not os.path.exists(yaml_path):
+            print(f"[INFO] YOLO dataset not found. Generating cached dataset at {cache_dir}...")
+            # 1. Convert Data to YOLO format
+            convert_coco_to_yolo(
+                data_cfg.train_name,
+                os.path.join(dp, "images", data_cfg.train_name),
+                os.path.join(dp, f"{data_cfg.train_name}_annotations.json"),
+                cache_dir,
+                config.model.label_map
+            )
+            convert_coco_to_yolo(
+                data_cfg.val_name,
+                os.path.join(dp, "images", data_cfg.val_name),
+                os.path.join(dp, f"{data_cfg.val_name}_annotations.json"),
+                cache_dir,
+                config.model.label_map
+            )
+            convert_coco_to_yolo(
+                data_cfg.test_name,
+                os.path.join(dp, "images", data_cfg.test_name),
+                os.path.join(dp, f"{data_cfg.test_name}_annotations.json"),
+                cache_dir,
+                config.model.label_map
+            )
+            
+            create_data_yaml(
+                cache_dir, 
+                data_cfg.train_name, 
+                data_cfg.val_name, 
+                data_cfg.test_name, 
+                config.model.label_map
+            )
+        else:
+            print(f"[INFO] Using cached YOLO dataset from {cache_dir}")
     
     # Wait for Rank 0 to finish creating the data.yaml
     if get_rank() > 0:
@@ -64,7 +68,7 @@ def main(config: DictConfig):
             name=config.run_name,
             tags=list(config.logging.wandb.tags),
             notes=config.logging.wandb.notes,
-            config=OmegaConf.to_container(config, resolve=True),
+            config=OmegaConf.to_container(config, resolve=False),
         )
 
     # 2. Train YOLO
