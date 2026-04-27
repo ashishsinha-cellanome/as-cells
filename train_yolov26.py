@@ -55,6 +55,18 @@ def main(config: DictConfig):
         while not os.path.exists(yaml_path):
             time.sleep(1)
     
+    # Initialize WandB if enabled in config
+    if config.logging.wandb.enabled and get_rank() == 0:
+        import wandb
+        from omegaconf import OmegaConf
+        wandb.init(
+            project=config.logging.wandb.project,
+            name=config.run_name,
+            tags=list(config.logging.wandb.tags),
+            notes=config.logging.wandb.notes,
+            config=OmegaConf.to_container(config, resolve=True),
+        )
+
     # 2. Train YOLO
     model = YOLO(yolo_cfg.weights)
     
