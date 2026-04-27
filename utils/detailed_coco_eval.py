@@ -179,12 +179,7 @@ class DetailedCocoEvalCallback(pl.Callback):
                 image_ids.extend(batch_out.get("image_ids", []))
                 
             if predictions and coco_gt is not None:
-                if hasattr(pl_module, "config") and hasattr(pl_module.config.model, "max_detections"):
-                    max_dets = int(pl_module.config.model.max_detections)
-                elif hasattr(pl_module, "train_config") and hasattr(pl_module.train_config, "eval_max_dets"):
-                    max_dets = int(pl_module.train_config.eval_max_dets)
-                else:
-                    max_dets = 100
+                max_dets = 100
 
                 ema_label = " EMA" if suffix else ""
                 
