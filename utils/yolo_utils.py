@@ -4,7 +4,7 @@ from pathlib import Path
 from pycocotools.coco import COCO
 from tqdm import tqdm
 
-def convert_coco_to_yolo(split_name, image_dir, json_path, cache_dir, label_map):
+def convert_coco_to_yolo(split_name, image_dir, json_path, cache_dir, label_map, fraction=1.0):
     cache_dir = Path(cache_dir)
     split_img_dir = cache_dir / "images" / split_name
     split_lbl_dir = cache_dir / "labels" / split_name
@@ -17,7 +17,13 @@ def convert_coco_to_yolo(split_name, image_dir, json_path, cache_dir, label_map)
 
     name_to_id = {v: int(k) for k, v in label_map.items()}
 
-    for img_id in tqdm(coco.getImgIds(), desc=f"Converting {split_name}"):
+    img_ids = coco.getImgIds()
+    if fraction < 1.0:
+        import random
+        random.seed(42)
+        img_ids = random.sample(img_ids, int(len(img_ids) * fraction))
+
+    for img_id in tqdm(img_ids, desc=f"Converting {split_name}"):
         img_info = coco.loadImgs(img_id)[0]
         img_name = img_info["file_name"]
         src_img_path = os.path.join(image_dir, img_name)
