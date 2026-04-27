@@ -11,11 +11,14 @@ class DetailedCocoEvalCallback(pl.Callback):
     Computes class-wise YOLO-style COCO metrics (P, R, mAP@.5) as an additional callback.
     It does not override or interfere with the default callback or visualizations.
     It logs two tables: one for bbox (Detection) and one for segm (Segmentation).
+    It also computes metrics for the EMA model if one is active.
     """
     def __init__(self):
         super().__init__()
         self.validation_step_outputs = []
         self.test_step_outputs = []
+        self.validation_step_outputs_ema = []
+        self.test_step_outputs_ema = []
         self.val_coco_gt = None
         self.test_coco_gt = None
         self.label_map = None
@@ -35,7 +38,7 @@ class DetailedCocoEvalCallback(pl.Callback):
             elif hasattr(dm, "_dataset_test") and hasattr(dm._dataset_test, "coco"):
                 self.test_coco_gt = dm._dataset_test.coco
             elif hasattr(dm, "_dataset_val") and hasattr(dm._dataset_val, "coco"):
-                self.test_coco_gt = dm._dataset_val.coco # fallback to val for testing if test not available
+                self.test_coco_gt = dm._dataset_val.coco
             
         if self.label_map is None:
             if hasattr(pl_module, "config") and hasattr(pl_module.config.model, "label_map"):
@@ -45,28 +48,76 @@ class DetailedCocoEvalCallback(pl.Callback):
             elif dm and hasattr(dm, "class_names") and dm.class_names:
                 self.label_map = {i: name for i, name in enumerate(dm.class_names)}
             elif self.val_coco_gt and hasattr(self.val_coco_gt, "cats"):
-                # If we have coco_gt but no label_map yet, build it from coco_gt.cats
                 if hasattr(self.val_coco_gt, "label2cat"):
                     self.label_map = {label: self.val_coco_gt.cats[cat_id]["name"] for label, cat_id in self.val_coco_gt.label2cat.items()}
                 else:
                     self.label_map = {k: v["name"] for k, v in self.val_coco_gt.cats.items()}
 
+    def _get_ema_callback(self, trainer):
+        for callback in getattr(trainer, "callbacks", []):
+            if callable(getattr(callback, "get_ema_model_state_dict", None)) or hasattr(callback, "_average_model") or hasattr(callback, "ema_model"):
+                return callback
+        return None
+
     def on_validation_epoch_start(self, trainer, pl_module):
         self.validation_step_outputs.clear()
+        self.validation_step_outputs_ema.clear()
         self._ensure_metadata(trainer, pl_module)
 
     def on_test_epoch_start(self, trainer, pl_module):
         self.test_step_outputs.clear()
+        self.test_step_outputs_ema.clear()
         self._ensure_metadata(trainer, pl_module)
 
     def on_validation_batch_end(self, trainer, pl_module, outputs, batch, batch_idx, dataloader_idx=0):
         self._accumulate_batch(outputs, self.validation_step_outputs)
+        
+        ema_cb = self._get_ema_callback(trainer)
+        if ema_cb is not None:
+            self._evaluate_ema(ema_cb, pl_module, batch, self.validation_step_outputs_ema)
 
     def on_test_batch_end(self, trainer, pl_module, outputs, batch, batch_idx, dataloader_idx=0):
         self._accumulate_batch(outputs, self.test_step_outputs)
+        
+        ema_cb = self._get_ema_callback(trainer)
+        if ema_cb is not None:
+            self._evaluate_ema(ema_cb, pl_module, batch, self.test_step_outputs_ema)
+
+    def _evaluate_ema(self, ema_cb, pl_module, batch, storage_list):
+        ema_model = getattr(ema_cb, "_average_model", None) or getattr(ema_cb, "ema_model", None)
+        if ema_model is not None:
+            samples, targets = batch
+            if hasattr(ema_model, "module") and hasattr(ema_model.module, "model"):
+                ema_underlying = ema_model.module.model
+            elif hasattr(ema_model, "module"):
+                ema_underlying = ema_model.module
+            else:
+                ema_underlying = ema_model
+                
+            orig_sizes = torch.stack([t["orig_size"] for t in targets]).to(pl_module.device)
+            
+            with torch.no_grad():
+                ema_underlying.eval()
+                ema_outputs = ema_underlying(samples)
+                # Some pipelines use pl_module.postprocess directly
+                if hasattr(pl_module, "postprocess"):
+                    ema_results = pl_module.postprocess(ema_outputs, orig_sizes)
+                else:
+                    ema_results = ema_outputs
+
+            ema_outputs_dict = {
+                "results": ema_results,
+                "targets": targets
+            }
+            self._accumulate_batch(ema_outputs_dict, storage_list)
 
     def _accumulate_batch(self, outputs, storage_list):
         if not outputs or "results" not in outputs or "targets" not in outputs:
+            if outputs and "predictions" in outputs and "image_ids" in outputs:
+                storage_list.append({
+                    "predictions": outputs["predictions"],
+                    "image_ids": outputs["image_ids"]
+                })
             return
             
         results = outputs["results"]
@@ -99,14 +150,20 @@ class DetailedCocoEvalCallback(pl.Callback):
         })
 
     def on_validation_epoch_end(self, trainer, pl_module):
-        print(f"\n[DetailedCocoEvalCallback] on_validation_epoch_end triggered with {len(self.validation_step_outputs)} accumulated batches.")
-        self._compute_and_log(trainer, pl_module, self.validation_step_outputs, self.val_coco_gt, "val")
+        print(f"\n[DetailedCocoEvalCallback] Computing Validation Metrics...")
+        self._compute_and_log(trainer, pl_module, self.validation_step_outputs, self.val_coco_gt, "val", "")
+        if len(self.validation_step_outputs_ema) > 0:
+            print(f"\n[DetailedCocoEvalCallback] Computing Validation EMA Metrics...")
+            self._compute_and_log(trainer, pl_module, self.validation_step_outputs_ema, self.val_coco_gt, "val", "_ema")
 
     def on_test_epoch_end(self, trainer, pl_module):
-        print(f"\n[DetailedCocoEvalCallback] on_test_epoch_end triggered with {len(self.test_step_outputs)} accumulated batches.")
-        self._compute_and_log(trainer, pl_module, self.test_step_outputs, self.test_coco_gt, "test")
+        print(f"\n[DetailedCocoEvalCallback] Computing Test Metrics...")
+        self._compute_and_log(trainer, pl_module, self.test_step_outputs, self.test_coco_gt, "test", "")
+        if len(self.test_step_outputs_ema) > 0:
+            print(f"\n[DetailedCocoEvalCallback] Computing Test EMA Metrics...")
+            self._compute_and_log(trainer, pl_module, self.test_step_outputs_ema, self.test_coco_gt, "test", "_ema")
 
-    def _compute_and_log(self, trainer, pl_module, step_outputs, coco_gt, split):
+    def _compute_and_log(self, trainer, pl_module, step_outputs, coco_gt, split, suffix):
         all_outputs = gather_outputs_across_processes(step_outputs)
         
         metrics_bbox = {}
@@ -117,48 +174,35 @@ class DetailedCocoEvalCallback(pl.Callback):
             image_ids = []
             for batch_out in all_outputs:
                 predictions_map = batch_out.get("predictions", {})
-                # Use the lightning module's model_to_coco mapping for accurate class IDs
                 model_to_coco = getattr(pl_module, "model_to_coco", None)
                 predictions.extend(convert_preds_to_coco(predictions_map, model_to_coco=model_to_coco))
                 image_ids.extend(batch_out.get("image_ids", []))
                 
-            print(f"[DetailedCocoEvalCallback] Gathered {len(predictions)} predictions for {len(image_ids)} images.")
-            if coco_gt is None:
-                print("[DetailedCocoEvalCallback] coco_gt is None!")
-
-                
             if predictions and coco_gt is not None:
-                # Find max_detections
-                if hasattr(pl_module, "config") and hasattr(pl_module.config.model, "max_detections"):
-                    max_dets = int(pl_module.config.model.max_detections)
-                elif hasattr(pl_module, "train_config") and hasattr(pl_module.train_config, "eval_max_dets"):
-                    max_dets = int(pl_module.train_config.eval_max_dets)
-                else:
-                    max_dets = 100
+                max_dets = 100
 
-                # Calculate BBOX metrics
+                ema_label = " EMA" if suffix else ""
+                
                 metrics_bbox = compute_coco_metrics(
                     coco_gt=coco_gt,
                     predictions=predictions,
                     image_ids=sorted(set(image_ids)),
                     max_detections=max_dets,
                     label_map=self.label_map,
-                    prefix=f"Detailed YOLO-Style Performance ({split.upper()}) - BBOX",
+                    prefix=f"Detailed YOLO-Style Performance ({split.upper()}{ema_label}) - BBOX",
                     iou_type="bbox",
                     metric_prefix="detailed_bbox"
                 )
                 
-                # Check if segmentation is present
                 is_seg = any("segmentation" in p for p in predictions)
                 if is_seg:
-                    # Calculate SEGM metrics
                     metrics_segm = compute_coco_metrics(
                         coco_gt=coco_gt,
                         predictions=predictions,
                         image_ids=sorted(set(image_ids)),
                         max_detections=max_dets,
                         label_map=self.label_map,
-                        prefix=f"Detailed YOLO-Style Performance ({split.upper()}) - SEGM",
+                        prefix=f"Detailed YOLO-Style Performance ({split.upper()}{ema_label}) - SEGM",
                         iou_type="segm",
                         metric_prefix="detailed_segm"
                     )
@@ -172,9 +216,9 @@ class DetailedCocoEvalCallback(pl.Callback):
             metrics_segm = obj_list[0]["segm"]
             
         for key, value in metrics_bbox.items():
-            pl_module.log(f"{split}/{key}", value, sync_dist=True)
+            pl_module.log(f"{split}/{key}{suffix}", value, sync_dist=True)
             
         for key, value in metrics_segm.items():
-            pl_module.log(f"{split}/{key}", value, sync_dist=True)
+            pl_module.log(f"{split}/{key}{suffix}", value, sync_dist=True)
             
         step_outputs.clear()
