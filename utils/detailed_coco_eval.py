@@ -22,16 +22,34 @@ class DetailedCocoEvalCallback(pl.Callback):
 
     def _ensure_metadata(self, trainer, pl_module):
         dm = getattr(trainer, "datamodule", None)
+        
         if self.val_coco_gt is None and dm:
-            self.val_coco_gt = getattr(dm, "val_coco_gt", None)
+            if hasattr(dm, "val_coco_gt"):
+                self.val_coco_gt = getattr(dm, "val_coco_gt")
+            elif hasattr(dm, "_dataset_val") and hasattr(dm._dataset_val, "coco"):
+                self.val_coco_gt = dm._dataset_val.coco
+                
         if self.test_coco_gt is None and dm:
-            self.test_coco_gt = getattr(dm, "test_coco_gt", None)
+            if hasattr(dm, "test_coco_gt"):
+                self.test_coco_gt = getattr(dm, "test_coco_gt")
+            elif hasattr(dm, "_dataset_test") and hasattr(dm._dataset_test, "coco"):
+                self.test_coco_gt = dm._dataset_test.coco
+            elif hasattr(dm, "_dataset_val") and hasattr(dm._dataset_val, "coco"):
+                self.test_coco_gt = dm._dataset_val.coco # fallback to val for testing if test not available
             
         if self.label_map is None:
             if hasattr(pl_module, "config") and hasattr(pl_module.config.model, "label_map"):
                 self.label_map = pl_module.config.model.label_map
-            elif dm and hasattr(dm, "class_names"):
+            elif hasattr(pl_module, "model_config") and hasattr(pl_module.model_config, "label_map"):
+                self.label_map = pl_module.model_config.label_map
+            elif dm and hasattr(dm, "class_names") and dm.class_names:
                 self.label_map = {i: name for i, name in enumerate(dm.class_names)}
+            elif self.val_coco_gt and hasattr(self.val_coco_gt, "cats"):
+                # If we have coco_gt but no label_map yet, build it from coco_gt.cats
+                if hasattr(self.val_coco_gt, "label2cat"):
+                    self.label_map = {label: self.val_coco_gt.cats[cat_id]["name"] for label, cat_id in self.val_coco_gt.label2cat.items()}
+                else:
+                    self.label_map = {k: v["name"] for k, v in self.val_coco_gt.cats.items()}
 
     def on_validation_epoch_start(self, trainer, pl_module):
         self.validation_step_outputs.clear()
@@ -48,16 +66,35 @@ class DetailedCocoEvalCallback(pl.Callback):
         self._accumulate_batch(outputs, self.test_step_outputs)
 
     def _accumulate_batch(self, outputs, storage_list):
-        if not outputs or "predictions" not in outputs or "image_ids" not in outputs:
+        if not outputs or "results" not in outputs or "targets" not in outputs:
             return
             
-        # The lightning module's validation_step already returns a dict of {image_id: pred_dict}
-        # and has already converted masks to RLE format.
-        predictions = outputs["predictions"]
-        image_ids = outputs["image_ids"]
+        results = outputs["results"]
+        targets = outputs["targets"]
+        
+        preds_for_metric = [to_cpu_device(res) for res in results]
+            
+        for pred in preds_for_metric:
+            if "masks" in pred:
+                masks = pred["masks"]
+                if masks.ndim == 4 and masks.shape[1] == 1:
+                    masks = masks.squeeze(1)
+                segmentations = []
+                for i in range(masks.shape[0]):
+                    mask_np = np.asfortranarray(masks[i].numpy().astype(np.uint8))
+                    rle = mask_utils.encode(mask_np)
+                    rle["counts"] = rle["counts"].decode("utf-8")
+                    segmentations.append(rle)
+                pred["segmentation"] = segmentations
+                del pred["masks"]
+                
+        result_map = {
+            int(target["image_id"].item()): pred for target, pred in zip(targets, preds_for_metric)
+        }
+        image_ids = [int(target["image_id"].item()) for target in targets]
         
         storage_list.append({
-            "predictions": predictions,
+            "predictions": result_map,
             "image_ids": image_ids
         })
 
@@ -84,12 +121,20 @@ class DetailedCocoEvalCallback(pl.Callback):
                 image_ids.extend(batch_out.get("image_ids", []))
                 
             if predictions and coco_gt is not None:
+                # Find max_detections
+                if hasattr(pl_module, "config") and hasattr(pl_module.config.model, "max_detections"):
+                    max_dets = int(pl_module.config.model.max_detections)
+                elif hasattr(pl_module, "train_config") and hasattr(pl_module.train_config, "eval_max_dets"):
+                    max_dets = int(pl_module.train_config.eval_max_dets)
+                else:
+                    max_dets = 100
+
                 # Calculate BBOX metrics
                 metrics_bbox = compute_coco_metrics(
                     coco_gt=coco_gt,
                     predictions=predictions,
                     image_ids=sorted(set(image_ids)),
-                    max_detections=int(pl_module.config.model.max_detections),
+                    max_detections=max_dets,
                     label_map=self.label_map,
                     prefix=f"Detailed YOLO-Style Performance ({split.upper()}) - BBOX",
                     iou_type="bbox",
@@ -104,7 +149,7 @@ class DetailedCocoEvalCallback(pl.Callback):
                         coco_gt=coco_gt,
                         predictions=predictions,
                         image_ids=sorted(set(image_ids)),
-                        max_detections=int(pl_module.config.model.max_detections),
+                        max_detections=max_dets,
                         label_map=self.label_map,
                         prefix=f"Detailed YOLO-Style Performance ({split.upper()}) - SEGM",
                         iou_type="segm",
