@@ -543,6 +543,10 @@ def _setup_callbacks(config: DictConfig):
         callbacks.append(
             BackupToNASCallback(backup_dir=to_absolute_path(ckpt_cfg.backup_dir))
         )
+    
+    from utils.detailed_coco_eval import DetailedCocoEvalCallback
+    callbacks.append(DetailedCocoEvalCallback())
+
     return callbacks
 
 

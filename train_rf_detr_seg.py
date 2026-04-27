@@ -547,6 +547,10 @@ def _setup_callbacks(config: DictConfig):
         callbacks.append(
             BackupToNASCallback(backup_dir=to_absolute_path(ckpt_cfg.backup_dir))
         )
+    
+    from utils.detailed_coco_eval import DetailedCocoEvalCallback
+    callbacks.append(DetailedCocoEvalCallback())
+
     return callbacks
 
 
@@ -566,7 +570,7 @@ def _resolve_run_name(config: DictConfig):
     config.run_name = f"{config.run_name}_{unique_id}"
 
 
-@hydra.main(config_path="configs", config_name="config.yaml", version_base=None)
+@hydra.main(config_path="configs", config_name="config_rfdetr_seg.yaml", version_base=None)
 def main(config: DictConfig):
     test_only_checkpoint: Optional[Dict[str, Any]] = None
     test_only_weight_source: Optional[Literal["ema", "regular"]] = None
