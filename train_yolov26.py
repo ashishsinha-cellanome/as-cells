@@ -85,22 +85,18 @@ def main(config: DictConfig):
     # Custom callback to duplicate metrics for WandB
     def on_fit_epoch_end(trainer):
         if config.logging.wandb.enabled and get_rank() == 0:
-            import wandb
-            if wandb.run is not None:
-                custom_metrics = {}
-                metrics = trainer.metrics
-                
-                if 'metrics/mAP50-95(B)' in metrics:
-                    custom_metrics['val/map'] = metrics['metrics/mAP50-95(B)']
-                    custom_metrics['val/map_ema'] = metrics['metrics/mAP50-95(B)']
-                if 'metrics/mAP50(B)' in metrics:
-                    custom_metrics['val/map_50'] = metrics['metrics/mAP50(B)']
-                    custom_metrics['val/map_50_ema'] = metrics['metrics/mAP50(B)']
+            metrics = trainer.metrics
+            if 'metrics/mAP50-95(B)' in metrics:
+                metrics['val/map'] = metrics['metrics/mAP50-95(B)']
+                metrics['val/map_ema'] = metrics['metrics/mAP50-95(B)']
+            if 'metrics/mAP50(B)' in metrics:
+                metrics['val/map_50'] = metrics['metrics/mAP50(B)']
+                metrics['val/map_50_ema'] = metrics['metrics/mAP50(B)']
                     
-                if custom_metrics:
-                    wandb.log(custom_metrics, commit=False)
-    
     model.add_callback("on_fit_epoch_end", on_fit_epoch_end)
+    # Move custom callback to the front so it executes BEFORE the native WandB logger
+    if "on_fit_epoch_end" in model.callbacks:
+        model.callbacks["on_fit_epoch_end"].insert(0, model.callbacks["on_fit_epoch_end"].pop())
     
     # Convert hyp DictConfig to dict
     hyp_dict = dict(yolo_cfg.hyp) if "hyp" in yolo_cfg else {}

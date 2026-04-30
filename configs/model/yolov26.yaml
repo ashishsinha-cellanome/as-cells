@@ -2,7 +2,7 @@ name: yolov26
 input_size: 640
 
 yolov26:
-  weights: yolov8n.pt  # Base weights, can be overridden. (Using yolov8n as placeholder for ultralytics standard)
+  weights: yolo26m.pt
   dataset_cache_dir: ${hydra:runtime.cwd}/.cache/datasets/yolov26_${data.train_name}_${data.val_name}_${data.test_name}
   epochs: 100
   batch_size: 16
