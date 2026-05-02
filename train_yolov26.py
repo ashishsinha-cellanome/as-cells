@@ -84,14 +84,24 @@ def main(config: DictConfig):
     
     # Custom callback to duplicate metrics for WandB
     def on_fit_epoch_end(trainer):
-        if config.logging.wandb.enabled and get_rank() == 0:
-            metrics = trainer.metrics
-            if 'metrics/mAP50-95(B)' in metrics:
-                metrics['val/map'] = metrics['metrics/mAP50-95(B)']
-                metrics['val/map_ema'] = metrics['metrics/mAP50-95(B)']
-            if 'metrics/mAP50(B)' in metrics:
-                metrics['val/map_50'] = metrics['metrics/mAP50(B)']
-                metrics['val/map_50_ema'] = metrics['metrics/mAP50(B)']
+        if get_rank() == 0:
+            if config.logging.wandb.enabled:
+                metrics = trainer.metrics
+                if 'metrics/mAP50-95(B)' in metrics:
+                    metrics['val/map'] = metrics['metrics/mAP50-95(B)']
+                    metrics['val/map_ema'] = metrics['metrics/mAP50-95(B)']
+                if 'metrics/mAP50(B)' in metrics:
+                    metrics['val/map_50'] = metrics['metrics/mAP50(B)']
+                    metrics['val/map_50_ema'] = metrics['metrics/mAP50(B)']
+            
+            # Print detailed class-wise metrics
+            if hasattr(trainer, "validator") and trainer.validator:
+                val = trainer.validator
+                print(f"\n[Epoch {trainer.epoch + 1}] Detailed Class-wise Metrics:")
+                orig_training = getattr(val, 'training', True)
+                val.training = False
+                val.print_results()
+                val.training = orig_training
                     
     model.add_callback("on_fit_epoch_end", on_fit_epoch_end)
     # Move custom callback to the front so it executes BEFORE the native WandB logger
@@ -101,15 +111,31 @@ def main(config: DictConfig):
     # Convert hyp DictConfig to dict
     hyp_dict = dict(yolo_cfg.hyp) if "hyp" in yolo_cfg else {}
     
-    model.train(
-        data=yaml_path,
-        epochs=yolo_cfg.epochs,
-        batch=yolo_cfg.batch_size,
-        imgsz=config.model.input_size,
-        project=yolo_cfg.project,
-        name=yolo_cfg.name,
-        **hyp_dict
-    )
+    if getattr(config, "test_only", False):
+        print(f"[INFO] Running in validation mode with weights: {yolo_cfg.weights}")
+        metrics = model.val(
+            data=yaml_path,
+            split='val',
+            batch=yolo_cfg.batch_size,
+            imgsz=config.model.input_size,
+            project=yolo_cfg.project,
+            name=yolo_cfg.name + "_val",
+            **hyp_dict
+        )
+        if get_rank() == 0:
+            print("\n--- Detailed Class Metrics ---")
+            metrics.print()
+            print("------------------------------\n")
+    else:
+        model.train(
+            data=yaml_path,
+            epochs=yolo_cfg.epochs,
+            batch=yolo_cfg.batch_size,
+            imgsz=config.model.input_size,
+            project=yolo_cfg.project,
+            name=yolo_cfg.name,
+            **hyp_dict
+        )
 
 if __name__ == "__main__":
     main()
