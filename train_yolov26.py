@@ -123,9 +123,10 @@ def main(config: DictConfig):
             **hyp_dict
         )
         if get_rank() == 0:
-            print("\n--- Detailed Class Metrics ---")
-            metrics.print()
-            print("------------------------------\n")
+            print("\n--- Validation Completed ---")
+            for k, v in metrics.results_dict.items():
+                print(f"{k}: {v:.4f}")
+            print("----------------------------\n")
     else:
         model.train(
             data=yaml_path,
