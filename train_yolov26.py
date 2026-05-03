@@ -4,7 +4,7 @@ import os
 import hydra
 from omegaconf import DictConfig
 from ultralytics import YOLO
-from utils.yolo_utils import convert_coco_to_yolo, create_data_yaml
+from utils.yolo_utils import convert_coco_to_yolo, create_data_yaml, visualize_predictions
 from utils.distributed_utils import setup_cluster_env, get_rank
 
 setup_cluster_env()
@@ -102,6 +102,9 @@ def main(config: DictConfig):
                 val.training = False
                 val.print_results()
                 val.training = orig_training
+            
+            # Custom visualizations
+            visualize_predictions(model, config, trainer.epoch, split="val")
                     
     model.add_callback("on_fit_epoch_end", on_fit_epoch_end)
     # Move custom callback to the front so it executes BEFORE the native WandB logger
@@ -127,6 +130,8 @@ def main(config: DictConfig):
             for k, v in metrics.results_dict.items():
                 print(f"{k}: {v:.4f}")
             print("----------------------------\n")
+            visualize_predictions(model, config, None, split="val")
+            visualize_predictions(model, config, None, split="val")
     else:
         model.train(
             data=yaml_path,
