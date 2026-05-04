@@ -4,7 +4,7 @@ import os
 import hydra
 from omegaconf import DictConfig
 from ultralytics import YOLO
-from utils.yolo_utils import convert_coco_to_yolo, create_data_yaml, visualize_predictions
+from utils.yolo_utils import convert_coco_to_yolo_seg, create_data_yaml, visualize_predictions
 from utils.distributed_utils import setup_cluster_env, get_rank
 
 setup_cluster_env()
@@ -26,7 +26,7 @@ def main(config: DictConfig):
         if not os.path.exists(yaml_path):
             print(f"[INFO] YOLO dataset not found. Generating cached dataset at {cache_dir}...")
             # 1. Convert Data to YOLO format
-            convert_coco_to_yolo(
+            convert_coco_to_yolo_seg(
                 data_cfg.train_name,
                 os.path.join(dp, "images", data_cfg.train_name),
                 os.path.join(dp, f"{data_cfg.train_name}_annotations.json"),
@@ -34,7 +34,7 @@ def main(config: DictConfig):
                 config.model.label_map,
                 fraction=train_fraction
             )
-            convert_coco_to_yolo(
+            convert_coco_to_yolo_seg(
                 data_cfg.val_name,
                 os.path.join(dp, "images", data_cfg.val_name),
                 os.path.join(dp, f"{data_cfg.val_name}_annotations.json"),
@@ -42,7 +42,7 @@ def main(config: DictConfig):
                 config.model.label_map,
                 fraction=val_fraction
             )
-            convert_coco_to_yolo(
+            convert_coco_to_yolo_seg(
                 data_cfg.test_name,
                 os.path.join(dp, "images", data_cfg.test_name),
                 os.path.join(dp, f"{data_cfg.test_name}_annotations.json"),
@@ -87,12 +87,20 @@ def main(config: DictConfig):
         if get_rank() == 0:
             if config.logging.wandb.enabled:
                 metrics = trainer.metrics
+                # Map Segmentation metrics
+                if 'metrics/mAP50-95(M)' in metrics:
+                    metrics['val/map'] = metrics['metrics/mAP50-95(M)']
+                    metrics['val/map_ema'] = metrics['metrics/mAP50-95(M)']
+                    metrics['val/map_segm'] = metrics['metrics/mAP50-95(M)']
+                if 'metrics/mAP50(M)' in metrics:
+                    metrics['val/map_50'] = metrics['metrics/mAP50(M)']
+                    metrics['val/map_50_ema'] = metrics['metrics/mAP50(M)']
+                    
+                # Map Detection metrics too
                 if 'metrics/mAP50-95(B)' in metrics:
-                    metrics['val/map'] = metrics['metrics/mAP50-95(B)']
-                    metrics['val/map_ema'] = metrics['metrics/mAP50-95(B)']
+                    metrics['val/map_box'] = metrics['metrics/mAP50-95(B)']
                 if 'metrics/mAP50(B)' in metrics:
-                    metrics['val/map_50'] = metrics['metrics/mAP50(B)']
-                    metrics['val/map_50_ema'] = metrics['metrics/mAP50(B)']
+                    metrics['val/map_50_box'] = metrics['metrics/mAP50(B)']
             
             # Print detailed class-wise metrics
             if hasattr(trainer, "validator") and trainer.validator:
@@ -125,6 +133,7 @@ def main(config: DictConfig):
             imgsz=config.model.input_size,
             project=yolo_cfg.project,
             name=yolo_cfg.name + "_val",
+            task=yolo_cfg.get("task", "segment"),
             **hyp_dict
         )
         if get_rank() == 0:
@@ -143,6 +152,7 @@ def main(config: DictConfig):
             imgsz=config.model.input_size,
             project=yolo_cfg.project,
             name=yolo_cfg.name,
+            task=yolo_cfg.get("task", "segment"),
             **hyp_dict
         )
 
