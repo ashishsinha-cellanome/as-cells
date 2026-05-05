@@ -8,7 +8,7 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem-per-gpu=32G
-#SBATCH --array=0-35
+#SBATCH --array=0-71
 #SBATCH --time=1-23:59:00
 #SBATCH --output=logs/%x-%A_%a.out
 #SBATCH --error=logs/%x-%A_%a.err
@@ -49,20 +49,23 @@ NUM_DENOISING_OPTS=(0 100 300)
 REG_SCALE_OPTS=(4.0 8.0 12.0)
 MATCHER_GIOU_OPTS=(2 5) # Default vs High GIoU focus
 GRID_SIZE_OPTS=(0.05 0.15) # Default vs Large Anchors
+NUM_POINTS_OPTS=("[3,6,3]" "[6,12,12]") # Default vs Wide Receptive Field
 
 CONFIGS=()
 for dn in "${NUM_DENOISING_OPTS[@]}"; do
   for rs in "${REG_SCALE_OPTS[@]}"; do
     for giou in "${MATCHER_GIOU_OPTS[@]}"; do
       for gs in "${GRID_SIZE_OPTS[@]}"; do
-        # Note: when changing reg_scale, we usually scale reg_max accordingly, but we'll leave reg_max fixed at 48 for safety to allow large bounds
-        CONFIGS+=("model.deimv2.decoder.num_denoising=${dn} model.deimv2.decoder.reg_scale=${rs} model.deimv2.criterion.matcher.weight_dict.cost_giou=${giou} model.deimv2.decoder.grid_size=${gs} model.deimv2.decoder.reg_max=48 model.deimv2.criterion.reg_max=48 model.deimv2.size=${MODEL_SIZE} data=vulcan_no300_eval")
+        for np in "${NUM_POINTS_OPTS[@]}"; do
+          # Note: when changing reg_scale, we usually scale reg_max accordingly, but we'll leave reg_max fixed at 48 for safety to allow large bounds
+          CONFIGS+=("model.deimv2.decoder.num_denoising=${dn} model.deimv2.decoder.reg_scale=${rs} model.deimv2.criterion.matcher.weight_dict.cost_giou=${giou} model.deimv2.decoder.grid_size=${gs} model.deimv2.decoder.num_points=${np} model.deimv2.decoder.reg_max=48 model.deimv2.criterion.reg_max=48 model.deimv2.size=${MODEL_SIZE} data=vulcan_no300_eval")
+        done
       done
     done
   done
 done
 
-# We have 3 * 3 * 2 * 2 = 36 combinations. Our SLURM array is 0-35.
+# We have 3 * 3 * 2 * 2 * 2 = 72 combinations. Our SLURM array is 0-71.
 MY_CONFIG="${CONFIGS[$SLURM_ARRAY_TASK_ID]}"
 
 echo "========================================================"
