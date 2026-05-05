@@ -1,10 +1,10 @@
 #!/bin/bash
 #SBATCH --job-name=deimv2_ablate
 #SBATCH --account=aip-robsc
-#SBATCH --nodes=4
+#SBATCH --nodes=8
 #SBATCH --mail-user=ashish.sinha@amii.ca
 #SBATCH --mail-type=END,FAIL,BEGIN
-#SBATCH --gpus-per-node=2
+#SBATCH --gpus-per-node=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=2
 #SBATCH --mem-per-gpu=32G
