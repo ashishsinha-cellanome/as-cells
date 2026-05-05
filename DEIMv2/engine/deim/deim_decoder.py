@@ -310,6 +310,7 @@ class DEIMTransformer(nn.Module):
         reg_max=32,
         reg_scale=4.0,
         layer_scale=1,
+        grid_size=0.05,
         mlp_act="relu",
         use_gateway=True,
         share_bbox_head=False,
@@ -334,6 +335,7 @@ class DEIMTransformer(nn.Module):
         self.eval_spatial_size = eval_spatial_size
         self.aux_loss = aux_loss
         self.reg_max = reg_max
+        self.grid_size = grid_size
 
         assert query_select_method in ("default", "one2many", "agnostic"), ""
         assert cross_attn_method in ("default", "discrete"), ""
@@ -568,8 +570,11 @@ class DEIMTransformer(nn.Module):
         return feat_flatten, spatial_shapes
 
     def _generate_anchors(
-        self, spatial_shapes=None, grid_size=0.05, dtype=torch.float32, device="cpu"
+        self, spatial_shapes=None, grid_size=None, dtype=torch.float32, device="cpu"
     ):
+        if grid_size is None:
+            grid_size = getattr(self, "grid_size", 0.05)
+
         if spatial_shapes is None:
             spatial_shapes = []
             eval_h, eval_w = self.eval_spatial_size
