@@ -126,27 +126,13 @@ class DetailedCocoEvalCallback(pl.Callback):
         preds_for_metric = [to_cpu_device(res) for res in results]
             
         for pred in preds_for_metric:
-            if "scores" in pred and len(pred["scores"]) > 100:
-                topk = torch.topk(pred["scores"], 100)
-                indices = topk.indices
-                pred["scores"] = pred["scores"][indices]
-                pred["labels"] = pred["labels"][indices]
-                pred["boxes"] = pred["boxes"][indices]
-                if "masks" in pred:
-                    pred["masks"] = pred["masks"][indices]
-
             if "masks" in pred:
                 masks = pred["masks"]
                 if masks.ndim == 4 and masks.shape[1] == 1:
                     masks = masks.squeeze(1)
                 
-                # Vectorized batch encoding
-                # Pycocotools encode expects Fortran-contiguous array of shape (H, W, N)
-                # Input masks is shape (N, H, W)
                 mask_np = masks.numpy().astype(np.uint8)
                 mask_np_hw_n = np.asfortranarray(np.transpose(mask_np, (1, 2, 0)))
-                
-                # Batch encode all masks at once
                 encoded_masks = mask_utils.encode(mask_np_hw_n)
                 
                 segmentations = []
@@ -154,7 +140,6 @@ class DetailedCocoEvalCallback(pl.Callback):
                     rle = encoded_masks[i]
                     rle["counts"] = rle["counts"].decode("utf-8")
                     segmentations.append(rle)
-                    
                 pred["segmentation"] = segmentations
                 del pred["masks"]
                 
@@ -183,7 +168,6 @@ class DetailedCocoEvalCallback(pl.Callback):
             self._compute_and_log(trainer, pl_module, self.test_step_outputs_ema, self.test_coco_gt, "test", "_ema")
 
     def _compute_and_log(self, trainer, pl_module, step_outputs, coco_gt, split, suffix):
-        from tqdm import tqdm
         all_outputs = gather_outputs_across_processes(step_outputs)
         
         metrics_bbox = {}
@@ -192,22 +176,11 @@ class DetailedCocoEvalCallback(pl.Callback):
         if trainer.is_global_zero:
             predictions = []
             image_ids = []
-            
-            # Deduplicate image ids (important when DistributedSampler pads)
-            processed_image_ids = set()
-            for batch_out in tqdm(all_outputs, desc=f"Converting {split}{suffix} preds"):
+            for batch_out in all_outputs:
                 predictions_map = batch_out.get("predictions", {})
-                
-                # Filter out predictions for already processed images
-                filtered_predictions_map = {}
-                for img_id, pred in predictions_map.items():
-                    if img_id not in processed_image_ids:
-                        filtered_predictions_map[img_id] = pred
-                        processed_image_ids.add(img_id)
-                        image_ids.append(img_id)
-                        
                 model_to_coco = getattr(pl_module, "model_to_coco", None)
-                predictions.extend(convert_preds_to_coco(filtered_predictions_map, model_to_coco=model_to_coco))
+                predictions.extend(convert_preds_to_coco(predictions_map, model_to_coco=model_to_coco))
+                image_ids.extend(batch_out.get("image_ids", []))
                 
             if predictions and coco_gt is not None:
                 max_dets = 100
