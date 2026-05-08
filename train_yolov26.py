@@ -145,6 +145,11 @@ def main(config: DictConfig):
             name=yolo_cfg.name,
             **hyp_dict
         )
+        
+        # Cleanup DDP process group to prevent deadlocks on teardown
+        import torch.distributed as dist
+        if dist.is_initialized():
+            dist.destroy_process_group()
 
 if __name__ == "__main__":
     main()
