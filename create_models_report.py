@@ -127,7 +127,7 @@ def process_run(run, proj):
             "Checkpoint Path": ckpt_path,
             "Training Command": cmd
         }
-    except Exception as e:
+    except Exception:
         return None
 
 for proj in projects:

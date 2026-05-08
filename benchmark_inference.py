@@ -1,8 +1,6 @@
 import torch
-import time
 import numpy as np
 from rfdetr import RFDETRSegLarge
-from omegaconf import OmegaConf
 import argparse
 import tabulate
 

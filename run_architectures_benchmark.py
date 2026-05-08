@@ -1,5 +1,4 @@
 import torch
-import time
 import numpy as np
 import tabulate
 from omegaconf import OmegaConf

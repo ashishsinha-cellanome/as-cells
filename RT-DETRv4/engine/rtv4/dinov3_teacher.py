@@ -5,7 +5,6 @@ Copyright (c) 2025 The RT-DETRv4 Authors. All Rights Reserved.
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from ..core import register
 import logging
 from torchvision.transforms import v2 as transforms
@@ -27,7 +26,7 @@ class DINOv3TeacherModel(nn.Module):
         self.dinov3_weights_path = dinov3_weights_path
         self.patch_size = patch_size
 
-        _logger.info(f"[Teacher Model] Attempting to load DINOv3 teacher via torch.hub.load...")
+        _logger.info("[Teacher Model] Attempting to load DINOv3 teacher via torch.hub.load...")
         _logger.info(f"[Teacher Model] DINOv3 repo path: {dinov3_repo_path}")
         _logger.info(f"[Teacher Model] DINOv3 weights path: {dinov3_weights_path}")
 
@@ -42,7 +41,7 @@ class DINOv3TeacherModel(nn.Module):
             for param in self.model.parameters():
                 param.requires_grad = False
 
-            _logger.info(f"[Teacher Model] Successfully loaded DINOv3 teacher from local repo and weights.")
+            _logger.info("[Teacher Model] Successfully loaded DINOv3 teacher from local repo and weights.")
             self.teacher_feature_dim = self.model.embed_dim
 
         except Exception as e:
@@ -54,7 +53,7 @@ class DINOv3TeacherModel(nn.Module):
 
         _logger.info(f"[Teacher Model] DINOv3 initialized. Feature dimension: {self.teacher_feature_dim}.")
         _logger.info(
-            f"[Teacher Model] Teacher model is configured to output features at a resolution that is 2x2 of the student's highest-level features after 2x downsampling.")
+            "[Teacher Model] Teacher model is configured to output features at a resolution that is 2x2 of the student's highest-level features after 2x downsampling.")
 
     def forward(self, images: torch.Tensor):
         processed_images = self.avgpool_2x2(self.normalize_transform(images))

@@ -1,4 +1,3 @@
-import os
 import torch
 import pytorch_lightning as pl
 import pycocotools.mask as mask_utils
@@ -154,17 +153,17 @@ class DetailedCocoEvalCallback(pl.Callback):
         })
 
     def on_validation_epoch_end(self, trainer, pl_module):
-        print(f"\n[DetailedCocoEvalCallback] Computing Validation Metrics...")
+        print("\n[DetailedCocoEvalCallback] Computing Validation Metrics...")
         self._compute_and_log(trainer, pl_module, self.validation_step_outputs, self.val_coco_gt, "val", "")
         if len(self.validation_step_outputs_ema) > 0:
-            print(f"\n[DetailedCocoEvalCallback] Computing Validation EMA Metrics...")
+            print("\n[DetailedCocoEvalCallback] Computing Validation EMA Metrics...")
             self._compute_and_log(trainer, pl_module, self.validation_step_outputs_ema, self.val_coco_gt, "val", "_ema")
 
     def on_test_epoch_end(self, trainer, pl_module):
-        print(f"\n[DetailedCocoEvalCallback] Computing Test Metrics...")
+        print("\n[DetailedCocoEvalCallback] Computing Test Metrics...")
         self._compute_and_log(trainer, pl_module, self.test_step_outputs, self.test_coco_gt, "test", "")
         if len(self.test_step_outputs_ema) > 0:
-            print(f"\n[DetailedCocoEvalCallback] Computing Test EMA Metrics...")
+            print("\n[DetailedCocoEvalCallback] Computing Test EMA Metrics...")
             self._compute_and_log(trainer, pl_module, self.test_step_outputs_ema, self.test_coco_gt, "test", "_ema")
 
     def _compute_and_log(self, trainer, pl_module, step_outputs, coco_gt, split, suffix):

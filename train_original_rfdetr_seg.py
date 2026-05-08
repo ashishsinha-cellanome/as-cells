@@ -3,7 +3,6 @@ import faulthandler
 import signal
 faulthandler.register(signal.SIGUSR1)
 import argparse
-import os
 from pathlib import Path
 
 # 1. Monkey-patch the rfdetr dataset builder to support the custom directory layout
@@ -320,7 +319,7 @@ def main():
     parser.add_argument("--test_only", action="store_true", help="Only run validation/test on the validation set")
     args = parser.parse_args()
 
-    print(f"Initializing RFDETRSegLarge...")
+    print("Initializing RFDETRSegLarge...")
     model = RFDETRSegLarge(group_detr=1, compile=True, num_classes=4)
     
     import datetime

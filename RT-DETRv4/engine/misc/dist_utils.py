@@ -26,7 +26,6 @@ import torch.backends.cudnn
 
 from torch.nn.parallel import DataParallel as DP
 from torch.nn.parallel import DistributedDataParallel as DDP
-from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 
 from torch.utils.data import DistributedSampler
 # from torch.utils.data.dataloader import DataLoader

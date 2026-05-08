@@ -2,7 +2,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.checkpoint import checkpoint
-from torch.utils.checkpoint import checkpoint
 
 
 class SpatialPriorModule(nn.Module):

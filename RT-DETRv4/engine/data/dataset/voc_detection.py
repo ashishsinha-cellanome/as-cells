@@ -3,10 +3,8 @@ Copied from RT-DETR (https://github.com/lyuwenyu/RT-DETR)
 Copyright(c) 2023 lyuwenyu. All Rights Reserved.
 """
 
-from sympy import im
 import torch
 import torchvision
-import torchvision.transforms.functional as TVF
 
 import os
 from PIL import Image

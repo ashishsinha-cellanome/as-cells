@@ -1,6 +1,5 @@
 import os
 import torch
-import time
 import numpy as np
 import wandb
 import csv
