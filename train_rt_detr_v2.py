@@ -132,7 +132,7 @@ try:
         loss_rt_detr.RTDetrHungarianMatcher.original_forward = (
             loss_rt_detr.RTDetrHungarianMatcher.forward
         )
-         loss_rt_detr.RTDetrHungarianMatcher.forward = patched_matcher_forward
+        loss_rt_detr.RTDetrHungarianMatcher.forward = patched_matcher_forward
 except (ImportError, AttributeError):
     pass
 
@@ -357,7 +357,6 @@ def _load_selected_weights(
     return missing, unexpected
 
 
-import torch
 
 torch.set_float32_matmul_precision("medium")
 
@@ -378,7 +377,6 @@ from transformers import (
     RTDetrConfig,
 )
 from torchvision.datasets import CocoDetection
-import torch.distributed as dist
 
 from omegaconf import DictConfig, OmegaConf
 
@@ -404,7 +402,6 @@ from utils.train_utils import BackupToNASCallback
 from utils.distributed_utils import (
     get_rank,
     rank_zero_print,
-    rank_print,
 )
 
 
