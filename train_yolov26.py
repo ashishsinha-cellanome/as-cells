@@ -12,6 +12,19 @@ setup_cluster_env()
 @hydra.main(version_base=None, config_path="configs", config_name="config")
 def main(config: DictConfig):
     yolo_cfg = config.model.yolov26
+    
+    # Auto-launch torchrun if multi-GPU is requested but DDP is not initialized
+    hyp_cfg = getattr(yolo_cfg, "hyp", {})
+    device_cfg = str(getattr(hyp_cfg, "device", ""))
+    num_devices = len(device_cfg.split(",")) if device_cfg and device_cfg not in ["cpu", "mps"] else 1
+    
+    if not getattr(config, "test_only", False) and num_devices > 1 and "LOCAL_RANK" not in os.environ and "SLURM_PROCID" not in os.environ:
+        print(f"[INFO] Auto-launching DDP with torchrun for {num_devices} GPUs...")
+        import subprocess
+        import sys
+        cmd = [sys.executable, "-m", "torch.distributed.run", f"--nproc_per_node={num_devices}"] + sys.argv
+        sys.exit(subprocess.run(cmd).returncode)
+
     data_cfg = config.data
     dp = data_cfg.path
     cache_dir = yolo_cfg.dataset_cache_dir
