@@ -117,6 +117,7 @@ orig_trainer_init = pl.Trainer.__init__
 
 def custom_trainer_init(self, *args, **kwargs):
     from utils.detailed_coco_eval import DetailedCocoEvalCallback
+    
     if 'callbacks' in kwargs and kwargs['callbacks'] is not None:
         kwargs['callbacks'].append(DetailedCocoEvalCallback())
         
@@ -145,21 +146,59 @@ def custom_fit(self, model, datamodule=None, ckpt_path=None):
         # Remove original COCOEvalCallback to prevent massive memory leak from torchmetrics keeping masks in RAM
         self.callbacks = [cb for cb in self.callbacks if type(cb).__name__ != 'COCOEvalCallback']
         
-        if ckpt_path and ckpt_path.endswith('.pth'):
+        import os
+        manual_load_path = os.environ.get('TEST_ONLY_MANUAL_LOAD_PATH')
+        if manual_load_path:
             import torch
-            print(f"Manually loading raw weights from {ckpt_path} to avoid PTL validate loop errors")
-            ckpt = torch.load(ckpt_path, map_location="cpu")
-            if "state_dict" in ckpt:
-                model.load_state_dict(ckpt["state_dict"], strict=False)
-            elif "model" in ckpt:
-                model.load_state_dict(ckpt["model"], strict=False)
-            ckpt_path = None
-        
+            print(f"[Rank {self.global_rank}] Manually loading raw weights from {manual_load_path} to avoid PTL validate loop errors")
+            ckpt = torch.load(manual_load_path, map_location="cpu")
+            state_dict = ckpt.get("state_dict", ckpt.get("model", ckpt))
+            model.load_state_dict(state_dict, strict=False)
+            
+            # Setup EMA callback if it exists to ensure both regular and EMA are evaluated
+            ema_cb = None
+            for cb in self.callbacks:
+                if type(cb).__name__ == 'RFDETREMACallback':
+                    ema_cb = cb
+                    break
+                    
+            if ema_cb:
+                print(f"[Rank {self.global_rank}] Initializing EMA model for dual evaluation")
+                from torch.optim.swa_utils import AveragedModel
+                # The model is on CPU here, PTL moves it later. We will patch the EMA callback to move it.
+                ema_cb._average_model = AveragedModel(
+                    model=model,
+                    device=torch.device('cpu'),
+                    use_buffers=ema_cb._use_buffers,
+                    avg_fn=ema_cb._avg_fn,
+                )
+                ema_cb._average_model.eval()
+                
+                ema_state_dict = None
+                if 'callbacks' in ckpt and 'RFDETREMACallback' in ckpt['callbacks']:
+                    ema_state_dict = ckpt['callbacks']['RFDETREMACallback'].get('average_model_state_dict')
+                    
+                if ema_state_dict is not None:
+                    ema_cb._average_model.load_state_dict(ema_state_dict)
+                    print(f"[Rank {self.global_rank}] Successfully loaded distinct EMA weights from checkpoint")
+                else:
+                    print(f"[Rank {self.global_rank}] No distinct EMA weights found. EMA metrics will mirror regular metrics.")
+                
+                # Patch on_validation_start to ensure the EMA model gets moved to the correct device
+                orig_on_val_start = ema_cb.on_validation_start
+                def patched_on_val_start(trainer, pl_module):
+                    if hasattr(ema_cb, '_average_model') and ema_cb._average_model is not None:
+                        ema_cb._average_model.to(pl_module.device)
+                    if callable(orig_on_val_start):
+                        orig_on_val_start(trainer, pl_module)
+                ema_cb.on_validation_start = patched_on_val_start
+            
         # Measure GFLOPS and Throughput BEFORE validation so we see it immediately
         import time
         import torch
         
-        if self.is_global_zero:
+        if self.is_global_zero and not getattr(self, "_gflops_measured", False):
+            self._gflops_measured = True
             try:
                 from fvcore.nn import FlopCountAnalysis, flop_count_table
                 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -189,13 +228,15 @@ def custom_fit(self, model, datamodule=None, ckpt_path=None):
                 try:
                     flops = FlopCountAnalysis(inner_model, images)
                     print(flop_count_table(flops))
-                    print(f"Total GFLOPS: {flops.total() / 1e9:.2f}")
+                    print(f"Total GFLOPS per batch ({tensor_images.shape[0]} images): {flops.total() / 1e9:.2f}")
+                    print(f"Total GFLOPS per image: {(flops.total() / 1e9) / tensor_images.shape[0]:.2f}")
                 except Exception as e:
                     print(f"Could not compute GFLOPS directly with NestedTensor, trying raw tensors... {e}")
                     try:
                         flops = FlopCountAnalysis(inner_model, tensor_images)
                         print(flop_count_table(flops))
-                        print(f"Total GFLOPS: {flops.total() / 1e9:.2f}")
+                        print(f"Total GFLOPS per batch ({tensor_images.shape[0]} images): {flops.total() / 1e9:.2f}")
+                        print(f"Total GFLOPS per image: {(flops.total() / 1e9) / tensor_images.shape[0]:.2f}")
                     except Exception as e2:
                         print(f"Failed again: {e2}")
                     
@@ -298,6 +339,26 @@ def main():
         trainer_kwargs["limit_train_batches"] = args.fraction
         trainer_kwargs["limit_val_batches"] = args.fraction
         
+    # Handle manual weights loading for test_only mode to completely bypass PTL validation loops issues
+    if args.test_only and args.resume and args.resume.endswith('.pth'):
+        import os
+        import sys
+        os.environ['TEST_ONLY_MANUAL_LOAD_PATH'] = args.resume
+        
+        # Remove --resume from sys.argv so DDP subprocesses don't see it
+        new_argv = []
+        skip_next = False
+        for arg in sys.argv:
+            if skip_next:
+                skip_next = False
+                continue
+            if arg == '--resume':
+                skip_next = True
+                continue
+            new_argv.append(arg)
+        sys.argv = new_argv
+        args.resume = None
+
     if args.resume:
         trainer_kwargs["resume"] = args.resume
         

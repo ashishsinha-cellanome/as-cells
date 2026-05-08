@@ -140,6 +140,9 @@ class DetailedCocoEvalCallback(pl.Callback):
                 if masks.ndim == 4 and masks.shape[1] == 1:
                     masks = masks.squeeze(1)
                 
+                import time
+                t_enc_start = time.time()
+                
                 # Vectorized batch encoding
                 # Pycocotools encode expects Fortran-contiguous array of shape (H, W, N)
                 # Input masks is shape (N, H, W)
@@ -157,6 +160,8 @@ class DetailedCocoEvalCallback(pl.Callback):
                     
                 pred["segmentation"] = segmentations
                 del pred["masks"]
+                
+                # print(f"Encoded {masks.shape[0]} masks in {time.time() - t_enc_start:.4f}s")
                 
         result_map = {
             int(target["image_id"].item()): pred for target, pred in zip(targets, preds_for_metric)
