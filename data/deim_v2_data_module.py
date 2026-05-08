@@ -9,16 +9,60 @@ from utils.dataset_utils import get_transform
 
 
 class DeimDataset(CocoDetection):
-    def __init__(self, root, annFile, transforms=None, remap_dict=None):
+    def __init__(self, root, annFile, transforms=None, remap_dict=None, apply_copy_paste=False):
         super().__init__(root, annFile, transforms=None)
         self.albu_transforms = transforms
         self.remap_dict = remap_dict
+        self.apply_copy_paste = apply_copy_paste
 
     def __getitem__(self, idx):
+        import pycocotools.mask as maskUtils
         image, annotations = super().__getitem__(idx)
         image_array = np.array(image.convert("RGB"))
 
         orig_h, orig_w = image_array.shape[:2]
+
+        if self.apply_copy_paste and np.random.rand() < 0.5:
+            # randomly pick another image
+            rand_idx = np.random.randint(len(self.ids))
+            img2, ann2 = super().__getitem__(rand_idx)
+            img2_arr = np.array(img2.convert("RGB"))
+            
+            for ann in ann2:
+                cat = ann["category_id"]
+                if self.remap_dict:
+                    cat = self.remap_dict.get(cat, cat)
+                # target cell-adhered instances
+                if cat == 2 and "bbox" in ann:
+                    x, y, w, h = map(int, ann["bbox"])
+                    if w > 0 and h > 0 and "segmentation" in ann and ann["segmentation"]:
+                        paste_x = np.random.randint(0, max(1, orig_w - w))
+                        paste_y = np.random.randint(0, max(1, orig_h - h))
+                        
+                        if isinstance(ann['segmentation'], list):
+                            rles = maskUtils.frPyObjects(ann['segmentation'], img2_arr.shape[0], img2_arr.shape[1])
+                            rle = maskUtils.merge(rles)
+                        else:
+                            rle = ann['segmentation']
+                        m = maskUtils.decode(rle)
+                        
+                        # handle out of bounds gracefully
+                        y_end, x_end = min(y+h, img2_arr.shape[0]), min(x+w, img2_arr.shape[1])
+                        m_crop = m[y:y_end, x:x_end]
+                        img_crop = img2_arr[y:y_end, x:x_end]
+                        
+                        ch, cw = m_crop.shape[:2]
+                        
+                        if ch > 0 and cw > 0 and paste_y + ch <= orig_h and paste_x + cw <= orig_w:
+                            m_crop_3d = m_crop[:, :, None]
+                            target_region = image_array[paste_y:paste_y+ch, paste_x:paste_x+cw]
+                            
+                            image_array[paste_y:paste_y+ch, paste_x:paste_x+cw] = \
+                                np.where(m_crop_3d, img_crop, target_region)
+                            
+                            new_ann = ann.copy()
+                            new_ann['bbox'] = [float(paste_x), float(paste_y), float(cw), float(ch)]
+                            annotations.append(new_ann)
 
         if len(annotations) > 0:
             image_id = annotations[0]["image_id"]
@@ -185,11 +229,14 @@ class DeimV2DataModule(pl.LightningDataModule):
                 transforms_config=None,
             )
 
+            apply_copy_paste = getattr(self.config.data, "apply_copy_paste", False)
+
             self.train_dataset = DeimDataset(
                 root=train_images_path,
                 annFile=train_annot_path,
                 transforms=train_transforms,
                 remap_dict=train_remap,
+                apply_copy_paste=apply_copy_paste,
             )
 
             val_images_path = os.path.join(

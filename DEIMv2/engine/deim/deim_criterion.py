@@ -564,7 +564,7 @@ class DEIMCriterion(nn.Module):
                     losses.update(l_dict)
 
         # For debugging Objects365 pre-train.
-        losses = {k: torch.nan_to_num(v, nan=0.0) for k, v in losses.items()}
+        # losses = {k: torch.nan_to_num(v, nan=0.0) for k, v in losses.items()}
         return losses
 
     def get_loss_meta_info(self, loss, outputs, targets, indices):
