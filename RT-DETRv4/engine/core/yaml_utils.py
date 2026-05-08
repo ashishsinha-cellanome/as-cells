@@ -6,7 +6,7 @@ Copyright(c) 2023 lyuwenyu. All Rights Reserved.
 import os
 import copy
 import yaml
-from typing import Any, Dict, Optional, List
+from typing import Any, Dict, List
 
 from .workspace import GLOBAL_CONFIG
 
