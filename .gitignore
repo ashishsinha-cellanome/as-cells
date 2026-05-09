@@ -5,6 +5,8 @@ output/
 *.log
 *.err
 .codex
+ClAUDE.md
+AGENTS.md
 .hydra
 .opencode
 .env

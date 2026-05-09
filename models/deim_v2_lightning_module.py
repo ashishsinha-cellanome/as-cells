@@ -53,25 +53,7 @@ class DeimV2LightningModule(pl.LightningModule):
         num_classes = len(config.model.label_map)
 
         backbone_kwargs = OmegaConf.to_container(cfg.backbone, resolve=True)
-        if cfg.backbone.get("type", "") == "dinov2_adapter":
-            from models.dinov2_adapter import Dinov2Adapter, Dinov2AdapterConfig
-            bb_config = Dinov2AdapterConfig(**backbone_kwargs)
-            base_backbone = Dinov2Adapter(bb_config)
-            
-            # DEIMv2 expects 3 feature maps (strides 8, 16, 32)
-            # Dinov2Adapter outputs 4 (strides 4, 8, 16, 32). We discard stride 4.
-            class Dinov2AdapterWrapper(torch.nn.Module):
-                def __init__(self, bb):
-                    super().__init__()
-                    self.bb = bb
-                def forward(self, x):
-                    # Dinov2Adapter returns BackboneOutput(feature_maps=tuple(...))
-                    out = self.bb(x).feature_maps
-                    return out[1], out[2], out[3]
-            
-            self.backbone = Dinov2AdapterWrapper(base_backbone)
-        else:
-            self.backbone = DINOv3STAs(**backbone_kwargs)
+        self.backbone = DINOv3STAs(**backbone_kwargs)
 
         encoder_kwargs = OmegaConf.to_container(cfg.encoder, resolve=True)
         self.encoder = HybridEncoder(**encoder_kwargs)
