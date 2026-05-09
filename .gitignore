@@ -1,6 +1,7 @@
 **/*.ipynb
 cell-detection/
 output/
+**/__pycache__/**.pyc
 *.log
 *.err
 .codex

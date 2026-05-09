@@ -6,10 +6,10 @@ val: images/valid/
 test: images/test/
 
 # data path with no >300 bboxes during inference
-# path: /project/aip-robsc/asinha/cellanome/as-cells/.cache/datasets/yolov5_train_valid_no300_test_no300/
+path: /project/aip-robsc/asinha/cellanome/as-cells/.cache/datasets/yolov5_train_valid_no300_test_no300/
 train: images/train/
-# val: images/valid_no300/
-test: images/test/
+val: images/valid_no300/
+test: images/test_no30/
 
 nc: 4
 
