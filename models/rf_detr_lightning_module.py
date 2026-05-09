@@ -179,16 +179,21 @@ class RFDETRLightningModule(pl.LightningModule):
         for pred in post:
             if "masks" in pred:
                 masks = pred["masks"]  # Shape [num_select, 1, H, W]
-                segmentations = []
-                for i in range(masks.shape[0]):
-                    mask_np = masks[i, 0].numpy().astype(np.uint8)
-                    # Ensure Fortran contiguous order for pycocotools
-                    mask_np = np.asfortranarray(mask_np)
-                    rle = mask_utils.encode(mask_np)
-                    # Decode bytes to string so it can be JSON serialized/gathered easily
-                    rle["counts"] = rle["counts"].decode("utf-8")
-                    segmentations.append(rle)
-                pred["segmentation"] = segmentations
+                if masks.shape[0] > 0:
+                    # Input masks is shape (N, 1, H, W), we need (H, W, N)
+                    mask_np = masks[:, 0].numpy().astype(np.uint8)
+                    mask_np_hw_n = np.asfortranarray(np.transpose(mask_np, (1, 2, 0)))
+                    
+                    encoded_masks = mask_utils.encode(mask_np_hw_n)
+                    
+                    segmentations = []
+                    for i in range(masks.shape[0]):
+                        rle = encoded_masks[i]
+                        rle["counts"] = rle["counts"].decode("utf-8")
+                        segmentations.append(rle)
+                    pred["segmentation"] = segmentations
+                else:
+                    pred["segmentation"] = []
                 del pred["masks"]  # Free memory!
 
         result_map = {

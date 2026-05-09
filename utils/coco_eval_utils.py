@@ -58,7 +58,7 @@ def convert_preds_to_coco(predictions, model_to_coco=None):
 
 
 def gather_outputs_across_processes(local_outputs):
-    """Gather Python objects from all ranks and flatten."""
+    """Gather Python objects from all ranks and flatten on rank 0."""
     if not dist.is_available() or not dist.is_initialized():
         return local_outputs
 
@@ -67,8 +67,11 @@ def gather_outputs_across_processes(local_outputs):
         return local_outputs
 
     gathered = [None for _ in range(world_size)]
-    dist.all_gather_object(gathered, local_outputs)
-    return [item for rank_outputs in gathered for item in rank_outputs]
+    dist.gather_object(local_outputs, gathered if dist.get_rank() == 0 else None, dst=0)
+    
+    if dist.get_rank() == 0:
+        return [item for rank_outputs in gathered for item in rank_outputs]
+    return []
 
 
 def broadcast_object(obj, src=0):

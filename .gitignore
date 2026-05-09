@@ -1,4 +1,6 @@
 **/*.ipynb
+cell-detection/
+output/
 *.log
 *.err
 .codex
@@ -45,3 +47,4 @@ logs/
 docs/superpowers/
 plan2.md
 .worktrees/
+*models_report.csv
