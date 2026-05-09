@@ -41,3 +41,6 @@ sbatch run_rfdetr.sh
 uv run evaluate_all_models.py
 uv run inference.py initialization.load_from_checkpoint=ckpt.pt data.path=/path/to/data
 ```
+
+## Personal Assistant Memory / Preferences
+- **Roku TV:** Whenever you launch YouTube, Netflix, or Prime Video, automatically press `Select` (or `OK`) shortly after to select the first profile.
