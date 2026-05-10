@@ -5,6 +5,7 @@ Copyright(c) 2023 lyuwenyu. All Rights Reserved.
 
 import importlib.metadata
 from torch import Tensor
+from torchvision.transforms.v2 import SanitizeBoundingBoxes
 
 if '0.15.2' in importlib.metadata.version('torchvision'):
     import torchvision
