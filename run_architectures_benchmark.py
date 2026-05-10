@@ -1,6 +1,7 @@
 import torch
 import numpy as np
 import tabulate
+import csv
 from omegaconf import OmegaConf
 from hydra import compose, initialize
 from fvcore.nn import FlopCountAnalysis
@@ -99,8 +100,12 @@ def get_model(config):
     elif "yolo" in model_name.lower():
         import os
         from models.yolov5_lightning_module import YOLOv5LightningModule
-        repo_path = config.get("model", {}).get("yolov5", {}).get("repo_path", "")
-        if not os.path.exists(repo_path): repo_path = os.path.join(os.getcwd(), "models", "yolov5")
+        try:
+            repo_path = config.get("model", {}).get("yolov5", {}).get("repo_path", "")
+        except Exception:
+            repo_path = ""
+        if not repo_path or not os.path.exists(repo_path): 
+            repo_path = os.path.join(os.getcwd(), "models", "yolov5")
         try:
             m = YOLOv5LightningModule(config=OmegaConf.create(config), yolo_repo_path=repo_path)
             inner_model = m.model
@@ -243,6 +248,13 @@ def main():
     print("FINAL BENCHMARK REPORT")
     print("="*80)
     print(tabulate.tabulate(results, headers="keys", tablefmt="github"))
+    
+    if results:
+        with open("run_architectures_benchmark_report.csv", "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=results[0].keys())
+            writer.writeheader()
+            writer.writerows(results)
+        print("\nReport saved to run_architectures_benchmark_report.csv")
 
 if __name__ == "__main__":
     main()
