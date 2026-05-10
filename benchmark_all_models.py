@@ -103,7 +103,11 @@ def get_model_and_input(config, device, batch_size):
         from models.mask2former_model import build_original_mask2former, build_mask2former_with_dinov2_backbone
         bb_name = config.get("model", {}).get("backbone", {}).get("model_name", "")
         if "dinov2" in bb_name:
-            inner_model = build_mask2former_with_dinov2_backbone(id2label={0:'cell', 1:'bead', 2:'cell-adhered', 3:'soma'}, mask2former_pretrained_name_or_path="facebook/mask2former-swin-base-coco-panoptic")
+            inner_model = build_mask2former_with_dinov2_backbone(
+                id2label={0:'cell', 1:'bead', 2:'cell-adhered', 3:'soma'}, 
+                mask2former_pretrained_name_or_path="facebook/mask2former-swin-base-coco-panoptic",
+                backbone_pretrained_name_or_path=config.get("model", {}).get("backbone", {}).get("pretrained_name_or_path", "facebook/dinov2-base")
+            )
         else:
             inner_model = build_original_mask2former(id2label={0:'cell', 1:'bead', 2:'cell-adhered', 3:'soma'}, mask2former_pretrained_name_or_path="facebook/mask2former-swin-base-coco-panoptic")
             
