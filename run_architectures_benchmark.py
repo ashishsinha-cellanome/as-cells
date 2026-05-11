@@ -118,6 +118,12 @@ def get_model(config):
             print(f"Failed to load YOLOv5: {e}")
             
     elif "mask2former" in model_name.lower():
+        import sys, os
+        if os.getcwd() not in sys.path:
+            sys.path.insert(0, os.getcwd())
+        elif sys.path[0] != os.getcwd():
+            sys.path.remove(os.getcwd())
+            sys.path.insert(0, os.getcwd())
         from models.mask2former_model import build_original_mask2former, build_mask2former_with_dinov2_backbone
         bb_name = config.get("model", {}).get("backbone", {}).get("model_name", "")
         if "dinov2" in bb_name:
@@ -134,6 +140,12 @@ def get_model(config):
             inner_model = build_original_mask2former(id2label={0:'cell', 1:'bead', 2:'cell-adhered', 3:'soma'}, mask2former_pretrained_name_or_path="facebook/mask2former-swin-base-coco-panoptic")
             
     elif "deim" in model_name.lower():
+        import sys, os
+        if os.getcwd() not in sys.path:
+            sys.path.insert(0, os.getcwd())
+        elif sys.path[0] != os.getcwd():
+            sys.path.remove(os.getcwd())
+            sys.path.insert(0, os.getcwd())
         from models.deim_v2_lightning_module import DeimV2LightningModule
         try:
             m = DeimV2LightningModule(config=OmegaConf.create(config))
