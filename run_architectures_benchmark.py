@@ -7,6 +7,9 @@ from hydra import compose, initialize
 from hydra.core.hydra_config import HydraConfig
 from fvcore.nn import FlopCountAnalysis
 
+# Register custom OmegaConf resolvers before composing configurations
+OmegaConf.register_new_resolver("extract_name", lambda path: path.split("/")[-1], replace=True)
+
 import logging
 logging.getLogger("fvcore").setLevel(logging.ERROR)
 
@@ -99,7 +102,7 @@ def get_model(config):
         inner_model = m.model.model
         
     elif "yolo" in model_name.lower():
-        import os
+        import os, sys
         from models.yolov5_lightning_module import YOLOv5LightningModule
         try:
             repo_path = config.get("model", {}).get("yolov5", {}).get("repo_path", "")
@@ -116,6 +119,12 @@ def get_model(config):
             inner_model = m.model
         except Exception as e:
             print(f"Failed to load YOLOv5: {e}")
+        finally:
+            # Revert YOLOv5's hijacking of sys.path which breaks other models
+            if str(repo_path) in sys.path:
+                sys.path.remove(str(repo_path))
+            if os.getcwd() not in sys.path:
+                sys.path.insert(0, os.getcwd())
             
     elif "mask2former" in model_name.lower():
         import sys, os

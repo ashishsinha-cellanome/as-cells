@@ -6,6 +6,8 @@ import csv
 import tabulate
 from omegaconf import OmegaConf
 
+OmegaConf.register_new_resolver("extract_name", lambda path: path.split("/")[-1], replace=True)
+
 def run_benchmark(inner_model, dummy_input, batch_size, num_runs=50, label=""):
     print(f"--- Benchmarking {label} ---")
     print("Warming up...")
