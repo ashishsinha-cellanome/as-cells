@@ -90,11 +90,19 @@ def get_model_and_input(config, device, batch_size):
         
     elif "yolo" in model_name.lower():
         from models.yolov5_lightning_module import YOLOv5LightningModule
-        repo_path = config.get("model", {}).get("yolov5", {}).get("repo_path", "")
-        # fallback if repo path isn't local
-        if not os.path.exists(repo_path): repo_path = os.path.join(os.getcwd(), "models", "yolov5")
         try:
-            m = YOLOv5LightningModule(config=OmegaConf.create(config), yolo_repo_path=repo_path)
+            repo_path = config.get("model", {}).get("yolov5", {}).get("repo_path", "")
+        except Exception:
+            repo_path = ""
+        # fallback if repo path isn't local
+        if not repo_path or not os.path.exists(repo_path): 
+            repo_path = os.path.join(os.getcwd(), "models", "yolov5")
+        try:
+            m = YOLOv5LightningModule(
+                config=OmegaConf.create(config), 
+                yolo_repo_path=repo_path,
+                model_to_coco={0:0, 1:1, 2:2, 3:3}
+            )
             inner_model = m.model
         except Exception as e:
             print(f"Failed to load YOLOv5: {e}")

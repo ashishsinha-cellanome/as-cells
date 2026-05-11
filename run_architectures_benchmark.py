@@ -4,6 +4,7 @@ import tabulate
 import csv
 from omegaconf import OmegaConf
 from hydra import compose, initialize
+from hydra.core.hydra_config import HydraConfig
 from fvcore.nn import FlopCountAnalysis
 
 import logging
@@ -107,7 +108,11 @@ def get_model(config):
         if not repo_path or not os.path.exists(repo_path): 
             repo_path = os.path.join(os.getcwd(), "models", "yolov5")
         try:
-            m = YOLOv5LightningModule(config=OmegaConf.create(config), yolo_repo_path=repo_path)
+            m = YOLOv5LightningModule(
+                config=OmegaConf.create(config), 
+                yolo_repo_path=repo_path,
+                model_to_coco={0:0, 1:1, 2:2, 3:3}
+            )
             inner_model = m.model
         except Exception as e:
             print(f"Failed to load YOLOv5: {e}")
@@ -179,7 +184,8 @@ def main():
         for name, overrides in MODELS_TO_TEST:
             print(f"\nEvaluating: {name}")
             try:
-                cfg = compose(config_name="config", overrides=overrides)
+                cfg = compose(config_name="config", overrides=overrides, return_hydra_config=True)
+                HydraConfig.instance().set_config(cfg)
                 inner_model = get_model(cfg)
                 
                 if inner_model is None:
