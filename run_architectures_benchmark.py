@@ -126,6 +126,11 @@ def get_model(config):
             if os.getcwd() not in sys.path:
                 sys.path.insert(0, os.getcwd())
             
+            # Revert YOLOv5's hijacking of sys.modules!
+            for k in list(sys.modules.keys()):
+                if k.startswith(("models", "utils", "detect", "export")):
+                    del sys.modules[k]
+            
     elif "mask2former" in model_name.lower():
         import sys, os
         if os.getcwd() not in sys.path:

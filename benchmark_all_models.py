@@ -108,6 +108,18 @@ def get_model_and_input(config, device, batch_size):
             inner_model = m.model
         except Exception as e:
             print(f"Failed to load YOLOv5: {e}")
+        finally:
+            import sys
+            # Revert YOLOv5's hijacking of sys.path which breaks other models
+            if str(repo_path) in sys.path:
+                sys.path.remove(str(repo_path))
+            if os.getcwd() not in sys.path:
+                sys.path.insert(0, os.getcwd())
+            
+            # Revert YOLOv5's hijacking of sys.modules!
+            for k in list(sys.modules.keys()):
+                if k.startswith(("models", "utils", "detect", "export")):
+                    del sys.modules[k]
             
     elif "mask2former" in model_name.lower():
         import sys, os
