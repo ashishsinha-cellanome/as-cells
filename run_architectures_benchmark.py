@@ -133,13 +133,19 @@ def get_model(config):
             elif "medium" in model_name.lower(): m = RFDETRMedium(num_classes=4, group_detr=group_detr)
             else: m = RFDETRLarge(num_classes=4, group_detr=group_detr)
         inner_model = m.model.model
-        postprocess_fn = getattr(m.model, "postprocess", None)
+        if hasattr(m.model, "postprocess"):
+            def rfdetr_postproc(outputs, orig_sizes):
+                return m.model.postprocess(outputs, target_sizes=orig_sizes)
+            postprocess_fn = rfdetr_postproc
+        else:
+            postprocess_fn = None
         
     elif "yolo" in model_name.lower():
         import os, sys
         from models.yolov5_lightning_module import YOLOv5LightningModule
+        model_key = "yolov26" if "yolov26" in config.get("model", {}).get("name", "") else "yolov5"
         try:
-            repo_path = config.get("model", {}).get("yolov5", {}).get("repo_path", "")
+            repo_path = config.get("model", {}).get(model_key, {}).get("repo_path", "")
         except Exception:
             repo_path = ""
         if not repo_path or not os.path.exists(repo_path): 
