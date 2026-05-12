@@ -13,39 +13,57 @@ OmegaConf.register_new_resolver("extract_name", lambda path: path.split("/")[-1]
 import logging
 logging.getLogger("fvcore").setLevel(logging.ERROR)
 
-def run_benchmark(inner_model, dummy_input, batch_size=1, num_runs=50):
+def run_benchmark(inner_model, postprocess_fn, dummy_input, batch_size=1, num_runs=50):
     with torch.no_grad():
         for _ in range(5):
             try:
-                _ = inner_model(dummy_input)
+                outputs = inner_model(dummy_input)
             except TypeError:
-                _ = inner_model(*dummy_input) if isinstance(dummy_input, tuple) else inner_model(**dummy_input) if isinstance(dummy_input, dict) else inner_model(dummy_input)
+                outputs = inner_model(*dummy_input) if isinstance(dummy_input, tuple) else inner_model(**dummy_input) if isinstance(dummy_input, dict) else inner_model(dummy_input)
+            if postprocess_fn is not None:
+                _ = postprocess_fn(outputs)
             
     torch.cuda.synchronize()
     
-    start_events = [torch.cuda.Event(enable_timing=True) for _ in range(num_runs)]
-    end_events = [torch.cuda.Event(enable_timing=True) for _ in range(num_runs)]
+    start_events_fwd = [torch.cuda.Event(enable_timing=True) for _ in range(num_runs)]
+    end_events_fwd = [torch.cuda.Event(enable_timing=True) for _ in range(num_runs)]
+    start_events_post = [torch.cuda.Event(enable_timing=True) for _ in range(num_runs)]
+    end_events_post = [torch.cuda.Event(enable_timing=True) for _ in range(num_runs)]
     
     with torch.no_grad():
         for i in range(num_runs):
-            start_events[i].record()
+            start_events_fwd[i].record()
             try:
-                _ = inner_model(dummy_input)
+                outputs = inner_model(dummy_input)
             except TypeError:
-                _ = inner_model(*dummy_input) if isinstance(dummy_input, tuple) else inner_model(**dummy_input) if isinstance(dummy_input, dict) else inner_model(dummy_input)
-            end_events[i].record()
+                outputs = inner_model(*dummy_input) if isinstance(dummy_input, tuple) else inner_model(**dummy_input) if isinstance(dummy_input, dict) else inner_model(dummy_input)
+            end_events_fwd[i].record()
+            
+            start_events_post[i].record()
+            if postprocess_fn is not None:
+                try:
+                    _ = postprocess_fn(outputs)
+                except Exception:
+                    pass
+            end_events_post[i].record()
             
     torch.cuda.synchronize()
     
-    times = [s.elapsed_time(e) for s, e in zip(start_events, end_events)]
-    avg_time_ms = np.mean(times)
-    fps = (1000.0 * batch_size) / avg_time_ms
+    fwd_times = [s.elapsed_time(e) for s, e in zip(start_events_fwd, end_events_fwd)]
+    post_times = [s.elapsed_time(e) for s, e in zip(start_events_post, end_events_post)]
     
-    return fps
+    avg_fwd_ms = np.mean(fwd_times) / batch_size
+    avg_post_ms = np.mean(post_times) / batch_size
+    
+    total_ms = avg_fwd_ms + avg_post_ms
+    fps = 1000.0 / total_ms if total_ms > 0 else 0
+    
+    return avg_fwd_ms, avg_post_ms, total_ms, fps
 
 def get_model(config):
     model_name = config.get("model", {}).get("name", "")
     inner_model = None
+    postprocess_fn = None
 
     if "rtdetr" in model_name.lower():
         from transformers import RTDetrForObjectDetection, AutoConfig
@@ -97,6 +115,11 @@ def get_model(config):
         except Exception as e:
             print(f"Failed RTDETR: {e}")
             
+        if hasattr(inner_model, "post_process_object_detection"):
+            def rtdetr_postprocess(outputs, orig_sizes):
+                return inner_model.post_process_object_detection(outputs, 0.05, orig_sizes)
+            postprocess_fn = rtdetr_postprocess
+            
     elif "rf_detr" in model_name.lower() or "rfdetr" in model_name.lower():
         group_detr = config.get("model", {}).get("rfdetr", {}).get("group_detr", 11)
         if "seg" in model_name.lower():
@@ -110,6 +133,7 @@ def get_model(config):
             elif "medium" in model_name.lower(): m = RFDETRMedium(num_classes=4, group_detr=group_detr)
             else: m = RFDETRLarge(num_classes=4, group_detr=group_detr)
         inner_model = m.model.model
+        postprocess_fn = getattr(m.model, "postprocess", None)
         
     elif "yolo" in model_name.lower():
         import os, sys
@@ -127,6 +151,10 @@ def get_model(config):
                 model_to_coco={0:0, 1:1, 2:2, 3:3}
             )
             inner_model = m.model
+            def yolo_postprocess(outputs, orig_sizes):
+                preds = outputs[0] if isinstance(outputs, (tuple, list)) else outputs
+                return m._non_max_suppression(preds, 0.05, 0.5)
+            postprocess_fn = yolo_postprocess
         except Exception as e:
             print(f"Failed to load YOLOv5: {e}")
         finally:
@@ -173,6 +201,10 @@ def get_model(config):
         else:
             inner_model = build_original_mask2former(id2label={0:'cell', 1:'bead', 2:'cell-adhered', 3:'soma'}, mask2former_pretrained_name_or_path=m2f_pretrained)
             
+        def m2f_postprocess(outputs, orig_sizes):
+            return outputs.class_queries_logits.argmax(dim=-1)
+        postprocess_fn = m2f_postprocess
+            
     elif "deim" in model_name.lower():
         import sys, os
         if os.getcwd() not in sys.path:
@@ -184,10 +216,11 @@ def get_model(config):
         try:
             m = DeimV2LightningModule(config=OmegaConf.create(config))
             inner_model = m.model
+            postprocess_fn = getattr(m.model, "postprocess", None)
         except Exception as e:
             print(f"Failed to load DEIMv2: {e}")
 
-    return inner_model
+    return inner_model, postprocess_fn
 
 def get_input_size(config):
     if "rfdetr_seg" in config.model.name:
@@ -196,7 +229,7 @@ def get_input_size(config):
 
 MODELS_TO_TEST = [
     ("yolov5 PL", ['model=yolov5']),
-    ("yolov26 Medium", ['model=yolov5']), # Yolov26 is just yolov5 but trained more
+    ("yolov26 Medium", ['model=yolov26']), # Yolov26 is just yolov5 but trained more
     ("RF-DETR base", ['model=rfdetr', 'model.rfdetr.size=small']),
     ("RF-DETR medium", ['model=rfdetr', 'model.rfdetr.size=medium']),
     ("RT-DETR-v1 resnet50", ['model=rtdetr_v1', 'model/backbone=resnet50']),
@@ -232,7 +265,7 @@ def main():
             try:
                 cfg = compose(config_name="config", overrides=overrides, return_hydra_config=True)
                 HydraConfig.instance().set_config(cfg)
-                inner_model = get_model(cfg)
+                inner_model, postprocess_fn = get_model(cfg)
                 
                 if inner_model is None:
                     print("Failed to initialize model")
@@ -270,16 +303,16 @@ def main():
                         gflops = 0.0
                         
                     # FPS Native
-                    fps_native = run_benchmark(inner_model, dummy_input, batch_size=batch_size, num_runs=50)
+                    avg_fwd_native, avg_post_native, total_ms_native, fps_native = run_benchmark(inner_model, postprocess_fn, dummy_input, batch_size=batch_size, num_runs=50)
                     
                     # FPS Compiled
-                    fps_compiled = 0.0
+                    avg_fwd_compiled, avg_post_compiled, total_ms_compiled, fps_compiled = 0.0, 0.0, 0.0, 0.0
                     try:
                         # Torch compile is sensitive to batch size changes if dynamic=False, 
                         # so we might need to re-compile or clear cache, but `compiled_model` is scoped inside.
                         # Actually torch compile caches based on input shape so it's fine.
                         compiled_model = torch.compile(inner_model, mode="reduce-overhead")
-                        fps_compiled = run_benchmark(compiled_model, dummy_input, batch_size=batch_size, num_runs=50)
+                        avg_fwd_compiled, avg_post_compiled, total_ms_compiled, fps_compiled = run_benchmark(compiled_model, postprocess_fn, dummy_input, batch_size=batch_size, num_runs=50)
                     except Exception as e:
                         print(f"Compile error: {e}")
                     
@@ -289,6 +322,9 @@ def main():
                         "Params (M)": f"{params:.1f}",
                         "Input Size": input_size,
                         "GFLOPS/img": f"{gflops:.1f}" if gflops > 0 else "Error",
+                        "Forward Time/img (ms)": f"{avg_fwd_native:.2f}",
+                        "Postproc Time/img (ms)": f"{avg_post_native:.2f}",
+                        "Total Time/img (ms)": f"{total_ms_native:.2f}",
                         "Native FPS": f"{fps_native:.1f}",
                         "Compiled FPS": f"{fps_compiled:.1f}"
                     })
