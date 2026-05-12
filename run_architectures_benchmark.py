@@ -14,6 +14,7 @@ import logging
 logging.getLogger("fvcore").setLevel(logging.ERROR)
 
 def run_benchmark(inner_model, postprocess_fn, dummy_input, batch_size=1, num_runs=50):
+    orig_sizes = torch.tensor([[dummy_input.shape[2], dummy_input.shape[3]] for _ in range(batch_size)], device=dummy_input.device) if hasattr(dummy_input, "device") else None
     with torch.no_grad():
         for _ in range(5):
             try:
@@ -21,7 +22,10 @@ def run_benchmark(inner_model, postprocess_fn, dummy_input, batch_size=1, num_ru
             except TypeError:
                 outputs = inner_model(*dummy_input) if isinstance(dummy_input, tuple) else inner_model(**dummy_input) if isinstance(dummy_input, dict) else inner_model(dummy_input)
             if postprocess_fn is not None:
-                _ = postprocess_fn(outputs)
+                try:
+                    _ = postprocess_fn(outputs, orig_sizes)
+                except Exception as e:
+                    pass
             
     torch.cuda.synchronize()
     
@@ -42,7 +46,7 @@ def run_benchmark(inner_model, postprocess_fn, dummy_input, batch_size=1, num_ru
             start_events_post[i].record()
             if postprocess_fn is not None:
                 try:
-                    _ = postprocess_fn(outputs)
+                    _ = postprocess_fn(outputs, orig_sizes)
                 except Exception:
                     pass
             end_events_post[i].record()
@@ -142,38 +146,51 @@ def get_model(config):
         
     elif "yolo" in model_name.lower():
         import os, sys
-        from models.yolov5_lightning_module import YOLOv5LightningModule
+        import yaml
         model_key = "yolov26" if "yolov26" in config.get("model", {}).get("name", "") else "yolov5"
-        try:
-            repo_path = config.get("model", {}).get(model_key, {}).get("repo_path", "")
-        except Exception:
-            repo_path = ""
-        if not repo_path or not os.path.exists(repo_path): 
+        
+        if model_key == "yolov5":
             repo_path = os.path.join(os.getcwd(), "models", "yolov5")
-        try:
-            m = YOLOv5LightningModule(
-                config=OmegaConf.create(config), 
-                yolo_repo_path=repo_path,
-                model_to_coco={0:0, 1:1, 2:2, 3:3}
-            )
-            inner_model = m.model
-            def yolo_postprocess(outputs, orig_sizes):
-                preds = outputs[0] if isinstance(outputs, (tuple, list)) else outputs
-                return m._non_max_suppression(preds, 0.05, 0.5)
-            postprocess_fn = yolo_postprocess
-        except Exception as e:
-            print(f"Failed to load YOLOv5: {e}")
-        finally:
-            # Revert YOLOv5's hijacking of sys.path which breaks other models
-            if str(repo_path) in sys.path:
-                sys.path.remove(str(repo_path))
-            if os.getcwd() not in sys.path:
-                sys.path.insert(0, os.getcwd())
-            
-            # Revert YOLOv5's hijacking of sys.modules!
-            for k in list(sys.modules.keys()):
-                if k.startswith(("models", "utils", "detect", "export")):
-                    del sys.modules[k]
+            if repo_path not in sys.path: 
+                sys.path.insert(0, repo_path)
+            try:
+                # Avoid Hydra interpolation error by reading directly
+                model_cfg_path = "models/yolov5m.yaml"
+                yaml_cfg_path = os.path.join(repo_path, model_cfg_path)
+                with open(yaml_cfg_path) as f:
+                    yaml_cfg = yaml.safe_load(f)
+                yaml_cfg['nc'] = 4
+                
+                from models.yolo import Model
+                inner_model = Model(cfg=yaml_cfg, ch=3, nc=4)
+                
+                def yolo_postprocess(outputs, orig_sizes):
+                    from utils.general import non_max_suppression
+                    preds = outputs[0] if isinstance(outputs, (tuple, list)) else outputs
+                    return non_max_suppression(preds, 0.05, 0.5)
+                postprocess_fn = yolo_postprocess
+            except Exception as e:
+                print(f"Failed to load YOLOv5: {e}")
+            finally:
+                if repo_path in sys.path:
+                    sys.path.remove(repo_path)
+                for k in list(sys.modules.keys()):
+                    if k.startswith(("models", "utils", "detect", "export")):
+                        del sys.modules[k]
+        else:
+            # YOLOv26 uses the ultralytics package
+            try:
+                from ultralytics import YOLO
+                m = YOLO("yolo26m.pt")
+                inner_model = m.model
+                def yolo_v8_postprocess(outputs, orig_sizes):
+                    from ultralytics.utils.ops import non_max_suppression
+                    # Ultralytics v8 outputs tuple (preds, ...). non_max_suppression expects preds
+                    preds = outputs[0] if isinstance(outputs, (tuple, list)) else outputs
+                    return non_max_suppression(preds, 0.05, 0.5)
+                postprocess_fn = yolo_v8_postprocess
+            except Exception as e:
+                print(f"Failed to load YOLOv26: {e}")
             
     elif "mask2former" in model_name.lower():
         import sys, os
