@@ -351,10 +351,16 @@ def main():
                         "Native FPS": f"{fps_native:.1f}",
                         "Compiled FPS": f"{fps_compiled:.1f}"
                     })
+                    
+                    if 'compiled_model' in locals():
+                        del compiled_model
+                    import gc
+                    gc.collect()
+                    torch.cuda.empty_cache()
                 
                 # free memory
                 del inner_model
-                if 'compiled_model' in locals(): del compiled_model
+                gc.collect()
                 torch.cuda.empty_cache()
                 
             except Exception as e:
