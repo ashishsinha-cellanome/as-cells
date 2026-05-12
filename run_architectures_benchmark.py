@@ -39,7 +39,7 @@ def run_benchmark(inner_model, dummy_input, batch_size=1, num_runs=50):
     
     times = [s.elapsed_time(e) for s, e in zip(start_events, end_events)]
     avg_time_ms = np.mean(times)
-    fps = 1000.0 / avg_time_ms
+    fps = (1000.0 * batch_size) / avg_time_ms
     
     return fps
 
@@ -149,11 +149,21 @@ def get_model(config):
             sys.path.remove(os.getcwd())
             sys.path.insert(0, os.getcwd())
         from models.mask2former_model import build_original_mask2former, build_mask2former_with_dinov2_backbone
+        
+        m2f_pretrained = config.get("model", {}).get("mask2former", {}).get("pretrained_name_or_path", "")
+        if not m2f_pretrained or "${" in m2f_pretrained:
+            # Fallback if hydra didn't interpolate or if it's missing
+            bb_name_check = config.get("model", {}).get("backbone", {}).get("name", "")
+            if "large" in bb_name_check.lower() or "large" in model_name.lower():
+                m2f_pretrained = "facebook/mask2former-swin-large-mapillary-vistas-panoptic"
+            else:
+                m2f_pretrained = "facebook/mask2former-swin-base-coco-panoptic"
+                
         bb_name = config.get("model", {}).get("backbone", {}).get("model_name", "")
         if "dinov2" in bb_name:
             inner_model = build_mask2former_with_dinov2_backbone(
                 id2label={0:'cell', 1:'bead', 2:'cell-adhered', 3:'soma'}, 
-                mask2former_pretrained_name_or_path="facebook/mask2former-swin-base-coco-panoptic",
+                mask2former_pretrained_name_or_path=m2f_pretrained,
                 backbone_pretrained_name_or_path=config.get("model", {}).get("backbone", {}).get("pretrained_name_or_path", "facebook/dinov2-base")
             )
             # Override FPN if specified
@@ -161,7 +171,7 @@ def get_model(config):
             if hasattr(inner_model, "config"):
                 inner_model.config.fpn_type = fpn_type
         else:
-            inner_model = build_original_mask2former(id2label={0:'cell', 1:'bead', 2:'cell-adhered', 3:'soma'}, mask2former_pretrained_name_or_path="facebook/mask2former-swin-base-coco-panoptic")
+            inner_model = build_original_mask2former(id2label={0:'cell', 1:'bead', 2:'cell-adhered', 3:'soma'}, mask2former_pretrained_name_or_path=m2f_pretrained)
             
     elif "deim" in model_name.lower():
         import sys, os
@@ -231,52 +241,57 @@ def main():
                 inner_model.eval()
                 inner_model.to(device)
                 
-                # Input
-                input_size = get_input_size(cfg)
-                dummy_input = torch.randn(1, 3, input_size, input_size, device=device)
-                
-                # Special cases for models that crash in bfloat16
-                if "DEIMv2" in name:
-                    inner_model = inner_model.float()
-                    dummy_input = dummy_input.float()
-                elif "Mask2Former" in name:
-                    # Mask2Former FLOP computation crashes occasionally in mixed dtypes
-                    inner_model = inner_model.float()
-                    dummy_input = dummy_input.float()
-                elif torch.cuda.is_available():
-                    inner_model = inner_model.bfloat16()
-                    dummy_input = dummy_input.bfloat16()
-                
-                # Parameters
-                params = sum(p.numel() for p in inner_model.parameters()) / 1e6
+                for batch_size in [1, 8]:
+                    # Input
+                    input_size = get_input_size(cfg)
+                    dummy_input = torch.randn(batch_size, 3, input_size, input_size, device=device)
                     
-                # GFLOPS
-                try:
-                    flops = FlopCountAnalysis(inner_model, dummy_input)
-                    gflops = flops.total() / 1e9
-                except Exception as e:
-                    print(f"GFLOPS error: {e}")
-                    gflops = 0.0
+                    # Special cases for models that crash in bfloat16
+                    if "DEIMv2" in name:
+                        inner_model = inner_model.float()
+                        dummy_input = dummy_input.float()
+                    elif "Mask2Former" in name:
+                        # Mask2Former FLOP computation crashes occasionally in mixed dtypes
+                        inner_model = inner_model.float()
+                        dummy_input = dummy_input.float()
+                    elif torch.cuda.is_available():
+                        inner_model = inner_model.bfloat16()
+                        dummy_input = dummy_input.bfloat16()
                     
-                # FPS Native
-                fps_native = run_benchmark(inner_model, dummy_input, num_runs=50)
-                
-                # FPS Compiled
-                fps_compiled = 0.0
-                try:
-                    compiled_model = torch.compile(inner_model, mode="reduce-overhead")
-                    fps_compiled = run_benchmark(compiled_model, dummy_input, num_runs=50)
-                except Exception as e:
-                    print(f"Compile error: {e}")
-                
-                results.append({
-                    "Model / Config": name,
-                    "Params (M)": f"{params:.1f}",
-                    "Input Size": input_size,
-                    "GFLOPS": f"{gflops:.1f}" if gflops > 0 else "Error",
-                    "Native FPS": f"{fps_native:.1f}",
-                    "Compiled FPS": f"{fps_compiled:.1f}"
-                })
+                    # Parameters
+                    params = sum(p.numel() for p in inner_model.parameters()) / 1e6
+                        
+                    # GFLOPS
+                    try:
+                        flops = FlopCountAnalysis(inner_model, dummy_input)
+                        gflops = (flops.total() / 1e9) / batch_size
+                    except Exception as e:
+                        print(f"GFLOPS error: {e}")
+                        gflops = 0.0
+                        
+                    # FPS Native
+                    fps_native = run_benchmark(inner_model, dummy_input, batch_size=batch_size, num_runs=50)
+                    
+                    # FPS Compiled
+                    fps_compiled = 0.0
+                    try:
+                        # Torch compile is sensitive to batch size changes if dynamic=False, 
+                        # so we might need to re-compile or clear cache, but `compiled_model` is scoped inside.
+                        # Actually torch compile caches based on input shape so it's fine.
+                        compiled_model = torch.compile(inner_model, mode="reduce-overhead")
+                        fps_compiled = run_benchmark(compiled_model, dummy_input, batch_size=batch_size, num_runs=50)
+                    except Exception as e:
+                        print(f"Compile error: {e}")
+                    
+                    results.append({
+                        "Model / Config": name,
+                        "Batch Size": batch_size,
+                        "Params (M)": f"{params:.1f}",
+                        "Input Size": input_size,
+                        "GFLOPS/img": f"{gflops:.1f}" if gflops > 0 else "Error",
+                        "Native FPS": f"{fps_native:.1f}",
+                        "Compiled FPS": f"{fps_compiled:.1f}"
+                    })
                 
                 # free memory
                 del inner_model
