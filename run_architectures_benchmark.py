@@ -85,20 +85,30 @@ def get_model(config):
         model_config.num_labels = 4
         try:
             inner_model = model_cls(config=model_config)
+            
+            if config.get("model", {}).get("backbone", {}).get("type", "") == "dinov2":
+                from models.backbone_factory import build_backbone
+                backbone_model, backbone_config_obj, _ = build_backbone(config.model.backbone, rtdetr_name)
+                inner_model.model.backbone = backbone_model
+                inner_model.config.backbone_config = backbone_config_obj
+                inner_model.config.encoder_in_channels = backbone_config_obj.intermediate_channel_sizes
+                inner_model.config.use_timm_backbone = False
+                
         except Exception as e:
             print(f"Failed RTDETR: {e}")
             
     elif "rf_detr" in model_name.lower() or "rfdetr" in model_name.lower():
+        group_detr = config.get("model", {}).get("rfdetr", {}).get("group_detr", 11)
         if "seg" in model_name.lower():
             from rfdetr import RFDETRSegLarge, RFDETRSegMedium, RFDETRSegSmall
-            if "small" in model_name.lower(): m = RFDETRSegSmall(num_classes=4)
-            elif "medium" in model_name.lower(): m = RFDETRSegMedium(num_classes=4)
-            else: m = RFDETRSegLarge(num_classes=4)
+            if "small" in model_name.lower(): m = RFDETRSegSmall(num_classes=4, group_detr=group_detr)
+            elif "medium" in model_name.lower(): m = RFDETRSegMedium(num_classes=4, group_detr=group_detr)
+            else: m = RFDETRSegLarge(num_classes=4, group_detr=group_detr)
         else:
             from rfdetr import RFDETRLarge, RFDETRMedium, RFDETRSmall
-            if "small" in model_name.lower(): m = RFDETRSmall(num_classes=4)
-            elif "medium" in model_name.lower(): m = RFDETRMedium(num_classes=4)
-            else: m = RFDETRLarge(num_classes=4)
+            if "small" in model_name.lower(): m = RFDETRSmall(num_classes=4, group_detr=group_detr)
+            elif "medium" in model_name.lower(): m = RFDETRMedium(num_classes=4, group_detr=group_detr)
+            else: m = RFDETRLarge(num_classes=4, group_detr=group_detr)
         inner_model = m.model.model
         
     elif "yolo" in model_name.lower():
@@ -179,13 +189,13 @@ MODELS_TO_TEST = [
     ("yolov26 Medium", ['model=yolov5']), # Yolov26 is just yolov5 but trained more
     ("RF-DETR base", ['model=rfdetr', 'model.rfdetr.size=small']),
     ("RF-DETR medium", ['model=rfdetr', 'model.rfdetr.size=medium']),
-    ("RT-DETR-v1 resnet50", ['model=rtdetr_v1']),
-    ("RT-DETR-v2 w/ ResNet50 300 queries, stage 4", ['model=rtdetr_v2', '++model.rtdetr.num_queries=300']),
-    ("RT-DETR-v2 w/ ResNet50 600 queries, stage 4", ['model=rtdetr_v2', '++model.rtdetr.num_queries=600']),
-    ("RT-DETR-v2 w/ ResNet50 300 queries, stage 0", ['model=rtdetr_v2', '++model.rtdetr.num_queries=300']),
-    ("RT-DETR-v2 w/ ResNet50 600 queries, stage 0", ['model=rtdetr_v2', '++model.rtdetr.num_queries=600']),
-    ("RT-DETR-v2 w/ ResNet50 300 queries, stage 2", ['model=rtdetr_v2', '++model.rtdetr.num_queries=300']),
-    ("RT-DETR-v2 w/ ResNet50 600 queries, stage 2", ['model=rtdetr_v2', '++model.rtdetr.num_queries=600']),
+    ("RT-DETR-v1 resnet50", ['model=rtdetr_v1', 'model/backbone=resnet']),
+    ("RT-DETR-v2 w/ ResNet50 300 queries, stage 4", ['model=rtdetr_v2', '++model.rtdetr.num_queries=300', 'model/backbone=resnet']),
+    ("RT-DETR-v2 w/ ResNet50 600 queries, stage 4", ['model=rtdetr_v2', '++model.rtdetr.num_queries=600', 'model/backbone=resnet']),
+    ("RT-DETR-v2 w/ ResNet50 300 queries, stage 0", ['model=rtdetr_v2', '++model.rtdetr.num_queries=300', 'model/backbone=resnet', '++model.backbone.freeze_at_stage=0']),
+    ("RT-DETR-v2 w/ ResNet50 600 queries, stage 0", ['model=rtdetr_v2', '++model.rtdetr.num_queries=600', 'model/backbone=resnet', '++model.backbone.freeze_at_stage=0']),
+    ("RT-DETR-v2 w/ ResNet50 300 queries, stage 2", ['model=rtdetr_v2', '++model.rtdetr.num_queries=300', 'model/backbone=resnet', '++model.backbone.freeze_at_stage=2']),
+    ("RT-DETR-v2 w/ ResNet50 600 queries, stage 2", ['model=rtdetr_v2', '++model.rtdetr.num_queries=600', 'model/backbone=resnet', '++model.backbone.freeze_at_stage=2']),
     ("RT-DETR-v2 w/ Dinov2 fused fpn, 300q, [3,7,11]", ['model=rtdetr_dinov2', '++model.rtdetr.num_queries=300', '++model.backbone.fpn_type=fused']),
     ("RT-DETRv2 w/ Dinov2 simple fpn, 300 Q, [3, 7, 11]", ['model=rtdetr_dinov2', '++model.rtdetr.num_queries=300', '++model.backbone.fpn_type=adapter']),
     ("Mask2Former dinov2 (same spatial res)", ['model=mask2former', 'model/backbone=dinov2_mask2former']),
@@ -199,7 +209,7 @@ MODELS_TO_TEST = [
     ("DEIMv2-X num_denoising=0", ['model=deimv2_x', '++model.deimv2.decoder.num_denoising=0']),
     ("DEIMv2-M num_denoising=100", ['model=deimv2_m', '++model.deimv2.decoder.num_denoising=100']),
     ("DEIMv2-M num_denoising=0", ['model=deimv2_m', '++model.deimv2.decoder.num_denoising=0']),
-    ("RF-DETR-Seg group_detr=1 + 13 epochs", ['model=rfdetr_seg', 'model.rfdetr.size=large']),
+    ("RF-DETR-Seg group_detr=1 + 13 epochs", ['model=rfdetr_seg', 'model.rfdetr.size=large', '++model.rfdetr.group_detr=1']),
 ]
 
 def main():

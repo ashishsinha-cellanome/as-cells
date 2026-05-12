@@ -79,15 +79,27 @@ def get_model_and_input(config, device, batch_size):
         except:
             inner_model = model_cls(config=model_config)
             
+        if config.get("model", {}).get("backbone", {}).get("type", "") == "dinov2":
+            from models.backbone_factory import build_backbone
+            # For dinov2 with rtdetr_v2, the custom backbone builder expects the rtdetr_model_name string 
+            # to determine the intermediate feature sizes (e.g. [128, 256, 512] for r18vd vs [512, 1024, 2048] for r50vd).
+            # If the user is evaluating rtdetr_v2_r50vd but we want to test dinov2, we need to pass the correct model string.
+            backbone_model, backbone_config_obj, _ = build_backbone(config.model.backbone, rtdetr_name)
+            inner_model.model.backbone = backbone_model
+            inner_model.config.backbone_config = backbone_config_obj
+            inner_model.config.encoder_in_channels = backbone_config_obj.intermediate_channel_sizes
+            inner_model.config.use_timm_backbone = False
+            
     elif "rf_detr" in model_name.lower() or "rfdetr" in model_name.lower():
+        group_detr = config.get("model", {}).get("rfdetr", {}).get("group_detr", 11)
         if "seg" in model_name.lower():
             from rfdetr import RFDETRSegLarge, RFDETRSegMedium, RFDETRSegSmall
-            if "small" in model_name.lower(): m = RFDETRSegSmall(num_classes=4)
-            elif "medium" in model_name.lower(): m = RFDETRSegMedium(num_classes=4)
-            else: m = RFDETRSegLarge(num_classes=4)
+            if "small" in model_name.lower(): m = RFDETRSegSmall(num_classes=4, group_detr=group_detr)
+            elif "medium" in model_name.lower(): m = RFDETRSegMedium(num_classes=4, group_detr=group_detr)
+            else: m = RFDETRSegLarge(num_classes=4, group_detr=group_detr)
         else:
             from rfdetr import RFDETR
-            m = RFDETR(num_classes=4)
+            m = RFDETR(num_classes=4, group_detr=group_detr)
         inner_model = m.model.model
         
     elif "yolo" in model_name.lower():
