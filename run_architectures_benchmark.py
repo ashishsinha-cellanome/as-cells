@@ -278,7 +278,18 @@ MODELS_TO_TEST = [
     ("RF-DETR-Seg group_detr=1 + 13 epochs", ['model=rfdetr_seg', 'model.rfdetr.size=large', '++model.rfdetr.group_detr=1']),
 ]
 
+import argparse
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Benchmark Model Architectures")
+    parser.add_argument('--batch-sizes', type=int, nargs='+', default=[1, 8],
+                        help='List of batch sizes to benchmark (e.g., --batch-sizes 1 8 16)')
+    parser.add_argument('--output-prefix', type=str, default='run_architectures_benchmark_report',
+                        help='Prefix for the output CSV files')
+    return parser.parse_args()
+
 def main():
+    args = parse_args()
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     results = []
     
@@ -297,7 +308,7 @@ def main():
                 inner_model.eval()
                 inner_model.to(device)
                 
-                for batch_size in [1, 8]:
+                for batch_size in args.batch_sizes:
                     # Input
                     input_size = get_input_size(cfg)
                     dummy_input = torch.randn(batch_size, 3, input_size, input_size, device=device)
@@ -372,11 +383,20 @@ def main():
     print(tabulate.tabulate(results, headers="keys", tablefmt="github"))
     
     if results:
-        with open("run_architectures_benchmark_report.csv", "w", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=results[0].keys())
-            writer.writeheader()
-            writer.writerows(results)
-        print("\nReport saved to run_architectures_benchmark_report.csv")
+        results_by_bs = {}
+        for r in results:
+            bs = r["Batch Size"]
+            if bs not in results_by_bs:
+                results_by_bs[bs] = []
+            results_by_bs[bs].append(r)
+            
+        for bs, res_list in results_by_bs.items():
+            filename = f"{args.output_prefix}_bs{bs}.csv"
+            with open(filename, "w", newline="") as f:
+                writer = csv.DictWriter(f, fieldnames=res_list[0].keys())
+                writer.writeheader()
+                writer.writerows(res_list)
+            print(f"\nReport saved to {filename}")
 
 if __name__ == "__main__":
     main()
