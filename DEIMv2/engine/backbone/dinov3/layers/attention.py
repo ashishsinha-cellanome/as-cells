@@ -33,9 +33,10 @@ class LinearKMaskedBias(nn.Linear):
         o = self.out_features
         assert o % 3 == 0
         if self.bias is not None:
-            self.register_buffer(
-                "bias_mask", torch.full_like(self.bias, fill_value=math.nan)
-            )
+            mask = torch.ones_like(self.bias)
+            dim = o // 3
+            mask[dim : 2 * dim] = 0.0
+            self.register_buffer("bias_mask", mask)
 
     def forward(self, input: Tensor) -> Tensor:
         masked_bias = (
