@@ -11,7 +11,7 @@ if '0.15.2' in importlib.metadata.version('torchvision'):
     torchvision.disable_beta_transforms_warning()
 
     from torchvision.datapoints import BoundingBox as BoundingBoxes
-    from torchvision.datapoints import BoundingBoxFormat, Mask
+    from torchvision.datapoints import BoundingBoxFormat, Mask, Image, Video
     _boxes_keys = ['format', 'spatial_size']
 
 elif '0.17' > importlib.metadata.version('torchvision') >= '0.16':
@@ -19,13 +19,13 @@ elif '0.17' > importlib.metadata.version('torchvision') >= '0.16':
     torchvision.disable_beta_transforms_warning()
 
     from torchvision.tv_tensors import (
-        BoundingBoxes, BoundingBoxFormat, Mask)
+        Image, Video, BoundingBoxes, BoundingBoxFormat, Mask)
     _boxes_keys = ['format', 'canvas_size']
 
 elif importlib.metadata.version('torchvision') >= '0.17':
     import torchvision
     from torchvision.tv_tensors import (
-        BoundingBoxes, BoundingBoxFormat, Mask)
+        Image, Video, BoundingBoxes, BoundingBoxFormat, Mask)
     _boxes_keys = ['format', 'canvas_size']
 
 else:
