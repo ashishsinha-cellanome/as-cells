@@ -1,0 +1,59 @@
+defaults:
+  - _self_
+
+inference:
+  data_root: "/mnt/direct-attached/PHASE2"
+  output_dir: "/mnt/direct-attached/PHASE2_EVAL_RESULTS"
+  max_viz: 10
+
+models:
+  yolov26:
+    name: "YOLOv26"
+    type: "yolo"
+    weights: "/home/ubuntu/personal/cellanome/checkpoints/YOLOv26/best.pt"    
+    task: "detect"
+    conf: 0.25
+    imgsz: 672
+  yolo:
+    name: "YOLO"
+    type: "yolo"
+    weights: "/mnt/personal/cellanome/checkpoints/YOLOv5/exp6/weights/best.pt"
+    task: "detect"
+    conf: 0.25
+    imgsz: 672
+  rf_detr_seg:
+    name: "RF-DETR-Seg"
+    type: "rf_detr"
+    weights: "/mnt/personal/cellanome/checkpoints/RFDETR-Seg-ckpts/output/checkpoint_best_ema.pth"
+    conf: 0.25
+    imgsz: 504
+  rtdetr_v1:
+    name: "RT-DETR-V1"
+    type: "rt_detr"
+    weights: "/mnt/direct-attached/as-cells/models/rt_detr_v1/weights/best.ckpt"
+    conf: 0.25
+    imgsz: 672
+  rtdetr_v2_resnet50:
+    name: "RT-DETR-V2-ResNet50"
+    type: "rt_detr"
+    weights: "/mnt/direct-attached/as-cells/models/rt_detr_v2_r50/weights/best.ckpt"
+    conf: 0.25
+    imgsz: 672
+  rtdetr_v2_dinov2:
+    name: "RT-DETR-V2-DinoV2"
+    type: "rt_detr"
+    weights: "/mnt/direct-attached/as-cells/models/rt_detr_v2_dinov2/weights/best.ckpt"
+    conf: 0.25
+    imgsz: 672
+  deim_v2_m:
+    name: "DEIM-V2-M"
+    type: "deim"
+    weights: "/mnt/direct-attached/as-cells/models/deim_v2_m/weights/best.ckpt"
+    conf: 0.25
+    imgsz: 672
+  mask2former:
+    name: "Mask2Former"
+    type: "mask2former"
+    weights: "/mnt/direct-attached/as-cells/models/mask2former/weights/best.ckpt"
+    conf: 0.25
+    imgsz: 672
