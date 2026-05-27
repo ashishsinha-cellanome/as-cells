@@ -5,18 +5,25 @@ import textwrap
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-CSV_PATH = "/mnt/direct-attached/PHASE2_EVAL_RESULTS/all_models_summary.csv"
-OUTPUT_DIR = "/mnt/direct-attached/PHASE2_EVAL_RESULTS/plots"
 MODELS_OF_INTEREST = ['yolo', 'yolov26', 'rf_detr_seg']
 METRICS = ['mAP@50', 'mAP@50-95']
 
-def load_and_clean_data(csv_path):
-    df = pd.read_csv(csv_path)
+def load_and_clean_data(csv_paths):
+    dfs = []
+    for csv_path in csv_paths:
+        df = pd.read_csv(csv_path)
+        dfs.append(df)
+    
+    if not dfs:
+        raise ValueError("No valid CSV files provided or found.")
+        
+    df = pd.concat(dfs, ignore_index=True)
     df = df[df['Model'].isin(MODELS_OF_INTEREST)].copy()
     
     # Handle missing classes denoted by -1.0
     for metric in METRICS:
-        df[metric] = df[metric].apply(lambda x: x if x >= 0 else 0)
+        if metric in df.columns:
+            df[metric] = df[metric].apply(lambda x: x if x >= 0 else 0)
         
     return df
 
@@ -89,9 +96,15 @@ def plot_spider_charts(df, output_dir):
             plt.close()
 
 if __name__ == "__main__":
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
-    df = load_and_clean_data(CSV_PATH)
-    print(f"Loaded {len(df)} rows.")
-    plot_grouped_bar_charts(df, OUTPUT_DIR)
-    plot_spider_charts(df, OUTPUT_DIR)
-    print(f"All charts generated in {OUTPUT_DIR}")
+    import argparse
+    parser = argparse.ArgumentParser(description="Visualize metrics from CSV files.")
+    parser.add_argument("csv_files", nargs='+', help="One or more CSV files containing metrics (e.g. all_metrics*.csv)")
+    parser.add_argument("--output-dir", default="/mnt/direct-attached/PHASE2_EVAL_RESULTS/plots", help="Directory to save the plots")
+    args = parser.parse_args()
+    
+    os.makedirs(args.output_dir, exist_ok=True)
+    df = load_and_clean_data(args.csv_files)
+    print(f"Loaded {len(df)} rows from {len(args.csv_files)} files.")
+    plot_grouped_bar_charts(df, args.output_dir)
+    plot_spider_charts(df, args.output_dir)
+    print(f"All charts generated in {args.output_dir}")

@@ -27,34 +27,38 @@ def load_model(model_key, model_cfg):
             return None
 
     if model_type == "yolo":
-        if model_key == "yolov5":
-            import sys, yaml
+        if "yolov5" in checkpoint.lower() or model_key == "yolo" or "yolov5" in model_key.lower():
+            import sys
+            import copy
+            
+            original_sys_path = copy.copy(sys.path)
+            
+            while '' in sys.path: sys.path.remove('')
+            while os.getcwd() in sys.path: sys.path.remove(os.getcwd())
+            
             repo_path = os.path.join(os.getcwd(), "models", "yolov5")
-            if repo_path not in sys.path:
-                sys.path.insert(0, repo_path)
+            sys.path.insert(0, repo_path)
+            
+            cached_utils = None
+            if 'utils' in sys.modules:
+                cached_utils = sys.modules.pop('utils')
+            
             try:
-                model_cfg_path = "models/yolov5m.yaml"
-                yaml_cfg_path = os.path.join(repo_path, model_cfg_path)
-                with open(yaml_cfg_path) as f:
-                    yaml_cfg = yaml.safe_load(f)
-                yaml_cfg['nc'] = 4
-                from models.yolo import Model as YOLOv5Model
-                model = YOLOv5Model(cfg=yaml_cfg, ch=3, nc=4)
+                model = torch.hub.load(repo_path, 'custom', path=checkpoint, source='local')
             except Exception as e:
-                print(f"Failed to load YOLOv5: {e}")
+                print(f"Failed to load YOLOv5 via torch.hub: {e}")
                 raise e
+            finally:
+                sys.path = original_sys_path
+                if cached_utils is not None:
+                    sys.modules['utils'] = cached_utils
             return model
         else:
             from ultralytics import YOLO
             try:
-                import sys
-                repo_path = os.path.join(os.getcwd(), "models", "yolov5")
-                if repo_path not in sys.path:
-                    sys.path.insert(0, repo_path)
                 model = YOLO(checkpoint)
             except Exception as e:
                 print(f"Failed to load YOLO model from {checkpoint}: {e}")
-                # We return None or raise so the outer loop can catch it
                 raise e
             return model
         
@@ -68,26 +72,85 @@ def load_model(model_key, model_cfg):
         
     elif model_type == "rt_detr":
         try:
-            from transformers import RTDetrForObjectDetection, RTDetrV2ForObjectDetection
-            version = model_cfg.get("version", "v1")
-            if "v2" in model_key or version == "v2":
-                model = RTDetrV2ForObjectDetection.from_pretrained(checkpoint)
+            ckpt = torch.load(checkpoint, map_location="cpu", weights_only=False)
+            config = ckpt['hyper_parameters']['config']
+            from transformers import RTDetrForObjectDetection, RTDetrImageProcessor
+            from models.custom_rt_detr_with_dinov2_backbone import RTDetrV2ForObjectDetectionWithCustomBackbone, RTDetrV2ConfigWithCustomBackBone
+            from models.rt_detr_lightning_module import RTDETRLightningModule
+            
+            model_checkpoint_path = config.model.rtdetr.pretrained_name_or_path
+            
+            # Reconstruct model based on config
+            if "v2" in model_key or "v2" in config.model.rtdetr.model_name:
+                model_config = RTDetrV2ConfigWithCustomBackBone.from_pretrained(model_checkpoint_path)
+                model_config.num_labels = 4
+                base_model = RTDetrV2ForObjectDetectionWithCustomBackbone.from_pretrained(model_checkpoint_path, config=model_config, ignore_mismatched_sizes=True)
             else:
-                model = RTDetrForObjectDetection.from_pretrained(checkpoint)
-        except ImportError:
-            raise NotImplementedError("RT-DETR inference stub")
+                base_model = RTDetrForObjectDetection.from_pretrained(model_checkpoint_path, num_labels=4, ignore_mismatched_sizes=True)
+                
+            model = RTDETRLightningModule(model=base_model, image_processor=RTDetrImageProcessor.from_pretrained(model_checkpoint_path), config=config)
+            # Find state_dict key 
+            sd = ckpt["state_dict"] if "state_dict" in ckpt else ckpt.get("ema_state_dict", ckpt)
+            
+            mapped_sd = {}
+            for k, v in sd.items():
+                new_k = k
+                # ONLY map encoder/decoder transformers v5.4 renaming changes
+                if 'model.denoising_class_embed' in new_k:
+                    new_k = new_k.replace('model.denoising_class_embed', 'model.model.denoising_class_embed')
+                if 'model.model.encoder.encoder.' in new_k:
+                    new_k = new_k.replace('model.model.encoder.encoder.', 'model.model.encoder.aifi.')
+                if 'self_attn.out_proj' in new_k:
+                    new_k = new_k.replace('self_attn.out_proj', 'self_attn.o_proj')
+                if '.fc1' in new_k and 'mlp' not in new_k:
+                    new_k = new_k.replace('.fc1', '.mlp.fc1')
+                if '.fc2' in new_k and 'mlp' not in new_k:
+                    new_k = new_k.replace('.fc2', '.mlp.fc2')
+                    
+                # Do NOT overwrite existing good keys with duplicate bad keys
+                if new_k not in mapped_sd:
+                    mapped_sd[new_k] = v
+                
+            model.load_state_dict(mapped_sd, strict=False)
+        except Exception as e:
+            raise NotImplementedError(f"RT-DETR inference stub: {e}")
         return model
         
-    elif model_type == "deim":
-        raise NotImplementedError("DEIM inference stub")
-        
-    elif model_type == "mask2former":
+    elif model_type in ["deim", "mask2former"]:
         try:
-            # Custom PyTorch Lightning loading robust stub
-            from models.mask2former_lightning_module import Mask2FormerLightningModule
-            model = Mask2FormerLightningModule.load_from_checkpoint(checkpoint)
-        except ImportError:
-            raise NotImplementedError("Mask2Former inference stub")
+            import wandb
+            api = wandb.Api()
+            runs = []
+            for proj in ["cell-detection", "rt-detr-cell-detection", "cellanome"]:
+                try:
+                    runs.extend(list(api.runs(f"sinashish/{proj}")))
+                except Exception:
+                    pass
+                    
+            target_config = None
+            for run in runs:
+                cfg = run.config
+                ckpt_dir = ""
+                if "checkpointing" in cfg and isinstance(cfg["checkpointing"], dict):
+                    ckpt_dir = cfg["checkpointing"].get("save_dir", "")
+                elif "data" in cfg and isinstance(cfg["data"], dict):
+                    ckpt_dir = cfg["data"].get("save_dir", "")
+                
+                if ckpt_dir and ckpt_dir.split("/")[-1] in checkpoint:
+                    target_config = OmegaConf.create(cfg)
+                    break
+                    
+            if target_config is None:
+                raise ValueError(f"Could not find WandB config for checkpoint {checkpoint}")
+                
+            if model_type == "deim":
+                from models.deim_v2_lightning_module import DeimV2LightningModule
+                model = DeimV2LightningModule.load_from_checkpoint(checkpoint, strict=False, map_location="cpu", config=target_config)
+            else:
+                from models.mask2former_lightning_module import Mask2FormerLightningModule
+                model = Mask2FormerLightningModule.load_from_checkpoint(checkpoint, strict=False, map_location="cpu", config=target_config)
+        except Exception as e:
+            raise NotImplementedError(f"{model_type} inference stub failed: {e}")
         return model
         
     else:
@@ -134,19 +197,170 @@ def run_inference(model, model_type, image_path, model_cfg=None):
                 })
                 
     elif model_type == "yolo":
-        res = model.predict(img_rgb, verbose=False, conf=conf_thresh, imgsz=imgsz)[0]
-        boxes = res.boxes
-        if len(boxes) > 0:
-            pred_boxes = boxes.xyxy.cpu().numpy()
-            pred_scores = boxes.conf.cpu().numpy()
-            pred_labels = boxes.cls.cpu().numpy().astype(int)
-            for i in range(len(pred_boxes)):
-                x1, y1, x2, y2 = pred_boxes[i]
+        if hasattr(model, 'predict'):
+            res = model.predict(img_rgb, verbose=False, conf=conf_thresh, imgsz=imgsz)[0]
+            boxes = res.boxes
+            if len(boxes) > 0:
+                pred_boxes = boxes.xyxy.cpu().numpy()
+                pred_scores = boxes.conf.cpu().numpy()
+                pred_labels = boxes.cls.cpu().numpy().astype(int)
+                for i in range(len(pred_boxes)):
+                    x1, y1, x2, y2 = pred_boxes[i]
+                    preds.append({
+                        "category_id": int(pred_labels[i]),
+                        "bbox": [float(x1), float(y1), float(x2 - x1), float(y2 - y1)],
+                        "score": float(pred_scores[i])
+                    })
+        else: # AutoShape (YOLOv5)
+            model.conf = conf_thresh
+            res = model(img_rgb, size=imgsz)
+            pred_df = res.pandas().xyxy[0]
+            for i in range(len(pred_df)):
+                x1, y1, x2, y2 = pred_df.iloc[i]['xmin'], pred_df.iloc[i]['ymin'], pred_df.iloc[i]['xmax'], pred_df.iloc[i]['ymax']
+                score = pred_df.iloc[i]['confidence']
+                label = pred_df.iloc[i]['class']
                 preds.append({
-                    "category_id": int(pred_labels[i]),
+                    "category_id": int(label),
                     "bbox": [float(x1), float(y1), float(x2 - x1), float(y2 - y1)],
-                    "score": float(pred_scores[i])
+                    "score": float(score)
                 })
+                
+    elif model_type in ["rt_detr", "deim", "mask2former", "rf_detr_lightning"]:
+        import torch
+        from PIL import Image
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        
+        model.to(device)
+        model.eval()
+        
+        if model_type == "rf_detr_lightning":
+            import torchvision.transforms.functional as F
+            img_tensor = torch.from_numpy(img_rgb).permute(2, 0, 1).contiguous()
+            img_tensor = F.convert_image_dtype(img_tensor, dtype=torch.float32).to(device)
+            # Resize image to match imgsz
+            img_tensor = F.resize(img_tensor, [imgsz, imgsz])
+            if next(model.parameters()).dtype == torch.float16:
+                img_tensor = img_tensor.half()
+            elif next(model.parameters()).dtype == torch.bfloat16:
+                img_tensor = img_tensor.bfloat16()
+            
+            with torch.no_grad():
+                out = model.model.model(img_tensor.unsqueeze(0))
+            
+            orig_size = torch.tensor([[h, w]], device=device)
+            post = model.model.postprocess(out, orig_size)[0]
+            boxes = post['boxes'].detach().cpu().numpy()
+            scores = post['scores'].detach().cpu().numpy()
+            labels = post['labels'].detach().cpu().numpy()
+            
+            for i in range(len(scores)):
+                if scores[i] >= conf_thresh:
+                    x1, y1, x2, y2 = boxes[i]
+                    preds.append({
+                        "category_id": int(labels[i]),
+                        "bbox": [float(x1), float(y1), float(x2 - x1), float(y2 - y1)],
+                        "score": float(scores[i])
+                    })
+        elif model_type == "rt_detr":
+            img_pil = Image.fromarray(img_rgb)
+            inputs = model.image_processor(images=img_pil, return_tensors="pt")
+            pixel_val = inputs["pixel_values"].to(device)
+            if next(model.parameters()).dtype == torch.float16:
+                pixel_val = pixel_val.half()
+            elif next(model.parameters()).dtype == torch.bfloat16:
+                pixel_val = pixel_val.bfloat16()
+                
+            with torch.no_grad():
+                out = model.model(pixel_values=pixel_val, labels=None)
+                
+            target_sizes = torch.tensor([[h, w]])
+            post_out = model.image_processor.post_process_object_detection(
+                out, threshold=conf_thresh, target_sizes=target_sizes
+            )[0]
+            
+            boxes = post_out['boxes'].detach().cpu().numpy()
+            scores = post_out['scores'].detach().cpu().numpy()
+            labels = post_out['labels'].detach().cpu().numpy()
+            
+            for i in range(len(scores)):
+                x1, y1, x2, y2 = boxes[i]
+                preds.append({
+                    "category_id": int(labels[i]),
+                    "bbox": [float(x1), float(y1), float(x2 - x1), float(y2 - y1)],
+                    "score": float(scores[i])
+                })
+                    
+        elif model_type == "deim":
+            import torchvision.transforms.functional as F
+            img_tensor = torch.from_numpy(img_rgb).permute(2, 0, 1).contiguous()
+            img_tensor = F.convert_image_dtype(img_tensor, dtype=torch.float32).to(device)
+            if next(model.parameters()).dtype == torch.float16:
+                img_tensor = img_tensor.half()
+            elif next(model.parameters()).dtype == torch.bfloat16:
+                img_tensor = img_tensor.bfloat16()
+                
+            with torch.no_grad():
+                out = model.model(img_tensor.unsqueeze(0))
+                
+            orig_size = torch.tensor([[h, w]], device=device)
+            post = model.postprocessor(out, orig_size)[0]
+            
+            boxes = post['boxes'].detach().cpu().numpy()
+            scores = post['scores'].detach().cpu().numpy()
+            labels = post['labels'].detach().cpu().numpy()
+            
+            for i in range(len(scores)):
+                if scores[i] >= conf_thresh:
+                    x1, y1, x2, y2 = boxes[i]
+                    cat_id = int(model.model_to_coco.get(int(labels[i]), int(labels[i]))) if hasattr(model, 'model_to_coco') and model.model_to_coco else int(labels[i])
+                    preds.append({
+                        "category_id": cat_id,
+                        "bbox": [float(x1), float(y1), float(x2 - x1), float(y2 - y1)],
+                        "score": float(scores[i])
+                    })
+                    
+        elif model_type == "mask2former":
+            img_pil = Image.fromarray(img_rgb)
+            inputs = model.image_processor(images=img_pil, return_tensors="pt")
+            pixel_val = inputs["pixel_values"].to(device)
+            if next(model.parameters()).dtype == torch.float16:
+                pixel_val = pixel_val.half()
+            elif next(model.parameters()).dtype == torch.bfloat16:
+                pixel_val = pixel_val.bfloat16()
+                
+            with torch.no_grad():
+                out = model.model(pixel_values=pixel_val)
+                
+            target_sizes = [img_pil.size[::-1]]
+            post_out = model.image_processor.post_process_instance_segmentation(
+                out, threshold=conf_thresh, target_sizes=target_sizes
+            )[0]
+            
+            # TODO: Convert Mask2Former masks to boxes if needed, or if it outputs boxes:
+            # Mask2Former segmentation outputs dict with 'segmentation' and 'segments_info'
+            segments_info = post_out.get("segments_info", [])
+            segmentation_mask = post_out.get("segmentation")
+            
+            if segmentation_mask is not None:
+                segmentation_mask = segmentation_mask.detach().cpu().numpy()
+                for seg in segments_info:
+                    seg_id = seg["id"]
+                    cat_id = seg["label_id"]
+                    score = seg.get("score", 1.0)
+                    if score >= conf_thresh:
+                        import cv2
+                        mask = (segmentation_mask == seg_id).astype(np.uint8)
+                        y_indices, x_indices = np.where(mask > 0)
+                        if len(y_indices) > 0:
+                            x1, y1 = np.min(x_indices), np.min(y_indices)
+                            x2, y2 = np.max(x_indices), np.max(y_indices)
+                            
+                            cat_id_mapped = int(model.model_to_coco.get(int(cat_id), int(cat_id))) if hasattr(model, 'model_to_coco') and model.model_to_coco else int(cat_id)
+                            preds.append({
+                                "category_id": cat_id_mapped,
+                                "bbox": [float(x1), float(y1), float(x2 - x1), float(y2 - y1)],
+                                "score": float(score)
+                            })
                 
     return preds
 
@@ -314,7 +528,7 @@ def main(cfg: DictConfig):
                 
                 print(f"   {'all':<13} {total_images:<7} {total_labels:<10} {fmt(p_all):<7} {fmt(r_all):<8} {fmt(ap50_all):<10} {fmt(ap_all):<10}")
                 
-                KNOWN_CLASSES = {0: "cell", 1: "bead", 2: "soma", 3: "cell-adhered"}
+                KNOWN_CLASSES = {0: "cell", 1: "bead", 3: "soma", 2: "cell-adhered"}
                 all_cat_ids = sorted(list(set(list(KNOWN_CLASSES.keys()) + coco_gt.getCatIds())))
                 
                 for cat_id in all_cat_ids:
