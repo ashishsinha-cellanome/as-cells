@@ -6,11 +6,13 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.decomposition import PCA
+from sklearn.manifold import TSNE
 from pathlib import Path
 from tqdm import tqdm
 import pickle
 from sklearn.cluster import KMeans
 from sklearn.metrics import pairwise_distances
+from adjustText import adjust_text
 
 DATA_DIR = "/mnt/direct-attached/PHASE2"
 OUTPUT_DIR = "/mnt/direct-attached/PHASE2_EVAL_RESULTS/selection_engine"
@@ -117,19 +119,36 @@ def extract_largest_object_and_features(img_path, mask_pkl_path, dataset_name, d
         # Reshape to 16x16
         grid = pca_features.reshape(16, 16)
         
-        # Normalize grid to 0-255
-        grid = (grid - grid.min()) / (grid.max() - grid.min() + 1e-8)
-        grid = (grid * 255).astype(np.uint8)
+        # Normalize grid to (-1, 1) mathematically for the colorbar representation
+        grid_min, grid_max = grid.min(), grid.max()
+        if grid_max - grid_min < 1e-8:
+            grid_norm_11 = np.zeros_like(grid)
+        else:
+            grid_norm_11 = 2 * ((grid - grid_min) / (grid_max - grid_min)) - 1
+            
+        grid_255 = ((grid_norm_11 + 1) / 2 * 255).astype(np.uint8)
         
         # Colormap and resize
-        heatmap = cv2.applyColorMap(grid, cv2.COLORMAP_MAGMA)
+        heatmap = cv2.applyColorMap(grid_255, cv2.COLORMAP_VIRIDIS)
         heatmap = cv2.resize(heatmap, (224, 224), interpolation=cv2.INTER_CUBIC)
         
         # Overlay
         overlay = cv2.addWeighted(resized_crop, 0.5, heatmap, 0.5, 0)
         
+        # Save with colorbar using matplotlib
+        plt.figure(figsize=(5, 4), dpi=300)
+        overlay_rgb = cv2.cvtColor(overlay, cv2.COLOR_BGR2RGB)
+        plt.imshow(overlay_rgb)
+        plt.axis('off')
+        
+        sm = plt.cm.ScalarMappable(cmap='viridis', norm=plt.Normalize(vmin=-1.0, vmax=1.0))
+        sm.set_array([])
+        cbar = plt.colorbar(sm, ax=plt.gca(), fraction=0.046, pad=0.04)
+        cbar.ax.tick_params(labelsize=10)
+        
         out_path = os.path.join(OUTPUT_DIR, f"{dataset_name}_{img_path.stem}_{class_name}_emb.png")
-        cv2.imwrite(out_path, overlay)
+        plt.savefig(out_path, bbox_inches='tight', pad_inches=0.1)
+        plt.close()
         
         results[cat] = cls_token[0].cpu().numpy()
         
@@ -179,16 +198,16 @@ def process_all_datasets(model, device):
         dist_matrix = pairwise_distances(matrix, metric='cosine')
         
         # Adjust figure size based on number of datasets
-        fig_w = max(10, min(24, len(names) * 0.8))
-        fig_h = max(8, min(20, len(names) * 0.6))
+        fig_w = max(12, min(28, len(names) * 1.0))
+        fig_h = max(10, min(24, len(names) * 0.8))
         
         plt.figure(figsize=(fig_w, fig_h), dpi=300)
-        sns.heatmap(dist_matrix, xticklabels=names, yticklabels=names, cmap='magma')
-        plt.title(f"Pairwise Cosine Distance of DINOv2 Signatures (Class: {class_name})", fontsize=24)
-        plt.xticks(rotation=90, fontsize=14)
-        plt.yticks(rotation=0, fontsize=14)
+        sns.heatmap(dist_matrix, xticklabels=names, yticklabels=names, cmap='viridis')
+        plt.title(f"Pairwise Cosine Distance of DINOv2 Signatures (Class: {class_name})", fontsize=28, pad=20)
+        plt.xticks(rotation=90, fontsize=16)
+        plt.yticks(rotation=0, fontsize=16)
         plt.tight_layout()
-        plt.savefig(os.path.join(OUTPUT_DIR, f"pairwise_distance_heatmap_class_{class_name}.png"), dpi=300)
+        plt.savefig(os.path.join(OUTPUT_DIR, f"pairwise_distance_heatmap_class_{class_name}.png"), dpi=300, bbox_inches='tight')
         plt.close()
         
         # KMeans Clustering
@@ -203,21 +222,29 @@ def process_all_datasets(model, device):
             cluster_names = [names[j] for j in range(len(names)) if kmeans.labels_[j] == i]
             print(f"Cluster {i}: {cluster_names}")
             
-        # Cluster Visualization using PCA
-        pca = PCA(n_components=2)
-        pca_2d = pca.fit_transform(matrix)
+        # Cluster Visualization using t-SNE
+        n_samples = matrix.shape[0]
+        perplexity = min(30, max(1, n_samples - 1))
         
-        plt.figure(figsize=(fig_w, fig_h), dpi=300)
-        sns.scatterplot(x=pca_2d[:, 0], y=pca_2d[:, 1], hue=kmeans.labels_, palette="tab10", s=200)
-        
-        # Annotate points with dataset names
-        for i, name in enumerate(names):
-            plt.annotate(name, (pca_2d[i, 0], pca_2d[i, 1]), fontsize=14, alpha=0.8)
+        if n_samples > 1:
+            tsne = TSNE(n_components=2, perplexity=perplexity, random_state=42)
+            tsne_2d = tsne.fit_transform(matrix)
             
-        plt.title(f"PCA of DINOv2 Signatures Colored by Cluster (Class: {class_name})", fontsize=24)
-        plt.tight_layout()
-        plt.savefig(os.path.join(OUTPUT_DIR, f"cluster_visualization_class_{class_name}.png"), dpi=300)
-        plt.close()
+            plt.figure(figsize=(16, 16), dpi=300)
+            sns.scatterplot(x=tsne_2d[:, 0], y=tsne_2d[:, 1], hue=kmeans.labels_, palette="tab10", s=300)
+            
+            # Annotate points with dataset names using adjust_text
+            texts = []
+            for i, name in enumerate(names):
+                texts.append(plt.text(tsne_2d[i, 0], tsne_2d[i, 1], name, fontsize=14, alpha=0.9))
+                
+            adjust_text(texts, arrowprops=dict(arrowstyle='-', color='gray', lw=0.5))
+                
+            plt.title(f"t-SNE of DINOv2 Signatures Colored by Cluster (Class: {class_name})", fontsize=26, pad=20)
+            plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=16, borderaxespad=0.)
+            plt.tight_layout()
+            plt.savefig(os.path.join(OUTPUT_DIR, f"cluster_visualization_class_{class_name}.png"), dpi=300, bbox_inches='tight')
+            plt.close()
 
     print("\nProcessing All Classes Combined...")
     all_dataset_names = set()
@@ -234,16 +261,16 @@ def process_all_datasets(model, device):
     if len(all_dataset_names) > 0:
         dist_matrix = pairwise_distances(combined_matrix, metric='cosine')
         
-        fig_w = max(10, min(24, len(all_dataset_names) * 0.8))
-        fig_h = max(8, min(20, len(all_dataset_names) * 0.6))
+        fig_w = max(12, min(28, len(all_dataset_names) * 1.0))
+        fig_h = max(10, min(24, len(all_dataset_names) * 0.8))
         
         plt.figure(figsize=(fig_w, fig_h), dpi=300)
-        sns.heatmap(dist_matrix, xticklabels=all_dataset_names, yticklabels=all_dataset_names, cmap='magma')
-        plt.title("Pairwise Cosine Distance of DINOv2 Signatures (All Classes)", fontsize=24)
-        plt.xticks(rotation=90, fontsize=14)
-        plt.yticks(rotation=0, fontsize=14)
+        sns.heatmap(dist_matrix, xticklabels=all_dataset_names, yticklabels=all_dataset_names, cmap='viridis')
+        plt.title("Pairwise Cosine Distance of DINOv2 Signatures (All Classes)", fontsize=28, pad=20)
+        plt.xticks(rotation=90, fontsize=16)
+        plt.yticks(rotation=0, fontsize=16)
         plt.tight_layout()
-        plt.savefig(os.path.join(OUTPUT_DIR, "pairwise_distance_heatmap_all_classes.png"), dpi=300)
+        plt.savefig(os.path.join(OUTPUT_DIR, "pairwise_distance_heatmap_all_classes.png"), dpi=300, bbox_inches='tight')
         plt.close()
         
         n_clusters = min(4, len(all_dataset_names))
@@ -255,18 +282,25 @@ def process_all_datasets(model, device):
                 cluster_names = [all_dataset_names[j] for j in range(len(all_dataset_names)) if kmeans.labels_[j] == i]
                 print(f"Cluster {i}: {cluster_names}")
                 
-            pca = PCA(n_components=2)
-            pca_2d = pca.fit_transform(combined_matrix)
+            n_samples = combined_matrix.shape[0]
+            perplexity = min(30, max(1, n_samples - 1))
             
-            plt.figure(figsize=(fig_w, fig_h), dpi=300)
-            sns.scatterplot(x=pca_2d[:, 0], y=pca_2d[:, 1], hue=kmeans.labels_, palette="tab10", s=200)
+            tsne = TSNE(n_components=2, perplexity=perplexity, random_state=42)
+            tsne_2d = tsne.fit_transform(combined_matrix)
             
+            plt.figure(figsize=(16, 16), dpi=300)
+            sns.scatterplot(x=tsne_2d[:, 0], y=tsne_2d[:, 1], hue=kmeans.labels_, palette="tab10", s=300)
+            
+            texts = []
             for i, name in enumerate(all_dataset_names):
-                plt.annotate(name, (pca_2d[i, 0], pca_2d[i, 1]), fontsize=14, alpha=0.8)
+                texts.append(plt.text(tsne_2d[i, 0], tsne_2d[i, 1], name, fontsize=14, alpha=0.9))
                 
-            plt.title("PCA of DINOv2 Signatures Colored by Cluster (All Classes)", fontsize=24)
+            adjust_text(texts, arrowprops=dict(arrowstyle='-', color='gray', lw=0.5))
+                
+            plt.title("t-SNE of DINOv2 Signatures Colored by Cluster (All Classes)", fontsize=26, pad=20)
+            plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=16, borderaxespad=0.)
             plt.tight_layout()
-            plt.savefig(os.path.join(OUTPUT_DIR, "cluster_visualization_all_classes.png"), dpi=300)
+            plt.savefig(os.path.join(OUTPUT_DIR, "cluster_visualization_all_classes.png"), dpi=300, bbox_inches='tight')
             plt.close()
 
 if __name__ == "__main__":
