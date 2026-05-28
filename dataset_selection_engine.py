@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
+import umap.umap_ as umap
 from pathlib import Path
 from tqdm import tqdm
 import pickle
@@ -194,21 +195,22 @@ def process_all_datasets(model, device):
         names = list(embs.keys())
         matrix = np.array([embs[n] for n in names])
         
-        # Distance heatmap
-        dist_matrix = pairwise_distances(matrix, metric='cosine')
-        
-        # Adjust figure size based on number of datasets
-        fig_w = max(12, min(28, len(names) * 1.0))
-        fig_h = max(10, min(24, len(names) * 0.8))
-        
-        plt.figure(figsize=(fig_w, fig_h), dpi=300)
-        sns.heatmap(dist_matrix, xticklabels=names, yticklabels=names, cmap='viridis')
-        plt.title(f"Pairwise Cosine Distance of DINOv2 Signatures (Class: {class_name})", fontsize=28, pad=20)
-        plt.xticks(rotation=90, fontsize=16)
-        plt.yticks(rotation=0, fontsize=16)
-        plt.tight_layout()
-        plt.savefig(os.path.join(OUTPUT_DIR, f"pairwise_distance_heatmap_class_{class_name}.png"), dpi=300, bbox_inches='tight')
-        plt.close()
+        # Distance heatmaps
+        for dist_metric in ['cosine', 'euclidean']:
+            dist_matrix = pairwise_distances(matrix, metric=dist_metric)
+            
+            # Adjust figure size based on number of datasets
+            fig_w = max(12, min(28, len(names) * 1.0))
+            fig_h = max(10, min(24, len(names) * 0.8))
+            
+            plt.figure(figsize=(fig_w, fig_h), dpi=300)
+            sns.heatmap(dist_matrix, xticklabels=names, yticklabels=names, cmap='viridis')
+            plt.title(f"Pairwise {dist_metric.capitalize()} Distance of DINOv2 Signatures (Class: {class_name})", fontsize=28, pad=20)
+            plt.xticks(rotation=90, fontsize=16)
+            plt.yticks(rotation=0, fontsize=16)
+            plt.tight_layout()
+            plt.savefig(os.path.join(OUTPUT_DIR, f"pairwise_distance_heatmap_{dist_metric}_class_{class_name}.png"), dpi=300, bbox_inches='tight')
+            plt.close()
         
         # KMeans Clustering
         n_clusters = min(4, len(names))
@@ -224,9 +226,11 @@ def process_all_datasets(model, device):
             
         # Cluster Visualization using t-SNE
         n_samples = matrix.shape[0]
-        perplexity = min(30, max(1, n_samples - 1))
-        
-        if n_samples > 1:
+        perplexities = [5, 15, 30]
+        for perplexity in perplexities:
+            if n_samples - 1 < perplexity:
+                continue
+            
             tsne = TSNE(n_components=2, perplexity=perplexity, random_state=42)
             tsne_2d = tsne.fit_transform(matrix)
             
@@ -240,10 +244,31 @@ def process_all_datasets(model, device):
                 
             adjust_text(texts, arrowprops=dict(arrowstyle='-', color='gray', lw=0.5))
                 
-            plt.title(f"t-SNE of DINOv2 Signatures Colored by Cluster (Class: {class_name})", fontsize=26, pad=20)
+            plt.title(f"t-SNE (perp={perplexity}) of DINOv2 Signatures Colored by Cluster (Class: {class_name})", fontsize=26, pad=20)
             plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=16, borderaxespad=0.)
             plt.tight_layout()
-            plt.savefig(os.path.join(OUTPUT_DIR, f"cluster_visualization_class_{class_name}.png"), dpi=300, bbox_inches='tight')
+            plt.savefig(os.path.join(OUTPUT_DIR, f"cluster_visualization_tsne_p{perplexity}_class_{class_name}.png"), dpi=300, bbox_inches='tight')
+            plt.close()
+
+        # Cluster Visualization using UMAP
+        if n_samples > 2:
+            n_neighbors = min(15, n_samples - 1)
+            umap_reducer = umap.UMAP(n_components=2, n_neighbors=n_neighbors, random_state=42)
+            umap_2d = umap_reducer.fit_transform(matrix)
+            
+            plt.figure(figsize=(16, 16), dpi=300)
+            sns.scatterplot(x=umap_2d[:, 0], y=umap_2d[:, 1], hue=kmeans.labels_, palette="tab10", s=300)
+            
+            texts = []
+            for i, name in enumerate(names):
+                texts.append(plt.text(umap_2d[i, 0], umap_2d[i, 1], name, fontsize=14, alpha=0.9))
+                
+            adjust_text(texts, arrowprops=dict(arrowstyle='-', color='gray', lw=0.5))
+                
+            plt.title(f"UMAP of DINOv2 Signatures Colored by Cluster (Class: {class_name})", fontsize=26, pad=20)
+            plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=16, borderaxespad=0.)
+            plt.tight_layout()
+            plt.savefig(os.path.join(OUTPUT_DIR, f"cluster_visualization_umap_class_{class_name}.png"), dpi=300, bbox_inches='tight')
             plt.close()
 
     print("\nProcessing All Classes Combined...")
@@ -259,19 +284,20 @@ def process_all_datasets(model, device):
     combined_matrix = np.array(combined_matrix)
 
     if len(all_dataset_names) > 0:
-        dist_matrix = pairwise_distances(combined_matrix, metric='cosine')
-        
-        fig_w = max(12, min(28, len(all_dataset_names) * 1.0))
-        fig_h = max(10, min(24, len(all_dataset_names) * 0.8))
-        
-        plt.figure(figsize=(fig_w, fig_h), dpi=300)
-        sns.heatmap(dist_matrix, xticklabels=all_dataset_names, yticklabels=all_dataset_names, cmap='viridis')
-        plt.title("Pairwise Cosine Distance of DINOv2 Signatures (All Classes)", fontsize=28, pad=20)
-        plt.xticks(rotation=90, fontsize=16)
-        plt.yticks(rotation=0, fontsize=16)
-        plt.tight_layout()
-        plt.savefig(os.path.join(OUTPUT_DIR, "pairwise_distance_heatmap_all_classes.png"), dpi=300, bbox_inches='tight')
-        plt.close()
+        for dist_metric in ['cosine', 'euclidean']:
+            dist_matrix = pairwise_distances(combined_matrix, metric=dist_metric)
+            
+            fig_w = max(12, min(28, len(all_dataset_names) * 1.0))
+            fig_h = max(10, min(24, len(all_dataset_names) * 0.8))
+            
+            plt.figure(figsize=(fig_w, fig_h), dpi=300)
+            sns.heatmap(dist_matrix, xticklabels=all_dataset_names, yticklabels=all_dataset_names, cmap='viridis')
+            plt.title(f"Pairwise {dist_metric.capitalize()} Distance of DINOv2 Signatures (All Classes)", fontsize=28, pad=20)
+            plt.xticks(rotation=90, fontsize=16)
+            plt.yticks(rotation=0, fontsize=16)
+            plt.tight_layout()
+            plt.savefig(os.path.join(OUTPUT_DIR, f"pairwise_distance_heatmap_{dist_metric}_all_classes.png"), dpi=300, bbox_inches='tight')
+            plt.close()
         
         n_clusters = min(4, len(all_dataset_names))
         if n_clusters >= 2:
@@ -283,25 +309,49 @@ def process_all_datasets(model, device):
                 print(f"Cluster {i}: {cluster_names}")
                 
             n_samples = combined_matrix.shape[0]
-            perplexity = min(30, max(1, n_samples - 1))
-            
-            tsne = TSNE(n_components=2, perplexity=perplexity, random_state=42)
-            tsne_2d = tsne.fit_transform(combined_matrix)
-            
-            plt.figure(figsize=(16, 16), dpi=300)
-            sns.scatterplot(x=tsne_2d[:, 0], y=tsne_2d[:, 1], hue=kmeans.labels_, palette="tab10", s=300)
-            
-            texts = []
-            for i, name in enumerate(all_dataset_names):
-                texts.append(plt.text(tsne_2d[i, 0], tsne_2d[i, 1], name, fontsize=14, alpha=0.9))
+            perplexities = [5, 15, 30]
+            for perplexity in perplexities:
+                if n_samples - 1 < perplexity:
+                    continue
                 
-            adjust_text(texts, arrowprops=dict(arrowstyle='-', color='gray', lw=0.5))
+                tsne = TSNE(n_components=2, perplexity=perplexity, random_state=42)
+                tsne_2d = tsne.fit_transform(combined_matrix)
                 
-            plt.title("t-SNE of DINOv2 Signatures Colored by Cluster (All Classes)", fontsize=26, pad=20)
-            plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=16, borderaxespad=0.)
-            plt.tight_layout()
-            plt.savefig(os.path.join(OUTPUT_DIR, "cluster_visualization_all_classes.png"), dpi=300, bbox_inches='tight')
-            plt.close()
+                plt.figure(figsize=(16, 16), dpi=300)
+                sns.scatterplot(x=tsne_2d[:, 0], y=tsne_2d[:, 1], hue=kmeans.labels_, palette="tab10", s=300)
+                
+                texts = []
+                for i, name in enumerate(all_dataset_names):
+                    texts.append(plt.text(tsne_2d[i, 0], tsne_2d[i, 1], name, fontsize=14, alpha=0.9))
+                    
+                adjust_text(texts, arrowprops=dict(arrowstyle='-', color='gray', lw=0.5))
+                    
+                plt.title(f"t-SNE (perp={perplexity}) of DINOv2 Signatures Colored by Cluster (All Classes)", fontsize=26, pad=20)
+                plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=16, borderaxespad=0.)
+                plt.tight_layout()
+                plt.savefig(os.path.join(OUTPUT_DIR, f"cluster_visualization_tsne_p{perplexity}_all_classes.png"), dpi=300, bbox_inches='tight')
+                plt.close()
+
+            # Cluster Visualization using UMAP
+            if n_samples > 2:
+                n_neighbors = min(15, n_samples - 1)
+                umap_reducer = umap.UMAP(n_components=2, n_neighbors=n_neighbors, random_state=42)
+                umap_2d = umap_reducer.fit_transform(combined_matrix)
+                
+                plt.figure(figsize=(16, 16), dpi=300)
+                sns.scatterplot(x=umap_2d[:, 0], y=umap_2d[:, 1], hue=kmeans.labels_, palette="tab10", s=300)
+                
+                texts = []
+                for i, name in enumerate(all_dataset_names):
+                    texts.append(plt.text(umap_2d[i, 0], umap_2d[i, 1], name, fontsize=14, alpha=0.9))
+                    
+                adjust_text(texts, arrowprops=dict(arrowstyle='-', color='gray', lw=0.5))
+                    
+                plt.title("UMAP of DINOv2 Signatures Colored by Cluster (All Classes)", fontsize=26, pad=20)
+                plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=16, borderaxespad=0.)
+                plt.tight_layout()
+                plt.savefig(os.path.join(OUTPUT_DIR, "cluster_visualization_umap_all_classes.png"), dpi=300, bbox_inches='tight')
+                plt.close()
 
 if __name__ == "__main__":
     os.makedirs(OUTPUT_DIR, exist_ok=True)
