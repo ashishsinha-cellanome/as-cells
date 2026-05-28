@@ -1,0 +1,62 @@
+defaults:
+- full: _self_
+name: exp_susp_to_adh
+test:
+  datasets:
+  - /mnt/direct-attached/PHASE2/20240703_neuron-adhered_10x_caged_4_class
+  - /mnt/direct-attached/PHASE2/20241212_preadipocytes-adhered_10x_uncaged_4_class
+  - /mnt/direct-attached/PHASE2/20240905_u87-adhered_10x_caged_4_class
+  - /mnt/direct-attached/PHASE2/20240515_DC-adhered_10x_caged_4_class
+  - /mnt/direct-attached/PHASE2/20250108_neuron-adhered_10x_uncaged_4_class
+  - /mnt/direct-attached/PHASE2/20240624_mc38_10x_caged_4_class
+  - /mnt/direct-attached/PHASE2/20240425_nk92_10x_caged_4_class
+  - /mnt/direct-attached/PHASE2/20240624_mc38_10x_uncaged_4_class
+  - /mnt/direct-attached/PHASE2/20240509_hela-adhered_10x_caged_4_class
+  - /mnt/direct-attached/PHASE2/20250227_preadipocytes-adhered_10x_caged_4_class
+  - /mnt/direct-attached/PHASE2/20240228_nk92_10x_uncaged_4_class
+  - /mnt/direct-attached/PHASE2/231212_imr90_multichannel_overlay_4_class
+  - /mnt/direct-attached/PHASE2/20250820_c8d1a_astrocytes-adherent_10x_caged_4_class
+  - /mnt/direct-attached/PHASE2/20240425_nk92_10x_uncaged_4_class
+  - /mnt/direct-attached/PHASE2/20240924_enteric-glia-adhered_10x_uncaged_4_class
+  - /mnt/direct-attached/PHASE2/20250305_neuron-adhered_10x_uncaged_4_class
+  - /mnt/direct-attached/PHASE2/240213_imr90_multichannel_overlay_4_class
+  - /mnt/direct-attached/PHASE2/20260316_a549-tomm20-gfp-adhered_10x_caged_at_4x_4_class
+  - /mnt/direct-attached/PHASE2/20240422_neuron-adhered_10x_uncaged_4_class
+  - /mnt/direct-attached/PHASE2/20240625_mc38_10x_caged_4_class
+  - /mnt/direct-attached/PHASE2/20250917_moc22-adhered_10x_caged_4_class
+  - /mnt/direct-attached/PHASE2/20240228_nk92_10x_caged_4_class
+  - /mnt/direct-attached/PHASE2/20240704_neuron-adhered_10x_caged_4_class
+  - /mnt/direct-attached/PHASE2/20240509_Hs675Tfibroblasts_10x_caged_4_class
+  - /mnt/direct-attached/PHASE2/20240516_DC-adhered_10x_caged_4_class
+train:
+  datasets:
+  - /mnt/direct-attached/PHASE2/20240307_pbmc-beads_10x_uncaged_4_class
+  - /mnt/direct-attached/PHASE2/20240228_k562_10x_uncaged_4_class
+  - /mnt/direct-attached/PHASE2/20240305_pbmc-nobeads_10x_uncaged_4_class
+val:
+  datasets:
+  - /mnt/direct-attached/PHASE2/20240703_neuron-adhered_10x_caged_4_class
+  - /mnt/direct-attached/PHASE2/20241212_preadipocytes-adhered_10x_uncaged_4_class
+  - /mnt/direct-attached/PHASE2/20240905_u87-adhered_10x_caged_4_class
+  - /mnt/direct-attached/PHASE2/20240515_DC-adhered_10x_caged_4_class
+  - /mnt/direct-attached/PHASE2/20250108_neuron-adhered_10x_uncaged_4_class
+  - /mnt/direct-attached/PHASE2/20240624_mc38_10x_caged_4_class
+  - /mnt/direct-attached/PHASE2/20240425_nk92_10x_caged_4_class
+  - /mnt/direct-attached/PHASE2/20240624_mc38_10x_uncaged_4_class
+  - /mnt/direct-attached/PHASE2/20240509_hela-adhered_10x_caged_4_class
+  - /mnt/direct-attached/PHASE2/20250227_preadipocytes-adhered_10x_caged_4_class
+  - /mnt/direct-attached/PHASE2/20240228_nk92_10x_uncaged_4_class
+  - /mnt/direct-attached/PHASE2/231212_imr90_multichannel_overlay_4_class
+  - /mnt/direct-attached/PHASE2/20250820_c8d1a_astrocytes-adherent_10x_caged_4_class
+  - /mnt/direct-attached/PHASE2/20240425_nk92_10x_uncaged_4_class
+  - /mnt/direct-attached/PHASE2/20240924_enteric-glia-adhered_10x_uncaged_4_class
+  - /mnt/direct-attached/PHASE2/20250305_neuron-adhered_10x_uncaged_4_class
+  - /mnt/direct-attached/PHASE2/240213_imr90_multichannel_overlay_4_class
+  - /mnt/direct-attached/PHASE2/20260316_a549-tomm20-gfp-adhered_10x_caged_at_4x_4_class
+  - /mnt/direct-attached/PHASE2/20240422_neuron-adhered_10x_uncaged_4_class
+  - /mnt/direct-attached/PHASE2/20240625_mc38_10x_caged_4_class
+  - /mnt/direct-attached/PHASE2/20250917_moc22-adhered_10x_caged_4_class
+  - /mnt/direct-attached/PHASE2/20240228_nk92_10x_caged_4_class
+  - /mnt/direct-attached/PHASE2/20240704_neuron-adhered_10x_caged_4_class
+  - /mnt/direct-attached/PHASE2/20240509_Hs675Tfibroblasts_10x_caged_4_class
+  - /mnt/direct-attached/PHASE2/20240516_DC-adhered_10x_caged_4_class
