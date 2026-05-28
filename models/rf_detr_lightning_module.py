@@ -38,7 +38,7 @@ class RFDETRLightningModule(pl.LightningModule):
     ):
         super().__init__()
         self.model = model
-        self.peft = kwargs.get('peft', False)
+        self.peft = kwargs.get('peft', False) or (config.model.get('peft', False) if hasattr(config, 'model') else False)
         if self.peft:
             self.model = apply_peft(self.model, "rf_detr")
         self.criterion = criterion

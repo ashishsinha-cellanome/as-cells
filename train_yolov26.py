@@ -95,6 +95,10 @@ def main(config: DictConfig):
     # 2. Train YOLO
     model = YOLO(yolo_cfg.weights)
     
+    if config.model.get("peft", False):
+        from utils.peft_utils import apply_peft
+        apply_peft(model.model, "yolo")
+    
     # Custom callback to duplicate metrics for WandB
     def on_fit_epoch_end(trainer):
         if get_rank() == 0:

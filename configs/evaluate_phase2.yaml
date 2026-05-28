@@ -7,94 +7,94 @@ inference:
   max_viz: 10
 
 models:
-  yolov26:
-    name: "YOLOv26"
-    type: "yolo"
-    weights: "/home/ubuntu/personal/cellanome/checkpoints/YOLOv26/best.pt"    
-    task: "detect"
-    conf: 0.25
-    imgsz: 672
-  yolo:
-    name: "YOLOv5"
-    type: "yolo"
-    weights: "/mnt/personal/cellanome/checkpoints/YOLOv5/exp6/weights/best.pt"
-    task: "detect"
-    conf: 0.25
-    imgsz: 672
-  rf_detr_seg:
-    name: "RF-DETR-Seg"
-    type: "rf_detr"
-    weights: "/mnt/personal/cellanome/checkpoints/RFDETR-Seg-ckpts/output/checkpoint_best_ema.pth"
-    conf: 0.25
-    imgsz: 504
-      #  rtdetr_v1:
-      #    name: "RT-DETR-V1"
-      #    type: "rt_detr"
-      #    config_file: "configs/model/rtdetr_v1.yaml"
-      #    weights: "/mnt/personal/cellanome/checkpoints/RT-DETR-v1_resnet50/rtdetr-ema-17-val_map0.5446.ckpt"
-      #    conf: 0.25
-      #    imgsz: 640
-      #  rtdetr_v2_resnet50:
-      #    name: "RT-DETR-V2-ResNet50"
-      #    type: "rt_detr"
-      #    config_file: "configs/model/rtdetr_v2.yaml"
-      #    weights: "/mnt/personal/cellanome/checkpoints/RT-DETR-v2_w_ResNet50_300_queries_stage_0/rtdetr-regular-epoch10-val_map0.6894.ckpt"
-      #    conf: 0.25
-      #    imgsz: 672
-      #  rtdetr_v2_dinov2:
-      #    name: "RT-DETR-V2-DinoV2"
-      #    type: "rt_detr"
-      #    config_file: "configs/model/rtdetr_dinov2.yaml"
-      #    weights: "/mnt/personal/cellanome/checkpoints/RT-DETR-v2_w_Dinov2_fused_fpn_300_q_3_7_11/rtdetr-regular-epoch20-val_map0.6866.ckpt"
-      #    conf: 0.25
-      #    imgsz: 672
-      #  deim_v2_m:
-      #    name: "DEIM-V2-M"
-      #    type: "deim"
-      #    config_file: "configs/model/deimv2_m.yaml"
-      #    weights: "/mnt/personal/cellanome/checkpoints/DEIMv2-M_num_denoising_100/deimv2-ema-00-val_map_ema-1.0000.ckpt"
-      #    conf: 0.25
-      #    imgsz: 672
-      #  deim_v2_x:
-      #    name: "DEIM-V2-X"
-      #    type: "deim"
-      #    config_file: "configs/model/deimv2_x.yaml"
-      #    weights: "/mnt/personal/cellanome/checkpoints/DEIMv2-X-ckpts/deimv2-ema-44-val_map_ema0.6797.ckpt"
-      #    conf: 0.25
-      #    imgsz: 672
-      #  mask2former_swin_large:
-      #    name: "Mask2Former-Swin-Large"
-      #    type: "mask2former"
-      #    weights: "/mnt/personal/cellanome/checkpoints/Mask2former-Swin-Large/mask2former-ema-epoch26-val_map_ema0.0000.ckpt"
-      #    conf: 0.25
-      #    imgsz: 672
-      #  mask2former_swin_base:
-      #    name: "Mask2Former-Swin-Base"
-      #    type: "mask2former"
-      #    weights: "/mnt/personal/cellanome/checkpoints/Mask2Former-Swin-Base/mask2former-ema-epoch26-val_map_ema0.0000.ckpt" 
-      #    conf: 0.25
-      #    imgsz: 672
-      #  mask2former_dinov2_sfp:
-      #    name: "Mask2Former-DinoV2-SFP"
-      #    type: "mask2former"
-      #    weights: "/mnt/personal/cellanome/checkpoints/Mask2Former_dinvo2_SFP/mask2former-epoch18-val_map0.0000.ckpt"
-      #    conf: 0.25
-      #    imgsz: 672
-      #  mask2former_dinov2_fusedfpn:
-      #    name: "Mask2Former-DinoV2-FusedFPN"
-      #    type: "mask2former"
-      #    weights: "/mnt/personal/cellanome/checkpoints/Mask2former-dinov2-fusedFPN/mask2former-epoch15-val_map0.0000.ckpt"
-      #    conf: 0.25
-      #    imgsz: 672
-      #  rf_detr_base:
-      #    name: "RF-DETR-Base"
-      #    type: "rf_detr_lightning"
-      #    weights: "/mnt/personal/cellanome/checkpoints/RF-DETR_base/rfdetr-ema-09-val_map_ema0.7284.ckpt"
-      #    conf: 0.25
-      #    imgsz: 504
-      #  rf_detr_medium:
-      #    name: "RF-DETR-Medium"
-      #    type: "rf_detr_lightning"
-      #    weights: "/mnt/personal/cellanome/checkpoints/RF-DETR_medium/rfdetr-ema-09-val_map_ema0.7293.ckpt"
-      #    conf: 0.25
-      #    imgsz: 504
+  #  yolov26:
+  #    name: "YOLOv26"
+  #    type: "yolo"
+  #    weights: "/home/ubuntu/personal/cellanome/checkpoints/YOLOv26/best.pt"    
+  #    task: "detect"
+  #    conf: 0.25
+  #    imgsz: 672
+  #  yolo:
+  #    name: "YOLOv5"
+  #    type: "yolo"
+  #    weights: "/mnt/personal/cellanome/checkpoints/YOLOv5/exp6/weights/best.pt"
+  #    task: "detect"
+  #    conf: 0.25
+  #    imgsz: 672
+  #  rf_detr_seg:
+  #    name: "RF-DETR-Seg"
+  #    type: "rf_detr"
+  #    weights: "/mnt/personal/cellanome/checkpoints/RFDETR-Seg-ckpts/output/checkpoint_best_ema.pth"
+  #    conf: 0.25
+  #    imgsz: 504
+    rtdetr_v1:
+      name: "RT-DETR-V1"
+      type: "rt_detr"
+      config_file: "configs/model/rtdetr_v1.yaml"
+      weights: "/mnt/personal/cellanome/checkpoints/RT-DETR-v1_resnet50/rtdetr-ema-17-val_map0.5446.ckpt"
+      conf: 0.25
+      imgsz: 640
+    rtdetr_v2_resnet50:
+      name: "RT-DETR-V2-ResNet50"
+      type: "rt_detr"
+      config_file: "configs/model/rtdetr_v2.yaml"
+      weights: "/mnt/personal/cellanome/checkpoints/RT-DETR-v2_w_ResNet50_300_queries_stage_0/rtdetr-regular-epoch10-val_map0.6894.ckpt"
+      conf: 0.25
+      imgsz: 672
+    rtdetr_v2_dinov2:
+      name: "RT-DETR-V2-DinoV2"
+      type: "rt_detr"
+      config_file: "configs/model/rtdetr_dinov2.yaml"
+      weights: "/mnt/personal/cellanome/checkpoints/RT-DETR-v2_w_Dinov2_fused_fpn_300_q_3_7_11/rtdetr-regular-epoch20-val_map0.6866.ckpt"
+      conf: 0.25
+      imgsz: 672
+    deim_v2_m:
+      name: "DEIM-V2-M"
+      type: "deim"
+      config_file: "configs/model/deimv2_m.yaml"
+      weights: "/mnt/personal/cellanome/checkpoints/DEIMv2-M_num_denoising_100/deimv2-ema-00-val_map_ema-1.0000.ckpt"
+      conf: 0.25
+      imgsz: 672
+    deim_v2_x:
+      name: "DEIM-V2-X"
+      type: "deim"
+      config_file: "configs/model/deimv2_x.yaml"
+      weights: "/mnt/personal/cellanome/checkpoints/DEIMv2-X-ckpts/deimv2-ema-44-val_map_ema0.6797.ckpt"
+      conf: 0.25
+      imgsz: 672
+    mask2former_swin_large:
+      name: "Mask2Former-Swin-Large"
+      type: "mask2former"
+      weights: "/mnt/personal/cellanome/checkpoints/Mask2former-Swin-Large/mask2former-ema-epoch26-val_map_ema0.0000.ckpt"
+      conf: 0.25
+      imgsz: 672
+    mask2former_swin_base:
+      name: "Mask2Former-Swin-Base"
+      type: "mask2former"
+      weights: "/mnt/personal/cellanome/checkpoints/Mask2Former-Swin-Base/mask2former-ema-epoch26-val_map_ema0.0000.ckpt" 
+      conf: 0.25
+      imgsz: 672
+    mask2former_dinov2_sfp:
+      name: "Mask2Former-DinoV2-SFP"
+      type: "mask2former"
+      weights: "/mnt/personal/cellanome/checkpoints/Mask2Former_dinvo2_SFP/mask2former-epoch18-val_map0.0000.ckpt"
+      conf: 0.25
+      imgsz: 672
+    mask2former_dinov2_fusedfpn:
+      name: "Mask2Former-DinoV2-FusedFPN"
+      type: "mask2former"
+      weights: "/mnt/personal/cellanome/checkpoints/Mask2former-dinov2-fusedFPN/mask2former-epoch15-val_map0.0000.ckpt"
+      conf: 0.25
+      imgsz: 672
+    rf_detr_base:
+      name: "RF-DETR-Base"
+      type: "rf_detr_lightning"
+      weights: "/mnt/personal/cellanome/checkpoints/RF-DETR_base/rfdetr-ema-09-val_map_ema0.7284.ckpt"
+      conf: 0.25
+      imgsz: 504
+    rf_detr_medium:
+      name: "RF-DETR-Medium"
+      type: "rf_detr_lightning"
+      weights: "/mnt/personal/cellanome/checkpoints/RF-DETR_medium/rfdetr-ema-09-val_map_ema0.7293.ckpt"
+      conf: 0.25
+      imgsz: 504

@@ -108,7 +108,7 @@ class YOLOv5LightningModule(pl.LightningModule):
 
         model.hyp = dict(model_cfg.hyp)
         self.model = model
-        self.peft = kwargs.get('peft', False)
+        self.peft = kwargs.get('peft', False) or (config.model.get('peft', False) if hasattr(config, 'model') else False)
         if self.peft:
             self.model = apply_peft(self.model, "yolo")
         self._compute_loss = None

@@ -1,0 +1,4 @@
+I found the following issues:
+1. `run_peft_experiments.sh` uses `train_${model%_*}.py` which evaluates to `train_rfdetr.py` for `rfdetr_seg`. This script does not exist (it should be `train_rf_detr.py` or `train_rf_detr_seg.py`).
+2. `run_peft_experiments.sh` runs `train_yolov26.py` for YOLO. However, `train_yolov26.py` uses the raw Ultralytics engine (not PyTorch Lightning) and does not instantiate `YOLOv5LightningModule`. Thus, it completely ignores the PEFT freezing logic.
+3. Even for the scripts that do use the Lightning modules (like `train_rf_detr.py` and `train_yolo.py`), the `peft` flag is never passed into the module constructors. The module `__init__` methods look for `kwargs.get('peft', False)`, but `train_rf_detr.py` and `train_yolo.py` do not pass `peft=config.model.peft` when initializing `RFDETRLightningModule` and `YOLOv5LightningModule`.
