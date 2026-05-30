@@ -47,8 +47,8 @@ def build_rfdetr_backbone():
             print("Falling back to randomly initialized RF-DETR backbone (since download might hang on isolated nodes).")
             model = rfdetr.RFDETRSegLarge(pretrain_weights=None, group_detr=1, num_classes=4)
         
-    model.to(device)
-    model.eval()
+    model.model.model.to(device)
+    model.model.model.eval()
     
     # We only need the backbone encoder for morphological features
     encoder = model.model.model.backbone[0].encoder
