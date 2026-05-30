@@ -103,3 +103,102 @@ def extract_features_for_image(img_path, coco, img_info, encoder, device):
         results[cat] = cls_token[0].cpu().numpy()
         
     return results
+
+def process_all_datasets(encoder, device):
+    all_embeddings = {0: {}, 1: {}, 2: {}, 3: {}}
+    base_dir = Path(DATA_DIR)
+    
+    for ds in tqdm(list(base_dir.iterdir())):
+        if not ds.is_dir():
+            continue
+            
+        anno_file = ds / "test_annotations.json"
+        img_dir = ds / "images" / "test"
+        
+        if not anno_file.exists() or not img_dir.exists():
+            continue
+            
+        coco = COCO(str(anno_file))
+        image_ids = coco.getImgIds()
+        if not image_ids:
+            continue
+            
+        # Select first image for signature
+        img_info = coco.loadImgs(image_ids[0])[0]
+        img_path = img_dir / img_info['file_name']
+        
+        class_embs = extract_features_for_image(img_path, coco, img_info, encoder, device)
+        for cat, emb in class_embs.items():
+            all_embeddings[cat][ds.name] = emb
+            
+    return all_embeddings
+
+def generate_visualizations(all_embeddings):
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    
+    # Process each class individually
+    for cat, embs in all_embeddings.items():
+        if not embs:
+            continue
+            
+        class_name = CLASS_MAP[cat]
+        names = list(embs.keys())
+        matrix = np.array([embs[n] for n in names])
+        
+        # 1. Pairwise Heatmaps
+        for metric in ['cosine', 'euclidean']:
+            dist_matrix = pairwise_distances(matrix, metric=metric)
+            plt.figure(figsize=(14, 12), dpi=300)
+            sns.heatmap(dist_matrix, xticklabels=names, yticklabels=names, cmap='viridis')
+            plt.title(f"Pairwise {metric.capitalize()} Distance (Class: {class_name})", fontsize=24, pad=20)
+            plt.xticks(rotation=90)
+            plt.tight_layout()
+            plt.savefig(os.path.join(OUTPUT_DIR, f"heatmap_{metric}_{class_name}.png"))
+            plt.close()
+            
+        # 2. KMeans for colors
+        n_clusters = min(4, len(names))
+        if n_clusters < 2:
+            continue
+        kmeans = KMeans(n_clusters=n_clusters, random_state=42).fit(matrix)
+        
+        # 3. t-SNE
+        for perplexity in [5, 15, 30]:
+            if matrix.shape[0] - 1 < perplexity:
+                continue
+            tsne = TSNE(n_components=2, perplexity=perplexity, random_state=42)
+            tsne_2d = tsne.fit_transform(matrix)
+            
+            plt.figure(figsize=(16, 16), dpi=300)
+            sns.scatterplot(x=tsne_2d[:, 0], y=tsne_2d[:, 1], hue=kmeans.labels_, palette="tab10", s=300)
+            
+            texts = [plt.text(tsne_2d[i, 0], tsne_2d[i, 1], n, fontsize=14) for i, n in enumerate(names)]
+            adjust_text(texts, arrowprops=dict(arrowstyle='-', color='gray'))
+            
+            plt.title(f"t-SNE (perp={perplexity}) colored by Cluster ({class_name})", fontsize=24)
+            plt.savefig(os.path.join(OUTPUT_DIR, f"tsne_p{perplexity}_{class_name}.png"))
+            plt.close()
+            
+        # 4. UMAP
+        if matrix.shape[0] > 2:
+            umap_reducer = umap.UMAP(n_components=2, n_neighbors=min(15, matrix.shape[0]-1), random_state=42)
+            umap_2d = umap_reducer.fit_transform(matrix)
+            
+            plt.figure(figsize=(16, 16), dpi=300)
+            sns.scatterplot(x=umap_2d[:, 0], y=umap_2d[:, 1], hue=kmeans.labels_, palette="tab10", s=300)
+            
+            texts = [plt.text(umap_2d[i, 0], umap_2d[i, 1], n, fontsize=14) for i, n in enumerate(names)]
+            adjust_text(texts, arrowprops=dict(arrowstyle='-', color='gray'))
+            
+            plt.title(f"UMAP colored by Cluster ({class_name})", fontsize=24)
+            plt.savefig(os.path.join(OUTPUT_DIR, f"umap_{class_name}.png"))
+            plt.close()
+
+if __name__ == "__main__":
+    print("Loading RF-DETR-Seg Backbone...")
+    encoder, device = build_rfdetr_backbone(CHECKPOINT_PATH)
+    print("Extracting Embeddings...")
+    embeddings = process_all_datasets(encoder, device)
+    print("Generating Visualizations...")
+    generate_visualizations(embeddings)
+    print(f"Done. Results saved to {OUTPUT_DIR}")
