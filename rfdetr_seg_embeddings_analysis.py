@@ -83,7 +83,7 @@ def extract_features_for_image(img_path, coco, img_info, encoder, device):
             continue
             
         crop = np.zeros((size, size, 3), dtype=np.uint8)
-        offset_x, offset_y = sq_x1 - max(0, cx - size//2), sq_y1 - max(0, cy - size//2)
+        offset_x, offset_y = sq_x1 - (cx - size//2), sq_y1 - (cy - size//2)
         crop[offset_y:offset_y+actual_crop.shape[0], offset_x:offset_x+actual_crop.shape[1]] = actual_crop
         
         # Resize for RFDETR backbone (requires input divisible by 24, e.g. 240x240)
