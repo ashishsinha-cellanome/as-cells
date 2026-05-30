@@ -13,16 +13,14 @@ from pycocotools.coco import COCO
 from sklearn.cluster import KMeans
 from sklearn.metrics import pairwise_distances
 from adjustText import adjust_text
+from omegaconf import OmegaConf
 
 DATA_DIR = "/mnt/direct-attached/PHASE2"
 OUTPUT_DIR = "/mnt/direct-attached/PHASE2_EVAL_RESULTS/rfdetr_seg_features"
 
-CLASS_MAP = {
-    0: "cell",
-    1: "bead",
-    2: "cell-adhered",
-    3: "soma"
-}
+# Load the label map dynamically from the rfdetr_seg model config
+_model_cfg = OmegaConf.load("configs/model/rfdetr_seg.yaml")
+CLASS_MAP = OmegaConf.to_container(_model_cfg.label_map, resolve=True)
 
 # Add model checkpoint path (can be overridden via CLI args later)
 CHECKPOINT_PATH = "/mnt/personal/cellanome/checkpoints/RFDETR-Seg-ckpts/output/checkpoint_best_ema.pth"
