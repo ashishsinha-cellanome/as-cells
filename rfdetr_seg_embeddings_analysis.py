@@ -49,6 +49,7 @@ def extract_features_for_image(img_path, coco, img_info, encoder, device):
     img = cv2.imread(str(img_path))
     if img is None:
         return {}
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     
     ann_ids = coco.getAnnIds(imgIds=img_info['id'])
     anns = coco.loadAnns(ann_ids)
@@ -76,7 +77,7 @@ def extract_features_for_image(img_path, coco, img_info, encoder, device):
         size = max(w, h)
         cx, cy = x + w//2, y + h//2
         sq_x1, sq_y1 = max(0, cx - size//2), max(0, cy - size//2)
-        sq_x2, sq_y2 = min(img.shape[1], sq_x1 + size), min(img.shape[0], sq_y1 + size)
+        sq_x2, sq_y2 = min(img.shape[1], cx + size//2), min(img.shape[0], cy + size//2)
         
         actual_crop = img[sq_y1:sq_y2, sq_x1:sq_x2]
         if actual_crop.size == 0:
