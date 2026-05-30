@@ -23,20 +23,15 @@ _model_cfg = OmegaConf.load("configs/model/rfdetr_seg.yaml")
 CLASS_MAP = OmegaConf.to_container(_model_cfg.label_map, resolve=True)
 
 # Add model checkpoint path (can be overridden via CLI args later)
-CHECKPOINT_PATH = "/mnt/personal/cellanome/checkpoints/RFDETR-Seg-ckpts/output/checkpoint_best_ema.pth"
+CHECKPOINT_PATH = "/mnt/direct-attached/as-cells/rf-detr-seg-medium-finetuned.pt"
 
 def build_rfdetr_backbone(checkpoint):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Loading RFDETRSegLarge from {checkpoint}")
     import rfdetr
-    try:
-        model = rfdetr.RFDETRSegLarge(pretrain_weights=checkpoint, group_detr=1, num_classes=4)
-    except Exception as e:
-        print(f"Failed to load checkpoint: {e}")
-        raise e
-        
-    model.to(device)
-    model.eval()
+    print(f"Loading RFDETRSegMedium from {checkpoint}")
+    model = rfdetr.RFDETRSegMedium(pretrain_weights=checkpoint, group_detr=1, num_classes=4)
+    model.model.model.to(device)
+    model.model.model.eval()
     
     encoder = model.model.model.backbone[0].encoder
     for param in encoder.parameters():
