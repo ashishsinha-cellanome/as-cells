@@ -105,7 +105,7 @@ def extract_features_for_image(img_path, coco, img_info, encoder, device):
     return results
 
 def process_all_datasets(encoder, device):
-    all_embeddings = {0: {}, 1: {}, 2: {}, 3: {}}
+    all_embeddings = {cat: {} for cat in CLASS_MAP.keys()}
     base_dir = Path(DATA_DIR)
     
     for ds in tqdm(list(base_dir.iterdir())):
