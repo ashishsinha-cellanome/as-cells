@@ -20,8 +20,8 @@ OUTPUT_DIR = "/mnt/direct-attached/PHASE2_EVAL_RESULTS/rfdetr_seg_features"
 CLASS_MAP = {
     0: "cell",
     1: "bead",
-    2: "soma",
-    3: "cell-adhered"
+    2: "cell-adhered",
+    3: "soma"
 }
 
 # Add model checkpoint path (can be overridden via CLI args later)
