@@ -32,11 +32,20 @@ def build_rfdetr_backbone():
     import rfdetr
     
     print(f"Loading RFDETRSegLarge from {checkpoint}")
-    try:
-        model = rfdetr.RFDETRSegLarge(pretrain_weights=checkpoint, group_detr=1, num_classes=4)
-    except Exception as e:
-        print(f"Failed to load checkpoint, falling back to untrained/pretrained DINOv2 weights for rfdetr: {e}")
-        model = rfdetr.RFDETRSegLarge(group_detr=1, num_classes=4)
+    if not os.path.exists(checkpoint):
+        print(f"ERROR: Checkpoint file does not exist at {checkpoint}")
+        print("Falling back to randomly initialized RF-DETR backbone.")
+        model = rfdetr.RFDETRSegLarge(pretrain_weights=None, group_detr=1, num_classes=4)
+    else:
+        try:
+            model = rfdetr.RFDETRSegLarge(pretrain_weights=checkpoint, group_detr=1, num_classes=4)
+            print("Successfully loaded the fine-tuned RF-DETR-Seg checkpoint.")
+        except Exception as e:
+            import traceback
+            print(f"Failed to load checkpoint from {checkpoint}.")
+            print(f"Exception details:\n{traceback.format_exc()}")
+            print("Falling back to randomly initialized RF-DETR backbone (since download might hang on isolated nodes).")
+            model = rfdetr.RFDETRSegLarge(pretrain_weights=None, group_detr=1, num_classes=4)
         
     model.to(device)
     model.eval()
