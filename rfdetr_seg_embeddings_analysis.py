@@ -17,7 +17,7 @@ from adjustText import adjust_text
 from omegaconf import OmegaConf
 
 DATA_DIR = "/mnt/direct-attached/PHASE2"
-OUTPUT_DIR = "/mnt/direct-attached/PHASE2_analysis/rfdetr_seg_features"
+OUTPUT_DIR = "/mnt/direct-attached/PHASE2_EVAL_RESULTS/selection_engine_rfdetr"
 
 # Load the label map dynamically from the rfdetr_seg model config
 _model_cfg = OmegaConf.load("configs/model/rfdetr_seg.yaml")
@@ -132,6 +132,12 @@ def extract_features_for_image(img_path, coco, img_info, dataset_name, encoder, 
         
         heatmap = cv2.applyColorMap(grid_255, cv2.COLORMAP_VIRIDIS)
         heatmap = cv2.resize(heatmap, (240, 240), interpolation=cv2.INTER_CUBIC)
+        
+        # Create a binary mask from the resized_crop (non-black pixels)
+        binary_mask = (resized_crop > 0).any(axis=2).astype(np.uint8) * 255
+        
+        # Apply the binary mask to the heatmap so background remains black
+        heatmap = cv2.bitwise_and(heatmap, heatmap, mask=binary_mask)
         
         # Overlay heatmap on original resized crop
         overlay = cv2.addWeighted(resized_crop, 0.5, heatmap, 0.5, 0)
