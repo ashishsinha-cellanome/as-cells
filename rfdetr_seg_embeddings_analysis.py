@@ -5,6 +5,7 @@ import torchvision
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
+from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
 import umap.umap_ as umap
 from pathlib import Path
@@ -16,7 +17,7 @@ from adjustText import adjust_text
 from omegaconf import OmegaConf
 
 DATA_DIR = "/mnt/direct-attached/PHASE2"
-OUTPUT_DIR = "/mnt/direct-attached/PHASE2_EVAL_RESULTS/rfdetr_seg_features"
+OUTPUT_DIR = "/mnt/direct-attached/PHASE2_analysis/rfdetr_seg_features"
 
 # Load the label map dynamically from the rfdetr_seg model config
 _model_cfg = OmegaConf.load("configs/model/rfdetr_seg.yaml")
@@ -28,8 +29,8 @@ CHECKPOINT_PATH = "/mnt/direct-attached/as-cells/RFDETR-Seg-ckpts/output/checkpo
 def build_rfdetr_backbone(checkpoint):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     import rfdetr
-    print(f"Loading RFDETRSegMedium from {checkpoint}")
-    model = rfdetr.RFDETRSegMedium(pretrain_weights=checkpoint, group_detr=1, num_classes=4, patch_size=16)
+    print(f"Loading RFDETRSegLarge from {checkpoint}")
+    model = rfdetr.RFDETRSegLarge(pretrain_weights=checkpoint, group_detr=1, num_classes=4)
     model.model.model.to(device)
     model.model.model.eval()
     
@@ -38,7 +39,7 @@ def build_rfdetr_backbone(checkpoint):
         param.requires_grad = False
     return encoder, device
 
-def extract_features_for_image(img_path, coco, img_info, encoder, device):
+def extract_features_for_image(img_path, coco, img_info, dataset_name, encoder, device):
     img = cv2.imread(str(img_path))
     if img is None:
         return {}
@@ -98,8 +99,8 @@ def extract_features_for_image(img_path, coco, img_info, encoder, device):
         offset_x, offset_y = sq_x1 - (cx - size//2), sq_y1 - (cy - size//2)
         crop[offset_y:offset_y+actual_crop.shape[0], offset_x:offset_x+actual_crop.shape[1]] = actual_crop
         
-        # Resize for RFDETR backbone (requires input divisible by 32, e.g. 256x256)
-        resized_crop = cv2.resize(crop, (256, 256))
+        # Resize for RFDETR backbone (requires input divisible by 24, e.g. 240x240)
+        resized_crop = cv2.resize(crop, (240, 240))
         
         transform = torchvision.transforms.Compose([
             torchvision.transforms.ToTensor(),
@@ -111,6 +112,44 @@ def extract_features_for_image(img_path, coco, img_info, encoder, device):
             features = encoder(input_tensor)
             last_feat = features[-1]
             cls_token = last_feat.mean(dim=(2, 3)) # (1, C) Global Avg Pooling
+            patch_tokens = last_feat.flatten(2).transpose(1, 2) # (1, H*W, C)
+            
+        # PCA overlay
+        patches = patch_tokens[0].cpu().numpy()
+        pca = PCA(n_components=1)
+        pca_features = pca.fit_transform(patches)
+        
+        # Reshape to 20x20 (400)
+        grid = pca_features.reshape(20, 20)
+        
+        grid_min, grid_max = grid.min(), grid.max()
+        if grid_max - grid_min < 1e-8:
+            grid_norm_11 = np.zeros_like(grid)
+        else:
+            grid_norm_11 = 2 * ((grid - grid_min) / (grid_max - grid_min)) - 1
+            
+        grid_255 = ((grid_norm_11 + 1) / 2 * 255).astype(np.uint8)
+        
+        heatmap = cv2.applyColorMap(grid_255, cv2.COLORMAP_VIRIDIS)
+        heatmap = cv2.resize(heatmap, (240, 240), interpolation=cv2.INTER_CUBIC)
+        
+        # Overlay heatmap on original resized crop
+        overlay = cv2.addWeighted(resized_crop, 0.5, heatmap, 0.5, 0)
+        
+        plt.figure(figsize=(5, 4), dpi=300)
+        overlay_rgb = cv2.cvtColor(overlay, cv2.COLOR_BGR2RGB)
+        plt.imshow(overlay_rgb)
+        plt.axis('off')
+        
+        sm = plt.cm.ScalarMappable(cmap='viridis', norm=plt.Normalize(vmin=-1.0, vmax=1.0))
+        sm.set_array([])
+        cbar = plt.colorbar(sm, ax=plt.gca(), fraction=0.046, pad=0.04)
+        cbar.ax.tick_params(labelsize=10)
+        
+        os.makedirs(OUTPUT_DIR, exist_ok=True)
+        out_path = os.path.join(OUTPUT_DIR, f"{dataset_name}_{Path(img_path).stem}_{CLASS_MAP[cat]}_emb.png")
+        plt.savefig(out_path, bbox_inches='tight', pad_inches=0.1)
+        plt.close()
             
         results[cat] = cls_token[0].cpu().numpy()
         
@@ -139,7 +178,7 @@ def process_all_datasets(encoder, device):
         img_info = coco.loadImgs(image_ids[0])[0]
         img_path = img_dir / img_info['file_name']
         
-        class_embs = extract_features_for_image(img_path, coco, img_info, encoder, device)
+        class_embs = extract_features_for_image(img_path, coco, img_info, ds.name, encoder, device)
         for cat, emb in class_embs.items():
             all_embeddings[cat][ds.name] = emb
             
