@@ -23,13 +23,13 @@ _model_cfg = OmegaConf.load("configs/model/rfdetr_seg.yaml")
 CLASS_MAP = OmegaConf.to_container(_model_cfg.label_map, resolve=True)
 
 # Add model checkpoint path (can be overridden via CLI args later)
-CHECKPOINT_PATH = "/mnt/direct-attached/as-cells/rf-detr-seg-medium-finetuned.pt"
+CHECKPOINT_PATH = "/mnt/direct-attached/as-cells/RFDETR-Seg-ckpts/output/checkpoint_best_ema.pth"
 
 def build_rfdetr_backbone(checkpoint):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     import rfdetr
     print(f"Loading RFDETRSegMedium from {checkpoint}")
-    model = rfdetr.RFDETRSegMedium(pretrain_weights=checkpoint, group_detr=1, num_classes=4)
+    model = rfdetr.RFDETRSegMedium(pretrain_weights=checkpoint, group_detr=1, num_classes=4, patch_size=16)
     model.model.model.to(device)
     model.model.model.eval()
     
@@ -67,12 +67,30 @@ def extract_features_for_image(img_path, coco, img_info, encoder, device):
         if w <= 0 or h <= 0:
             continue
             
+        # Create a masked version of the image using the segmentation mask
+        mask = coco.annToMask(largest_ann)
+        mask_3d = np.repeat(mask[:, :, np.newaxis], 3, axis=2)
+        
+        img_h, img_w = img.shape[:2]
+        x1, y1 = max(0, x), max(0, y)
+        x2, y2 = min(img_w, x + w), min(img_h, y + h)
+        
+        mask_y1 = y1 - y
+        mask_y2 = mask_y1 + (y2 - y1)
+        mask_x1 = x1 - x
+        mask_x2 = mask_x1 + (x2 - x1)
+        
+        mask_3d_cropped = mask_3d[mask_y1:mask_y2, mask_x1:mask_x2]
+        
+        masked_img = np.zeros_like(img)
+        masked_img[y1:y2, x1:x2] = img[y1:y2, x1:x2] * mask_3d_cropped
+            
         size = max(w, h)
         cx, cy = x + w//2, y + h//2
         sq_x1, sq_y1 = max(0, cx - size//2), max(0, cy - size//2)
         sq_x2, sq_y2 = min(img.shape[1], cx + size//2), min(img.shape[0], cy + size//2)
         
-        actual_crop = img[sq_y1:sq_y2, sq_x1:sq_x2]
+        actual_crop = masked_img[sq_y1:sq_y2, sq_x1:sq_x2]
         if actual_crop.size == 0:
             continue
             
@@ -80,8 +98,8 @@ def extract_features_for_image(img_path, coco, img_info, encoder, device):
         offset_x, offset_y = sq_x1 - (cx - size//2), sq_y1 - (cy - size//2)
         crop[offset_y:offset_y+actual_crop.shape[0], offset_x:offset_x+actual_crop.shape[1]] = actual_crop
         
-        # Resize for RFDETR backbone (requires input divisible by 24, e.g. 240x240)
-        resized_crop = cv2.resize(crop, (240, 240))
+        # Resize for RFDETR backbone (requires input divisible by 32, e.g. 256x256)
+        resized_crop = cv2.resize(crop, (256, 256))
         
         transform = torchvision.transforms.Compose([
             torchvision.transforms.ToTensor(),
@@ -187,6 +205,94 @@ def generate_visualizations(all_embeddings):
             plt.title(f"UMAP colored by Cluster ({class_name})", fontsize=24)
             plt.savefig(os.path.join(OUTPUT_DIR, f"umap_{class_name}.png"))
             plt.close()
+
+    print("\nProcessing All Classes Combined...")
+    all_dataset_names = set()
+    for cat in all_embeddings:
+        all_dataset_names.update(all_embeddings[cat].keys())
+    
+    all_dataset_names = list(all_dataset_names)
+    combined_matrix = []
+    for name in all_dataset_names:
+        # Aggregate over each class label (mean of available class embeddings for this dataset)
+        available_embs = [all_embeddings[cat][name] for cat in sorted(CLASS_MAP.keys()) if name in all_embeddings[cat]]
+        if available_embs:
+            combined_emb = np.mean(available_embs, axis=0)
+        else:
+            dim = next(iter(next(iter(all_embeddings.values())).values())).shape[0]
+            combined_emb = np.zeros(dim)
+        combined_matrix.append(combined_emb)
+    combined_matrix = np.array(combined_matrix)
+
+    if len(all_dataset_names) > 0:
+        for dist_metric in ['cosine', 'euclidean']:
+            dist_matrix = pairwise_distances(combined_matrix, metric=dist_metric)
+            
+            fig_w = max(12, min(28, len(all_dataset_names) * 1.0))
+            fig_h = max(10, min(24, len(all_dataset_names) * 0.8))
+            
+            plt.figure(figsize=(fig_w, fig_h), dpi=300)
+            sns.heatmap(dist_matrix, xticklabels=all_dataset_names, yticklabels=all_dataset_names, cmap='viridis')
+            plt.title(f"Pairwise {dist_metric.capitalize()} Distance of RF-DETR Signatures (All Classes)", fontsize=28, pad=20)
+            plt.xticks(rotation=90, fontsize=16)
+            plt.yticks(rotation=0, fontsize=16)
+            plt.tight_layout()
+            plt.savefig(os.path.join(OUTPUT_DIR, f"heatmap_{dist_metric}_all_classes.png"), dpi=300, bbox_inches='tight')
+            plt.close()
+        
+        n_clusters = min(4, len(all_dataset_names))
+        if n_clusters >= 2:
+            kmeans = KMeans(n_clusters=n_clusters, random_state=42).fit(combined_matrix)
+            
+            print("\nClustering Results for All Classes Combined:")
+            for i in range(n_clusters):
+                cluster_names = [all_dataset_names[j] for j in range(len(all_dataset_names)) if kmeans.labels_[j] == i]
+                print(f"Cluster {i}: {cluster_names}")
+                
+            n_samples = combined_matrix.shape[0]
+            perplexities = [5, 15, 30]
+            for perplexity in perplexities:
+                if n_samples - 1 < perplexity:
+                    continue
+                
+                tsne = TSNE(n_components=2, perplexity=perplexity, random_state=42)
+                tsne_2d = tsne.fit_transform(combined_matrix)
+                
+                plt.figure(figsize=(16, 16), dpi=300)
+                sns.scatterplot(x=tsne_2d[:, 0], y=tsne_2d[:, 1], hue=kmeans.labels_, palette="tab10", s=300)
+                
+                texts = []
+                for i, name in enumerate(all_dataset_names):
+                    texts.append(plt.text(tsne_2d[i, 0], tsne_2d[i, 1], name, fontsize=14, alpha=0.9))
+                    
+                adjust_text(texts, arrowprops=dict(arrowstyle='-', color='gray', lw=0.5))
+                    
+                plt.title(f"t-SNE (perp={perplexity}) of RF-DETR Signatures Colored by Cluster (All Classes)", fontsize=26, pad=20)
+                plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=16, borderaxespad=0.)
+                plt.tight_layout()
+                plt.savefig(os.path.join(OUTPUT_DIR, f"tsne_p{perplexity}_all_classes.png"), dpi=300, bbox_inches='tight')
+                plt.close()
+
+            # Cluster Visualization using UMAP
+            if n_samples > 2:
+                n_neighbors = min(15, n_samples - 1)
+                umap_reducer = umap.UMAP(n_components=2, n_neighbors=n_neighbors, random_state=42)
+                umap_2d = umap_reducer.fit_transform(combined_matrix)
+                
+                plt.figure(figsize=(16, 16), dpi=300)
+                sns.scatterplot(x=umap_2d[:, 0], y=umap_2d[:, 1], hue=kmeans.labels_, palette="tab10", s=300)
+                
+                texts = []
+                for i, name in enumerate(all_dataset_names):
+                    texts.append(plt.text(umap_2d[i, 0], umap_2d[i, 1], name, fontsize=14, alpha=0.9))
+                    
+                adjust_text(texts, arrowprops=dict(arrowstyle='-', color='gray', lw=0.5))
+                    
+                plt.title("UMAP of RF-DETR Signatures Colored by Cluster (All Classes)", fontsize=26, pad=20)
+                plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=16, borderaxespad=0.)
+                plt.tight_layout()
+                plt.savefig(os.path.join(OUTPUT_DIR, "umap_all_classes.png"), dpi=300, bbox_inches='tight')
+                plt.close()
 
 if __name__ == "__main__":
     print("Loading RF-DETR-Seg Backbone...")
