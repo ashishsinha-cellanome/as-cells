@@ -10,7 +10,7 @@ from sklearn.manifold import TSNE
 import umap.umap_ as umap
 from pathlib import Path
 from tqdm import tqdm
-from pycocotools.coco import COCO
+import pickle
 from sklearn.cluster import KMeans
 from sklearn.metrics import pairwise_distances
 from adjustText import adjust_text
@@ -23,8 +23,8 @@ OUTPUT_DIR = "/mnt/direct-attached/PHASE2_EVAL_RESULTS/selection_engine_rfdetr"
 _model_cfg = OmegaConf.load("configs/model/rfdetr_seg.yaml")
 CLASS_MAP = OmegaConf.to_container(_model_cfg.label_map, resolve=True)
 
-# Add model checkpoint path (can be overridden via CLI args later)
-CHECKPOINT_PATH = "/mnt/direct-attached/as-cells/RFDETR-Seg-ckpts/output/checkpoint_best_ema.pth"
+# Add model checkpoint path
+CHECKPOINT_PATH = "/mnt/personal/cellanome/checkpoints/ALL_CKPTS/RFDETR-Seg-ckpts/output/checkpoint_best_ema.pth"
 
 def build_rfdetr_backbone(checkpoint):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -39,64 +39,73 @@ def build_rfdetr_backbone(checkpoint):
         param.requires_grad = False
     return encoder, device
 
-def extract_features_for_image(img_path, coco, img_info, dataset_name, encoder, device):
+def extract_largest_object_and_features(img_path, mask_pkl_path, dataset_name, encoder, device):
     img = cv2.imread(str(img_path))
     if img is None:
         return {}
     img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     
-    ann_ids = coco.getAnnIds(imgIds=img_info['id'])
-    anns = coco.loadAnns(ann_ids)
-    
+    with open(mask_pkl_path, 'rb') as f:
+        mask_data = pickle.load(f)
+        
+    if not mask_data.get('annotations'):
+        return {}
+        
     results = {}
     
     # Process largest object per class
     anns_by_cat = {}
-    for ann in anns:
+    for ann in mask_data['annotations']:
         cat = int(ann['category_id'])
         if cat not in anns_by_cat:
             anns_by_cat[cat] = []
         anns_by_cat[cat].append(ann)
         
+    import pycocotools.mask as mask_util
+        
     for cat, cat_anns in anns_by_cat.items():
         if cat not in CLASS_MAP:
             continue
             
-        largest_ann = max(cat_anns, key=lambda a: a['bbox'][2] * a['bbox'][3])
-        x, y, w, h = [int(v) for v in largest_ann['bbox']]
+        largest_ann = max(cat_anns, key=lambda a: (a['bbox'][2]-a['bbox'][0])*(a['bbox'][3]-a['bbox'][1]))
+        x, y, x2, y2 = [int(v) for v in largest_ann['bbox']]
+        w, h = x2 - x, y2 - y
         
         if w <= 0 or h <= 0:
             continue
             
         # Create a masked version of the image using the segmentation mask
-        mask = coco.annToMask(largest_ann)
+        mask = mask_util.decode(largest_ann['segmentation'])
         mask_3d = np.repeat(mask[:, :, np.newaxis], 3, axis=2)
         
         img_h, img_w = img.shape[:2]
         x1, y1 = max(0, x), max(0, y)
-        x2, y2 = min(img_w, x + w), min(img_h, y + h)
+        x2_clip, y2_clip = min(img_w, x + w), min(img_h, y + h)
         
         mask_y1 = y1 - y
-        mask_y2 = mask_y1 + (y2 - y1)
+        mask_y2 = mask_y1 + (y2_clip - y1)
         mask_x1 = x1 - x
-        mask_x2 = mask_x1 + (x2 - x1)
+        mask_x2 = mask_x1 + (x2_clip - x1)
         
         mask_3d_cropped = mask_3d[mask_y1:mask_y2, mask_x1:mask_x2]
         
         masked_img = np.zeros_like(img)
-        masked_img[y1:y2, x1:x2] = img[y1:y2, x1:x2] * mask_3d_cropped
+        masked_img[y1:y2_clip, x1:x2_clip] = img[y1:y2_clip, x1:x2_clip] * mask_3d_cropped
             
         size = max(w, h)
         cx, cy = x + w//2, y + h//2
         sq_x1, sq_y1 = max(0, cx - size//2), max(0, cy - size//2)
-        sq_x2, sq_y2 = min(img.shape[1], cx + size//2), min(img.shape[0], cy + size//2)
+        sq_x2, sq_y2 = sq_x1 + size, sq_y1 + size
         
-        actual_crop = masked_img[sq_y1:sq_y2, sq_x1:sq_x2]
+        sq_x1_img, sq_y1_img = max(0, sq_x1), max(0, sq_y1)
+        sq_x2_img, sq_y2_img = min(img.shape[1], sq_x2), min(img.shape[0], sq_y2)
+        
+        actual_crop = masked_img[sq_y1_img:sq_y2_img, sq_x1_img:sq_x2_img]
         if actual_crop.size == 0:
             continue
             
         crop = np.zeros((size, size, 3), dtype=np.uint8)
-        offset_x, offset_y = sq_x1 - (cx - size//2), sq_y1 - (cy - size//2)
+        offset_x, offset_y = sq_x1_img - sq_x1, sq_y1_img - sq_y1
         crop[offset_y:offset_y+actual_crop.shape[0], offset_x:offset_x+actual_crop.shape[1]] = actual_crop
         
         # Resize for RFDETR backbone (requires input divisible by 24, e.g. 240x240)
@@ -106,6 +115,7 @@ def extract_features_for_image(img_path, coco, img_info, dataset_name, encoder, 
             torchvision.transforms.ToTensor(),
             torchvision.transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
         ])
+        
         input_tensor = transform(resized_crop).unsqueeze(0).to(device)
         
         with torch.no_grad():
@@ -119,7 +129,7 @@ def extract_features_for_image(img_path, coco, img_info, dataset_name, encoder, 
         pca = PCA(n_components=1)
         pca_features = pca.fit_transform(patches)
         
-        # Reshape to 20x20 (400)
+        # Reshape to 20x20
         grid = pca_features.reshape(20, 20)
         
         grid_min, grid_max = grid.min(), grid.max()
@@ -133,7 +143,7 @@ def extract_features_for_image(img_path, coco, img_info, dataset_name, encoder, 
         heatmap = cv2.applyColorMap(grid_255, cv2.COLORMAP_VIRIDIS)
         heatmap = cv2.resize(heatmap, (240, 240), interpolation=cv2.INTER_CUBIC)
         
-        # Create a binary mask from the resized_crop (non-black pixels)
+        # Create a binary mask from the resized_crop (non-black pixels, because of zero-padding and object masking)
         binary_mask = (resized_crop > 0).any(axis=2).astype(np.uint8) * 255
         
         # Apply the binary mask to the heatmap so background remains black
@@ -165,26 +175,29 @@ def process_all_datasets(encoder, device):
     all_embeddings = {cat: {} for cat in CLASS_MAP.keys()}
     base_dir = Path(DATA_DIR)
     
+    if not base_dir.exists():
+        print(f"Directory {base_dir} does not exist.")
+        return all_embeddings
+
     for ds in tqdm(list(base_dir.iterdir())):
         if not ds.is_dir():
             continue
-            
-        anno_file = ds / "test_annotations.json"
         img_dir = ds / "images" / "test"
+        mask_dir = ds / "masks" / "test"
         
-        if not anno_file.exists() or not img_dir.exists():
+        if not img_dir.exists() or not mask_dir.exists():
             continue
-            
-        coco = COCO(str(anno_file))
-        image_ids = coco.getImgIds()
-        if not image_ids:
-            continue
-            
-        # Select first image for signature
-        img_info = coco.loadImgs(image_ids[0])[0]
-        img_path = img_dir / img_info['file_name']
         
-        class_embs = extract_features_for_image(img_path, coco, img_info, ds.name, encoder, device)
+        imgs = list(img_dir.iterdir())
+        if not imgs:
+            continue
+        
+        first_img = imgs[0]
+        mask_path = mask_dir / f"{first_img.stem}.pkl"
+        if not mask_path.exists():
+            continue
+        
+        class_embs = extract_largest_object_and_features(first_img, mask_path, ds.name, encoder, device)
         for cat, emb in class_embs.items():
             all_embeddings[cat][ds.name] = emb
             
@@ -205,7 +218,9 @@ def generate_visualizations(all_embeddings):
         # 1. Pairwise Heatmaps
         for metric in ['cosine', 'euclidean']:
             dist_matrix = pairwise_distances(matrix, metric=metric)
-            plt.figure(figsize=(14, 12), dpi=300)
+            fig_w = max(12, min(28, len(names) * 1.0))
+            fig_h = max(10, min(24, len(names) * 0.8))
+            plt.figure(figsize=(fig_w, fig_h), dpi=300)
             sns.heatmap(dist_matrix, xticklabels=names, yticklabels=names, cmap='viridis')
             plt.title(f"Pairwise {metric.capitalize()} Distance (Class: {class_name})", fontsize=24, pad=20)
             plt.xticks(rotation=90)
