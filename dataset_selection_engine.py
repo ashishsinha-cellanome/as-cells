@@ -123,11 +123,11 @@ def extract_largest_object_and_features(img_path, mask_pkl_path, dataset_name, d
         # Normalize grid to (-1, 1) mathematically for the colorbar representation
         grid_min, grid_max = grid.min(), grid.max()
         if grid_max - grid_min < 1e-8:
-            grid_norm_11 = np.zeros_like(grid)
+            grid_norm_01 = np.zeros_like(grid)
         else:
-            grid_norm_11 = 2 * ((grid - grid_min) / (grid_max - grid_min)) - 1
+            grid_norm_01 = (grid - grid_min) / (grid_max - grid_min)
             
-        grid_255 = ((grid_norm_11 + 1) / 2 * 255).astype(np.uint8)
+        grid_255 = (grid_norm_01 * 255).astype(np.uint8)
         
         # Colormap and resize
         heatmap = cv2.applyColorMap(grid_255, cv2.COLORMAP_VIRIDIS)
@@ -142,7 +142,7 @@ def extract_largest_object_and_features(img_path, mask_pkl_path, dataset_name, d
         plt.imshow(overlay_rgb)
         plt.axis('off')
         
-        sm = plt.cm.ScalarMappable(cmap='viridis', norm=plt.Normalize(vmin=-1.0, vmax=1.0))
+        sm = plt.cm.ScalarMappable(cmap='viridis', norm=plt.Normalize(vmin=0.0, vmax=1.0))
         sm.set_array([])
         cbar = plt.colorbar(sm, ax=plt.gca(), fraction=0.046, pad=0.04)
         cbar.ax.tick_params(labelsize=10)
