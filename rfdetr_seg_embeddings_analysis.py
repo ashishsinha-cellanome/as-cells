@@ -16,6 +16,7 @@ import pycocotools.mask as mask_util
 from sklearn.cluster import KMeans
 from sklearn.metrics import pairwise_distances
 from adjustText import adjust_text
+from scipy.cluster.hierarchy import linkage, dendrogram
 from omegaconf import OmegaConf
 
 DATA_DIR = "/mnt/direct-attached/PHASE2"
@@ -270,6 +271,27 @@ def generate_visualizations(all_embeddings):
             plt.savefig(os.path.join(OUTPUT_DIR, f"heatmap_{metric}_{class_name}.png"))
             plt.close()
             
+            if metric == 'euclidean' and matrix.shape[0] > 1:
+                try:
+                    # Dendrogram
+                    Z = linkage(matrix, method='ward', metric='euclidean')
+                    plt.figure(figsize=(fig_w, fig_h), dpi=300)
+                    dendrogram(Z, labels=names, leaf_rotation=90, leaf_font_size=16)
+                    plt.title(f"Hierarchical Clustering Dendrogram of RF-DETR Signatures (Class: {class_name})", fontsize=28, pad=20)
+                    plt.tight_layout()
+                    plt.savefig(os.path.join(OUTPUT_DIR, f"dendrogram_euclidean_class_{class_name}.png"), dpi=300, bbox_inches='tight')
+                    plt.close()
+                    
+                    # Clustermap
+                    g = sns.clustermap(dist_matrix, row_linkage=Z, col_linkage=Z, xticklabels=names, yticklabels=names, cmap='viridis', figsize=(fig_w, fig_h))
+                    g.fig.suptitle(f"Clustermap Euclidean Distance of RF-DETR Signatures (Class: {class_name})", fontsize=28, y=1.02)
+                    plt.setp(g.ax_heatmap.get_xticklabels(), rotation=90, fontsize=16)
+                    plt.setp(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize=16)
+                    plt.savefig(os.path.join(OUTPUT_DIR, f"clustermap_euclidean_class_{class_name}.png"), dpi=300, bbox_inches='tight')
+                    plt.close()
+                except Exception as e:
+                    print(f"Failed to generate hierarchical clustering for {class_name}: {e}")
+            
         # 2. KMeans for colors
         n_clusters = min(4, len(names))
         if n_clusters < 2:
@@ -341,6 +363,27 @@ def generate_visualizations(all_embeddings):
             plt.tight_layout()
             plt.savefig(os.path.join(OUTPUT_DIR, f"heatmap_{dist_metric}_all_classes.png"), dpi=300, bbox_inches='tight')
             plt.close()
+            
+            if dist_metric == 'euclidean' and combined_matrix.shape[0] > 1:
+                try:
+                    # Dendrogram
+                    Z = linkage(combined_matrix, method='ward', metric='euclidean')
+                    plt.figure(figsize=(fig_w, fig_h), dpi=300)
+                    dendrogram(Z, labels=all_dataset_names, leaf_rotation=90, leaf_font_size=16)
+                    plt.title("Hierarchical Clustering Dendrogram of RF-DETR Signatures (All Classes)", fontsize=28, pad=20)
+                    plt.tight_layout()
+                    plt.savefig(os.path.join(OUTPUT_DIR, "dendrogram_euclidean_all_classes.png"), dpi=300, bbox_inches='tight')
+                    plt.close()
+                    
+                    # Clustermap
+                    g = sns.clustermap(dist_matrix, row_linkage=Z, col_linkage=Z, xticklabels=all_dataset_names, yticklabels=all_dataset_names, cmap='viridis', figsize=(fig_w, fig_h))
+                    g.fig.suptitle("Clustermap Euclidean Distance of RF-DETR Signatures (All Classes)", fontsize=28, y=1.02)
+                    plt.setp(g.ax_heatmap.get_xticklabels(), rotation=90, fontsize=16)
+                    plt.setp(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize=16)
+                    plt.savefig(os.path.join(OUTPUT_DIR, "clustermap_euclidean_all_classes.png"), dpi=300, bbox_inches='tight')
+                    plt.close()
+                except Exception as e:
+                    print(f"Failed to generate hierarchical clustering for All Classes: {e}")
         
         n_clusters = min(4, len(all_dataset_names))
         if n_clusters >= 2:
