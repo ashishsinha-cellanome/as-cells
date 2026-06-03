@@ -27,25 +27,25 @@ CLASS_MAP = {
 
 def build_rfdetr_backbone():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    # Load the fine-tuned RF-DETR-Seg medium model
-    checkpoint = "/mnt/direct-attached/as-cells/rf-detr-seg-medium-finetuned.pt"
+    # Load the fine-tuned RF-DETR-Seg large model
+    checkpoint = "/mnt/personal/cellanome/checkpoints/ALL_CKPTS/RFDETR-Seg-ckpts/output/checkpoint_best_ema.pth"
     import rfdetr
     
-    print(f"Loading RFDETRSegMedium from {checkpoint}")
+    print(f"Loading RFDETRSegLarge from {checkpoint}")
     if not os.path.exists(checkpoint):
         print(f"ERROR: Checkpoint file does not exist at {checkpoint}")
         print("Falling back to randomly initialized RF-DETR backbone.")
-        model = rfdetr.RFDETRSegMedium(pretrain_weights=None, group_detr=1, num_classes=4)
+        model = rfdetr.RFDETRSegLarge(pretrain_weights=None, group_detr=1, num_classes=4)
     else:
         try:
-            model = rfdetr.RFDETRSegMedium(pretrain_weights=checkpoint, group_detr=1, num_classes=4)
+            model = rfdetr.RFDETRSegLarge(pretrain_weights=checkpoint, group_detr=1, num_classes=4)
             print("Successfully loaded the fine-tuned RF-DETR-Seg checkpoint.")
         except Exception as e:
             import traceback
             print(f"Failed to load checkpoint from {checkpoint}.")
             print(f"Exception details:\n{traceback.format_exc()}")
             print("Falling back to randomly initialized RF-DETR backbone (since download might hang on isolated nodes).")
-            model = rfdetr.RFDETRSegMedium(pretrain_weights=None, group_detr=1, num_classes=4)
+            model = rfdetr.RFDETRSegLarge(pretrain_weights=None, group_detr=1, num_classes=4)
         
     model.model.model.to(device)
     model.model.model.eval()

@@ -11,13 +11,15 @@ import umap.umap_ as umap
 from pathlib import Path
 from tqdm import tqdm
 import pickle
+from pycocotools.coco import COCO
+import pycocotools.mask as mask_util
 from sklearn.cluster import KMeans
 from sklearn.metrics import pairwise_distances
 from adjustText import adjust_text
 from omegaconf import OmegaConf
 
 DATA_DIR = "/mnt/direct-attached/PHASE2"
-OUTPUT_DIR = "/mnt/direct-attached/PHASE2_EVAL_RESULTS/selection_engine_rfdetr"
+OUTPUT_DIR = "/mnt/direct-attached/PHASE2_EVAL_RESULTS/selection_engine_rfdetr_robust"
 
 # Load the label map dynamically from the rfdetr_seg model config
 _model_cfg = OmegaConf.load("configs/model/rfdetr_seg.yaml")
@@ -30,7 +32,21 @@ def build_rfdetr_backbone(checkpoint):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     import rfdetr
     print(f"Loading RFDETRSegLarge from {checkpoint}")
-    model = rfdetr.RFDETRSegLarge(pretrain_weights=checkpoint, group_detr=1, num_classes=4)
+    if not os.path.exists(checkpoint):
+        print(f"ERROR: Checkpoint file does not exist at {checkpoint}")
+        print("Falling back to randomly initialized RF-DETR backbone.")
+        model = rfdetr.RFDETRSegLarge(pretrain_weights=None, group_detr=1, num_classes=4)
+    else:
+        try:
+            model = rfdetr.RFDETRSegLarge(pretrain_weights=checkpoint, group_detr=1, num_classes=4)
+            print("Successfully loaded the fine-tuned RF-DETR-Seg checkpoint.")
+        except Exception as e:
+            import traceback
+            print(f"Failed to load checkpoint from {checkpoint}.")
+            print(f"Exception details:\n{traceback.format_exc()}")
+            print("Falling back to randomly initialized RF-DETR backbone.")
+            model = rfdetr.RFDETRSegLarge(pretrain_weights=None, group_detr=1, num_classes=4)
+        
     model.model.model.to(device)
     model.model.model.eval()
     
@@ -39,7 +55,7 @@ def build_rfdetr_backbone(checkpoint):
         param.requires_grad = False
     return encoder, device
 
-def extract_largest_object_and_features(img_path, mask_pkl_path, dataset_name, encoder, device):
+def extract_features_for_image(img_path, mask_pkl_path, dataset_name, encoder, device):
     img = cv2.imread(str(img_path))
     if img is None:
         return {}
@@ -51,9 +67,9 @@ def extract_largest_object_and_features(img_path, mask_pkl_path, dataset_name, e
     if not mask_data.get('annotations'):
         return {}
         
-    results = {}
+    results = {cat: [] for cat in CLASS_MAP.keys()}
     
-    # Process largest object per class
+    # Group annotations by category
     anns_by_cat = {}
     for ann in mask_data['annotations']:
         cat = int(ann['category_id'])
@@ -61,114 +77,129 @@ def extract_largest_object_and_features(img_path, mask_pkl_path, dataset_name, e
             anns_by_cat[cat] = []
         anns_by_cat[cat].append(ann)
         
-    import pycocotools.mask as mask_util
-        
     for cat, cat_anns in anns_by_cat.items():
         if cat not in CLASS_MAP:
             continue
             
-        largest_ann = max(cat_anns, key=lambda a: (a['bbox'][2]-a['bbox'][0])*(a['bbox'][3]-a['bbox'][1]))
-        x, y, x2, y2 = [int(v) for v in largest_ann['bbox']]
-        w, h = x2 - x, y2 - y
+        class_name = CLASS_MAP[cat]
         
-        if w <= 0 or h <= 0:
-            continue
+        # Sort by bounding box area descending and take top 5
+        sorted_anns = sorted(cat_anns, key=lambda a: (a['bbox'][2]-a['bbox'][0])*(a['bbox'][3]-a['bbox'][1]), reverse=True)
+        top_anns = sorted_anns[:5]
+        
+        for rank, ann in enumerate(top_anns):
+            x, y, x2, y2 = [int(v) for v in ann['bbox']]
+            w, h = x2 - x, y2 - y
+            if w <= 0 or h <= 0:
+                continue
+                
+            # Create a masked version of the image using the segmentation mask
+            mask = mask_util.decode(ann['segmentation'])
+            mask_3d = np.repeat(mask[:, :, np.newaxis], 3, axis=2)
             
-        # Create a masked version of the image using the segmentation mask
-        mask = mask_util.decode(largest_ann['segmentation'])
-        mask_3d = np.repeat(mask[:, :, np.newaxis], 3, axis=2)
-        
-        img_h, img_w = img.shape[:2]
-        x1, y1 = max(0, x), max(0, y)
-        x2_clip, y2_clip = min(img_w, x + w), min(img_h, y + h)
-        
-        mask_y1 = y1 - y
-        mask_y2 = mask_y1 + (y2_clip - y1)
-        mask_x1 = x1 - x
-        mask_x2 = mask_x1 + (x2_clip - x1)
-        
-        mask_3d_cropped = mask_3d[mask_y1:mask_y2, mask_x1:mask_x2]
-        
-        masked_img = np.zeros_like(img)
-        masked_img[y1:y2_clip, x1:x2_clip] = img[y1:y2_clip, x1:x2_clip] * mask_3d_cropped
+            img_h, img_w = img.shape[:2]
             
-        size = max(w, h)
-        cx, cy = x + w//2, y + h//2
-        sq_x1, sq_y1 = max(0, cx - size//2), max(0, cy - size//2)
-        sq_x2, sq_y2 = sq_x1 + size, sq_y1 + size
-        
-        sq_x1_img, sq_y1_img = max(0, sq_x1), max(0, sq_y1)
-        sq_x2_img, sq_y2_img = min(img.shape[1], sq_x2), min(img.shape[0], sq_y2)
-        
-        actual_crop = masked_img[sq_y1_img:sq_y2_img, sq_x1_img:sq_x2_img]
-        if actual_crop.size == 0:
-            continue
+            x1_clip, y1_clip = max(0, x), max(0, y)
+            x2_clip, y2_clip = min(img_w, x + w), min(img_h, y + h)
             
-        crop = np.zeros((size, size, 3), dtype=np.uint8)
-        offset_x, offset_y = sq_x1_img - sq_x1, sq_y1_img - sq_y1
-        crop[offset_y:offset_y+actual_crop.shape[0], offset_x:offset_x+actual_crop.shape[1]] = actual_crop
-        
-        # Resize for RFDETR backbone (requires input divisible by 24, e.g. 240x240)
-        resized_crop = cv2.resize(crop, (240, 240))
-        
-        transform = torchvision.transforms.Compose([
-            torchvision.transforms.ToTensor(),
-            torchvision.transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-        ])
-        
-        input_tensor = transform(resized_crop).unsqueeze(0).to(device)
-        
-        with torch.no_grad():
-            features = encoder(input_tensor)
-            last_feat = features[-1]
-            cls_token = last_feat.mean(dim=(2, 3)) # (1, C) Global Avg Pooling
-            patch_tokens = last_feat.flatten(2).transpose(1, 2) # (1, H*W, C)
+            mask_y1 = y1_clip - y
+            mask_y2 = mask_y1 + (y2_clip - y1_clip)
+            mask_x1 = x1_clip - x
+            mask_x2 = mask_x1 + (x2_clip - x1_clip)
             
-        # PCA overlay
-        patches = patch_tokens[0].cpu().numpy()
-        pca = PCA(n_components=1)
-        pca_features = pca.fit_transform(patches)
-        
-        # Reshape to 20x20
-        grid = pca_features.reshape(20, 20)
-        
-        grid_min, grid_max = grid.min(), grid.max()
-        if grid_max - grid_min < 1e-8:
-            grid_norm_01 = np.zeros_like(grid)
-        else:
-            grid_norm_01 = (grid - grid_min) / (grid_max - grid_min)
+            mask_3d_cropped = mask_3d[mask_y1:mask_y2, mask_x1:mask_x2]
             
-        grid_255 = (grid_norm_01 * 255).astype(np.uint8)
-        
-        heatmap = cv2.applyColorMap(grid_255, cv2.COLORMAP_VIRIDIS)
-        heatmap = cv2.resize(heatmap, (240, 240), interpolation=cv2.INTER_CUBIC)
-        
-        # Create a binary mask from the resized_crop (non-black pixels, because of zero-padding and object masking)
-        binary_mask = (resized_crop > 0).any(axis=2).astype(np.uint8) * 255
-        
-        # Apply the binary mask to the heatmap so background remains black
-        heatmap = cv2.bitwise_and(heatmap, heatmap, mask=binary_mask)
-        
-        # Overlay heatmap on original resized crop
-        overlay = cv2.addWeighted(resized_crop, 0.5, heatmap, 0.5, 0)
-        
-        plt.figure(figsize=(5, 4), dpi=300)
-        overlay_rgb = cv2.cvtColor(overlay, cv2.COLOR_BGR2RGB)
-        plt.imshow(overlay_rgb)
-        plt.axis('off')
-        
-        sm = plt.cm.ScalarMappable(cmap='viridis', norm=plt.Normalize(vmin=0.0, vmax=1.0))
-        sm.set_array([])
-        cbar = plt.colorbar(sm, ax=plt.gca(), fraction=0.046, pad=0.04)
-        cbar.ax.tick_params(labelsize=10)
-        
-        os.makedirs(OUTPUT_DIR, exist_ok=True)
-        out_path = os.path.join(OUTPUT_DIR, f"{dataset_name}_{Path(img_path).stem}_{CLASS_MAP[cat]}_emb.png")
-        plt.savefig(out_path, bbox_inches='tight', pad_inches=0.1)
-        plt.close()
+            masked_img = np.zeros_like(img)
+            masked_img[y1_clip:y2_clip, x1_clip:x2_clip] = img[y1_clip:y2_clip, x1_clip:x2_clip] * mask_3d_cropped
+                
+            size = max(w, h)
+            cx, cy = x + w//2, y + h//2
+            sq_x1, sq_y1 = cx - size//2, cy - size//2
+            sq_x2, sq_y2 = sq_x1 + size, sq_y1 + size
             
-        results[cat] = cls_token[0].cpu().numpy()
-        
+            sq_x1_img, sq_y1_img = max(0, sq_x1), max(0, sq_y1)
+            sq_x2_img, sq_y2_img = min(img.shape[1], sq_x2), min(img.shape[0], sq_y2)
+            
+            actual_crop = masked_img[sq_y1_img:sq_y2_img, sq_x1_img:sq_x2_img]
+            if actual_crop.size == 0:
+                continue
+                
+            crop = np.zeros((size, size, 3), dtype=np.uint8)
+            offset_x, offset_y = sq_x1_img - sq_x1, sq_y1_img - sq_y1
+            crop[offset_y:offset_y+actual_crop.shape[0], offset_x:offset_x+actual_crop.shape[1]] = actual_crop
+            
+            # Resize for RFDETR backbone (requires input divisible by 24 for standard dinov2 backbone defaults in rfdetr, e.g. 240x240)
+            resized_crop = cv2.resize(crop, (240, 240), interpolation=cv2.INTER_AREA)
+            
+            transform = torchvision.transforms.Compose([
+                torchvision.transforms.ToTensor(),
+                torchvision.transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+            ])
+            
+            input_tensor = transform(resized_crop).unsqueeze(0).to(device)
+            
+            with torch.no_grad():
+                features = encoder(input_tensor)
+                last_feat = features[-1]
+                cls_token = last_feat.mean(dim=(2, 3)) # (1, C) Global Avg Pooling
+                patch_tokens = last_feat.flatten(2).transpose(1, 2) # (1, H*W, C)
+                
+            # --- Best Practice PCA Overlay ---
+            patches = patch_tokens[0].cpu().numpy()
+            
+            # Downsample the perfect binary mask to the 20x20 patch grid (240 / 12 = 20)
+            binary_crop_mask = (resized_crop > 0).any(axis=2).astype(np.uint8)
+            patch_mask = cv2.resize(binary_crop_mask, (20, 20), interpolation=cv2.INTER_NEAREST)
+            patch_mask_flat = patch_mask.flatten()
+            
+            foreground_indices = np.where(patch_mask_flat > 0)[0]
+            
+            if len(foreground_indices) > 0:
+                foreground_patches = patches[foreground_indices]
+                
+                pca = PCA(n_components=1)
+                fg_pca_features = pca.fit_transform(foreground_patches)
+                
+                # Min-Max Scale foreground features [0, 1]
+                fg_min, fg_max = fg_pca_features.min(), fg_pca_features.max()
+                if fg_max - fg_min < 1e-8:
+                    fg_pca_norm = np.zeros_like(fg_pca_features)
+                else:
+                    fg_pca_norm = (fg_pca_features - fg_min) / (fg_max - fg_min)
+                    
+                # Reconstruct full 20x20 grid
+                grid_norm_01 = np.zeros((400, 1))
+                grid_norm_01[foreground_indices] = fg_pca_norm
+                
+                grid_255 = (grid_norm_01.reshape(20, 20) * 255).astype(np.uint8)
+                
+                # Apply Viridis
+                heatmap = cv2.applyColorMap(grid_255, cv2.COLORMAP_VIRIDIS)
+                heatmap = cv2.resize(heatmap, (240, 240), interpolation=cv2.INTER_CUBIC)
+                
+                # Mask out the background exactly
+                heatmap = cv2.bitwise_and(heatmap, heatmap, mask=binary_crop_mask)
+                
+                # Overlay
+                overlay = cv2.addWeighted(resized_crop, 0.5, heatmap, 0.5, 0)
+                
+                plt.figure(figsize=(5, 4), dpi=300)
+                overlay_rgb = cv2.cvtColor(overlay, cv2.COLOR_BGR2RGB)
+                plt.imshow(overlay_rgb)
+                plt.axis('off')
+                
+                sm = plt.cm.ScalarMappable(cmap='viridis', norm=plt.Normalize(vmin=0.0, vmax=1.0))
+                sm.set_array([])
+                cbar = plt.colorbar(sm, ax=plt.gca(), fraction=0.046, pad=0.04)
+                cbar.ax.tick_params(labelsize=10)
+                
+                os.makedirs(OUTPUT_DIR, exist_ok=True)
+                out_path = os.path.join(OUTPUT_DIR, f"{dataset_name}_{Path(img_path).stem}_{class_name}_rank{rank+1}_emb.png")
+                plt.savefig(out_path, bbox_inches='tight', pad_inches=0.1)
+                plt.close()
+                
+            results[cat].append(cls_token[0].cpu().numpy())
+            
     return results
 
 def process_all_datasets(encoder, device):
@@ -188,18 +219,29 @@ def process_all_datasets(encoder, device):
         if not img_dir.exists() or not mask_dir.exists():
             continue
         
-        imgs = list(img_dir.iterdir())
-        if not imgs:
+        imgs = sorted(list(img_dir.iterdir()))
+        valid_imgs = []
+        for img in imgs:
+            mask_path = mask_dir / f"{img.stem}.pkl"
+            if mask_path.exists():
+                valid_imgs.append((img, mask_path))
+            if len(valid_imgs) == 10:
+                break
+                
+        if not valid_imgs:
             continue
+            
+        ds_cat_embeddings = {cat: [] for cat in CLASS_MAP.keys()}
         
-        first_img = imgs[0]
-        mask_path = mask_dir / f"{first_img.stem}.pkl"
-        if not mask_path.exists():
-            continue
-        
-        class_embs = extract_largest_object_and_features(first_img, mask_path, ds.name, encoder, device)
-        for cat, emb in class_embs.items():
-            all_embeddings[cat][ds.name] = emb
+        for img_path, mask_path in valid_imgs:
+            class_embs = extract_features_for_image(img_path, mask_path, ds.name, encoder, device)
+            for cat, embs in class_embs.items():
+                ds_cat_embeddings[cat].extend(embs)
+                
+        # Aggregate (Mean) Top 50 features per class for this dataset
+        for cat, embs in ds_cat_embeddings.items():
+            if embs:
+                all_embeddings[cat][ds.name] = np.mean(embs, axis=0)
             
     return all_embeddings
 
@@ -274,7 +316,7 @@ def generate_visualizations(all_embeddings):
     all_dataset_names = list(all_dataset_names)
     combined_matrix = []
     for name in all_dataset_names:
-        # Aggregate over each class label (mean of available class embeddings for this dataset)
+        # Aggregate over each class label
         available_embs = [all_embeddings[cat][name] for cat in sorted(CLASS_MAP.keys()) if name in all_embeddings[cat]]
         if available_embs:
             combined_emb = np.mean(available_embs, axis=0)

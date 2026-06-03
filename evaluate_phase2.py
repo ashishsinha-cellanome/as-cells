@@ -15,6 +15,7 @@ from pathlib import Path
 from omegaconf import DictConfig
 from pycocotools.coco import COCO
 from pycocotools.cocoeval import COCOeval
+from utils.pairing_utils import pair_gts_dets_bbox
 
 def load_model(model_key, model_cfg):
     model_type = model_cfg.type
@@ -27,7 +28,7 @@ def load_model(model_key, model_cfg):
             return None
 
     if model_type == "yolo":
-        if "yolov5" in checkpoint.lower() or model_key == "yolo" or "yolov5" in model_key.lower():
+        if "yolov5" in model_key.lower():
             import sys
             import copy
             
@@ -35,13 +36,18 @@ def load_model(model_key, model_cfg):
             
             while '' in sys.path: sys.path.remove('')
             while os.getcwd() in sys.path: sys.path.remove(os.getcwd())
+            if os.path.abspath(os.getcwd()) in sys.path: sys.path.remove(os.path.abspath(os.getcwd()))
+            
+            # Remove any loaded 'utils' modules from as-cells to prevent conflicts
+            for k in list(sys.modules.keys()):
+                if k == 'utils' or k.startswith('utils.'):
+                    del sys.modules[k]
             
             repo_path = os.path.join(os.getcwd(), "models", "yolov5")
             sys.path.insert(0, repo_path)
             
-            cached_utils = None
-            if 'utils' in sys.modules:
-                cached_utils = sys.modules.pop('utils')
+            # Cache all current modules
+            saved_modules = {k: v for k, v in sys.modules.items()}
             
             try:
                 model = torch.hub.load(repo_path, 'custom', path=checkpoint, source='local')
@@ -50,8 +56,12 @@ def load_model(model_key, model_cfg):
                 raise e
             finally:
                 sys.path = original_sys_path
-                if cached_utils is not None:
-                    sys.modules['utils'] = cached_utils
+                # Restore modules exactly as they were
+                for k in list(sys.modules.keys()):
+                    if k not in saved_modules and k.startswith(("models", "utils", "ultralytics")):
+                        del sys.modules[k]
+                for k, v in saved_modules.items():
+                    sys.modules[k] = v
             return model
         else:
             from ultralytics import YOLO
@@ -62,13 +72,43 @@ def load_model(model_key, model_cfg):
                 raise e
             return model
         
-    elif model_type == "rf_detr":
-        try:
-            import rfdetr
-            model = rfdetr.RFDETRSegLarge(pretrain_weights=checkpoint, group_detr=1, num_classes=4)
-        except ImportError:
-            raise NotImplementedError("RF-DETR loading stub - 'rfdetr' module not found in environment.")
-        return model
+    elif model_type in ["rf_detr", "rf_detr_lightning"]:
+        if model_type == "rf_detr":
+            try:
+                import rfdetr
+                if "base" in model_key.lower():
+                    model = rfdetr.RFDETRBase(pretrain_weights=checkpoint, group_detr=1, num_classes=4)
+                elif "medium" in model_key.lower() and "seg" not in model_key.lower():
+                    model = rfdetr.RFDETRMedium(pretrain_weights=checkpoint, group_detr=1, num_classes=4, patch_size=12)
+                elif "seg" in model_key.lower() and "medium" in model_key.lower():
+                    model = rfdetr.RFDETRSegMedium(pretrain_weights=checkpoint, group_detr=1, num_classes=4)
+                else:
+                    model = rfdetr.RFDETRSegLarge(pretrain_weights=checkpoint, group_detr=1, num_classes=4)
+            except ImportError:
+                raise NotImplementedError("RF-DETR loading stub - 'rfdetr' module not found in environment.")
+            return model
+        else:
+            from models.rf_detr_lightning_module import RFDETRLightningModule
+            from omegaconf import OmegaConf
+            try:
+                ckpt = torch.load(checkpoint, map_location="cpu", weights_only=False)
+                # Some checkpoints might be raw state_dicts, some might be PL checkpionts
+                if "hyper_parameters" in ckpt:
+                    config = ckpt["hyper_parameters"].get("config")
+                else:
+                    # Load default config
+                    config = OmegaConf.load("configs/config.yaml")
+                
+                model = RFDETRLightningModule(config=config)
+                if "state_dict" in ckpt:
+                    model.load_state_dict(ckpt["state_dict"], strict=False)
+                elif "ema_state_dict" in ckpt:
+                    model.model.load_state_dict(ckpt["ema_state_dict"], strict=False)
+                else:
+                    model.load_state_dict(ckpt, strict=False)
+            except Exception as e:
+                raise NotImplementedError(f"RF-DETR Lightning loading failed: {e}")
+            return model
         
     elif model_type == "rt_detr":
         try:
@@ -402,7 +442,7 @@ def main(cfg: DictConfig):
             if model is None:
                 continue
             if model_cfg.type == "rf_detr":
-                model.optimize_for_inference()
+                pass # model.optimize_for_inference() # Removed as it raises AttributeError
         except Exception as e:
             print(f"[ERROR] Skipping {model_key} due to load failure: {e}")
             continue
@@ -501,7 +541,6 @@ def main(cfg: DictConfig):
                         gt_boxes = np.array([[a['bbox'][0], a['bbox'][1], a['bbox'][0]+a['bbox'][2], a['bbox'][1]+a['bbox'][3]] for a in cat_anns]) if len(cat_anns) > 0 else np.zeros((0, 4))
                         det_boxes = np.array([[d['bbox'][0], d['bbox'][1], d['bbox'][0]+d['bbox'][2], d['bbox'][1]+d['bbox'][3]] for d in cat_dets]) if len(cat_dets) > 0 else np.zeros((0, 4))
                         
-                        from utils.pairing_utils import pair_gts_dets_bbox
                         paired_idx, unpaired_gts, unpaired_dets = pair_gts_dets_bbox(gt_boxes, det_boxes, 0.5)
                         
                         class_metrics[cat_id]["TP"] += len(paired_idx)
