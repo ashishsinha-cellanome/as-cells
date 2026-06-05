@@ -8,6 +8,7 @@ from PIL import Image, ImageDraw, ImageFont
 import torch
 import pytorch_lightning as pl
 
+from utils.peft_utils import apply_peft
 from utils.coco_eval_utils import (
     to_cpu_device,
     convert_preds_to_coco,
@@ -33,9 +34,13 @@ class RFDETRLightningModule(pl.LightningModule):
         test_coco_gt=None,
         val_image_root=None,
         test_image_root=None,
+        **kwargs,
     ):
         super().__init__()
         self.model = model
+        self.peft = kwargs.get('peft', False) or (config.model.get('peft', False) if hasattr(config, 'model') else False)
+        if self.peft:
+            self.model = apply_peft(self.model, "rf_detr")
         self.criterion = criterion
         self.postprocess = postprocess
         self.config = config
@@ -843,8 +848,8 @@ class RFDETRLightningModule(pl.LightningModule):
 
             gt_counts = Counter(
                 [
-                    label_map.get(int(l)) or label_map.get(str(int(l))) or str(l)
-                    for l in gt_labels
+                    label_map.get(int(lbl)) or label_map.get(str(int(lbl))) or str(lbl)
+                    for lbl in gt_labels
                 ]
             )
             pred_counts = Counter(pred_class_names)
@@ -1071,8 +1076,8 @@ class RFDETRLightningModule(pl.LightningModule):
                     valid_indices = preds["scores"] >= viz_threshold
                     valid_labels = preds["labels"][valid_indices]
                     label_map = self.config.model.label_map
-                    for l in valid_labels:
-                        l_item = l.item() if torch.is_tensor(l) else int(l)
+                    for lbl in valid_labels:
+                        l_item = lbl.item() if torch.is_tensor(lbl) else int(lbl)
                         name = (
                             label_map.get(int(l_item))
                             or label_map.get(str(l_item))
@@ -1098,8 +1103,8 @@ class RFDETRLightningModule(pl.LightningModule):
 
             gt_counts = Counter(
                 [
-                    label_map.get(int(l)) or label_map.get(str(l)) or str(l)
-                    for l in gt_labels
+                    label_map.get(int(lbl)) or label_map.get(str(lbl)) or str(lbl)
+                    for lbl in gt_labels
                 ]
             )
             pred_counts = Counter(pred_class_names)
