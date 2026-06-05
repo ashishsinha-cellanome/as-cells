@@ -69,27 +69,35 @@ def extract_features_for_image(img_path, mask_pkl_path, dataset_name, dinov2_mod
         top_anns = sorted_anns[:5]
         
         for rank, ann in enumerate(top_anns):
-            x, y, x2, y2 = [int(v) for v in ann['bbox']]
-            w, h = x2 - x, y2 - y
+            x, y, w, h = [int(float(v)) for v in ann['bbox']]
             if w <= 0 or h <= 0:
                 continue
                 
-            # Create a masked version of the image using the segmentation mask
-            mask = mask_util.decode(ann['segmentation'])
-            mask_3d = np.repeat(mask[:, :, np.newaxis], 3, axis=2)
-            
             img_h, img_w = img.shape[:2]
+            
+            # Create a masked version of the image using the segmentation mask
+            if type(ann['segmentation']) == list:
+                rle = mask_util.frPyObjects(ann['segmentation'], img_h, img_w)
+                mask = mask_util.decode(rle)
+            else:
+                mask = mask_util.decode(ann['segmentation'])
+            if len(mask.shape) == 3: # sometimes decode returns (H, W, 1)
+                mask = mask.squeeze(2)
+                
+            mask_3d = np.repeat(mask[:, :, np.newaxis], 3, axis=2)
             
             # Clip to image boundaries
             x1_clip, y1_clip = max(0, x), max(0, y)
             x2_clip, y2_clip = min(img_w, x + w), min(img_h, y + h)
             
-            mask_y1 = y1_clip - y
-            mask_y2 = mask_y1 + (y2_clip - y1_clip)
-            mask_x1 = x1_clip - x
-            mask_x2 = mask_x1 + (x2_clip - x1_clip)
-            
-            mask_3d_cropped = mask_3d[mask_y1:mask_y2, mask_x1:mask_x2]
+            if mask.shape[:2] == (img_h, img_w):
+                mask_3d_cropped = mask_3d[y1_clip:y2_clip, x1_clip:x2_clip]
+            else:
+                mask_y1 = y1_clip - y
+                mask_y2 = mask_y1 + (y2_clip - y1_clip)
+                mask_x1 = x1_clip - x
+                mask_x2 = mask_x1 + (x2_clip - x1_clip)
+                mask_3d_cropped = mask_3d[mask_y1:mask_y2, mask_x1:mask_x2]
             
             masked_img = np.zeros_like(img)
             masked_img[y1_clip:y2_clip, x1_clip:x2_clip] = img[y1_clip:y2_clip, x1_clip:x2_clip] * mask_3d_cropped

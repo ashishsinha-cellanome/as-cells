@@ -1,4 +1,6 @@
 import os
+import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import cv2
 import torch
 import torchvision
@@ -67,7 +69,45 @@ def build_rfdetr_backbone(checkpoint):
         param.requires_grad = False
     return encoder, device
 
-def extract_crops_and_features(img_path, mask_pkl_path, encoder, device):
+
+def save_crop_visualizations(ds_name, class_name, crops, output_dir):
+    if not crops:
+        return
+    crops_np = np.array(crops, dtype=np.float32) / 255.0
+    mean_img = np.mean(crops_np, axis=0)
+    var_img = np.var(crops_np, axis=0)
+    if np.max(var_img) > 0:
+        var_img_norm = var_img / np.max(var_img)
+    else:
+        var_img_norm = var_img
+    os.makedirs(output_dir, exist_ok=True)
+    plt.figure(figsize=(10, 5))
+    plt.subplot(1, 2, 1)
+    plt.imshow(mean_img)
+    plt.title(f"{ds_name}\nMean Crop (n={len(crops)})")
+    plt.axis('off')
+    plt.subplot(1, 2, 2)
+    var_heatmap = np.mean(var_img_norm, axis=-1)
+    plt.imshow(var_heatmap, cmap='hot')
+    plt.title("Variance Heatmap")
+    plt.axis('off')
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, f"{ds_name}_{class_name}_mean_var.png"), bbox_inches='tight')
+    plt.close()
+    
+    n_samples = min(16, len(crops))
+    if n_samples > 0:
+        grid_size = int(np.ceil(np.sqrt(n_samples)))
+        plt.figure(figsize=(grid_size * 2, grid_size * 2))
+        for i in range(n_samples):
+            plt.subplot(grid_size, grid_size, i + 1)
+            plt.imshow(crops[i])
+            plt.axis('off')
+        plt.tight_layout()
+        plt.savefig(os.path.join(output_dir, f"{ds_name}_{class_name}_samples.png"), bbox_inches='tight')
+        plt.close()
+
+def extract_crops_cpu(img_path, mask_pkl_path, input_size):
     img = cv2.imread(str(img_path))
     if img is None:
         return {}
@@ -80,32 +120,42 @@ def extract_crops_and_features(img_path, mask_pkl_path, encoder, device):
         return {}
         
     results = {cat: [] for cat in TARGET_CLASSES}
+    crops_by_cat = {cat: [] for cat in TARGET_CLASSES}
     
     for ann in mask_data['annotations']:
         cat = int(ann['category_id'])
         if cat not in TARGET_CLASSES:
             continue
             
-        x, y, x2, y2 = [int(v) for v in ann['bbox']]
+        x, y, x2, y2 = [int(float(v)) for v in ann['bbox']]
         w, h = x2 - x, y2 - y
         if w <= 0 or h <= 0:
             continue
             
-        # Create a masked version of the image using the segmentation mask
-        mask = mask_util.decode(ann['segmentation'])
-        mask_3d = np.repeat(mask[:, :, np.newaxis], 3, axis=2)
-        
         img_h, img_w = img.shape[:2]
+        
+        # Create a masked version of the image using the segmentation mask
+        if isinstance(ann['segmentation'], list):
+            rle = mask_util.frPyObjects(ann['segmentation'], img_h, img_w)
+            mask = mask_util.decode(rle)
+        else:
+            mask = mask_util.decode(ann['segmentation'])
+        if len(mask.shape) == 3: # sometimes decode returns (H, W, 1)
+            mask = mask.squeeze(2)
+            
+        mask_3d = np.repeat(mask[:, :, np.newaxis], 3, axis=2)
         
         x1_clip, y1_clip = max(0, x), max(0, y)
         x2_clip, y2_clip = min(img_w, x + w), min(img_h, y + h)
         
-        mask_y1 = y1_clip - y
-        mask_y2 = mask_y1 + (y2_clip - y1_clip)
-        mask_x1 = x1_clip - x
-        mask_x2 = mask_x1 + (x2_clip - x1_clip)
-        
-        mask_3d_cropped = mask_3d[mask_y1:mask_y2, mask_x1:mask_x2]
+        if mask.shape[:2] == (img_h, img_w):
+            mask_3d_cropped = mask_3d[y1_clip:y2_clip, x1_clip:x2_clip]
+        else:
+            mask_y1 = y1_clip - y
+            mask_y2 = mask_y1 + (y2_clip - y1_clip)
+            mask_x1 = x1_clip - x
+            mask_x2 = mask_x1 + (x2_clip - x1_clip)
+            mask_3d_cropped = mask_3d[mask_y1:mask_y2, mask_x1:mask_x2]
         
         masked_img = np.zeros_like(img)
         masked_img[y1_clip:y2_clip, x1_clip:x2_clip] = img[y1_clip:y2_clip, x1_clip:x2_clip] * mask_3d_cropped
@@ -127,63 +177,74 @@ def extract_crops_and_features(img_path, mask_pkl_path, encoder, device):
         crop[offset_y:offset_y+actual_crop.shape[0], offset_x:offset_x+actual_crop.shape[1]] = actual_crop
         
         # Resize for RFDETR backbone (240x240)
-        resized_crop = cv2.resize(crop, (240, 240), interpolation=cv2.INTER_AREA)
+        resized_crop = cv2.resize(crop, (input_size, input_size), interpolation=cv2.INTER_AREA)
+        crops_by_cat[cat].append(resized_crop)
         
-        transform = torchvision.transforms.Compose([
-            torchvision.transforms.ToTensor(),
-            torchvision.transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-        ])
-        
-        input_tensor = transform(resized_crop).unsqueeze(0).to(device)
-        
-        with torch.no_grad():
-            features = encoder(input_tensor)
-            last_feat = features[-1]
-            cls_token = last_feat.mean(dim=(2, 3)) # (1, C) Global Avg Pooling
-            
-        results[cat].append(cls_token[0].cpu().numpy())
-            
-    return results
+    return crops_by_cat
+
 
 def process_all_datasets(encoder, device):
     all_embeddings = {cat: {} for cat in TARGET_CLASSES}
     base_dir = Path(DATA_DIR)
-    
     if not base_dir.exists():
-        print(f"Directory {base_dir} does not exist.")
         return all_embeddings
-
+    
+    transform = torchvision.transforms.Compose([
+        torchvision.transforms.ToTensor(),
+        torchvision.transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+    ])
+    input_size = 240
+    
     for ds in tqdm(list(base_dir.iterdir())):
-        if not ds.is_dir():
-            continue
-            
+        if not ds.is_dir(): continue
         cell_line = parse_dataset_name(ds.name)
-        if not cell_line:
-            continue
-            
+        if not cell_line: continue
+        
         img_dir = ds / "images" / "test"
         mask_dir = ds / "masks" / "test"
-        
         if not img_dir.exists() or not mask_dir.exists():
             img_dir = ds / "images" / "train"
             mask_dir = ds / "masks" / "train"
-            
-        if not img_dir.exists() or not mask_dir.exists():
-            continue
+        if not img_dir.exists() or not mask_dir.exists(): continue
         
         imgs = sorted(list(img_dir.iterdir()))
+        viz_saved = {cat: False for cat in TARGET_CLASSES}
+        viz_dir = os.path.join(OUTPUT_DIR, "crop_visualizations")
         
-        for img in imgs:
-            mask_path = mask_dir / f"{img.stem}.pkl"
-            if mask_path.exists():
-                class_embs = extract_crops_and_features(img, mask_path, encoder, device)
-                for cat, embs in class_embs.items():
-                    if embs:
+        with ThreadPoolExecutor(max_workers=16) as executor:
+            futures = []
+            for img in imgs:
+                mask_path = mask_dir / f"{img.stem}.pkl"
+                if mask_path.exists():
+                    futures.append(executor.submit(extract_crops_cpu, img, mask_path, input_size))
+            
+            for future in as_completed(futures):
+                crops_by_cat = future.result()
+                if not crops_by_cat: continue
+                
+                for cat, crops in crops_by_cat.items():
+                    if not crops: continue
+                    
+                    if not viz_saved[cat]:
+                        save_crop_visualizations(ds.name, str(cat), crops, viz_dir)
+                        viz_saved[cat] = True
+                        
+                    tensors = [transform(c) for c in crops]
+                    cat_embs = []
+                    for i in range(0, len(tensors), 32):
+                        batch = torch.stack(tensors[i:i + 32]).to(device)
+                        with torch.no_grad():
+                            features = encoder(batch)
+                            cls_tokens = features[-1].mean(dim=(2, 3))
+                        cat_embs.extend(cls_tokens.cpu().numpy())
+                        
+                    if cat_embs:
                         if ds.name not in all_embeddings[cat]:
                             all_embeddings[cat][ds.name] = []
-                        all_embeddings[cat][ds.name].extend(embs)
+                        all_embeddings[cat][ds.name].extend(cat_embs)
                         
     return all_embeddings
+
 
 def dist_euclidean(mu_A, mu_B):
     return np.linalg.norm(mu_A - mu_B)
@@ -215,7 +276,7 @@ def dist_var_norm_dim(mu_A, mu_B, var_A, var_B, eps=1e-8):
 
 def dist_fid(mu_A, mu_B, cov_A, cov_B):
     diff = mu_A - mu_B
-    covmean, _ = sqrtm(cov_A.dot(cov_B), disp=False)
+    covmean = sqrtm(cov_A.dot(cov_B))
     if not np.isfinite(covmean).all():
         offset = np.eye(cov_A.shape[0]) * 1e-6
         covmean = sqrtm((cov_A + offset).dot(cov_B + offset))
@@ -251,11 +312,16 @@ def dist_mmd_rbf(X, Y):
         
     sigmas = [0.5 * sigma_m, sigma_m, 2.0 * sigma_m]
     
+    # Compute pairwise distance matrices ONCE (was: recomputed 9 times in loop)
+    dist_XX = pairwise_distances(X, X, metric='sqeuclidean')
+    dist_YY = pairwise_distances(Y, Y, metric='sqeuclidean')
+    dist_XY = pairwise_distances(X, Y, metric='sqeuclidean')
+    
     mmd_val = 0
     for s in sigmas:
-        K_XX = rbf_kernel(X, X, s)
-        K_YY = rbf_kernel(Y, Y, s)
-        K_XY = rbf_kernel(X, Y, s)
+        K_XX = np.exp(-dist_XX / (2 * s**2))
+        K_YY = np.exp(-dist_YY / (2 * s**2))
+        K_XY = np.exp(-dist_XY / (2 * s**2))
         mmd_val += np.mean(K_XX) + np.mean(K_YY) - 2 * np.mean(K_XY)
     return mmd_val / 3.0
 
@@ -263,10 +329,10 @@ def generate_distance_plots(matrix, names, output_dir, metric_name, class_name, 
     os.makedirs(output_dir, exist_ok=True)
     
     # Heatmap
-    fig_w = max(12, min(28, len(names) * 1.0))
-    fig_h = max(10, min(24, len(names) * 0.8))
+    fig_w = max(12, min(36, len(names) * 1.5))
+    fig_h = max(10, min(30, len(names) * 1.2))
     plt.figure(figsize=(fig_w, fig_h), dpi=300)
-    sns.heatmap(matrix, xticklabels=names, yticklabels=names, cmap='viridis')
+    sns.heatmap(matrix, xticklabels=names, yticklabels=names, cmap='viridis', annot=True, fmt='.3g', annot_kws={'size': 10})
     plt.title(f"Pairwise {metric_name} Distance (Class: {class_name}, {level_name})", fontsize=24, pad=20)
     plt.xticks(rotation=90)
     plt.tight_layout()
@@ -288,7 +354,7 @@ def generate_distance_plots(matrix, names, output_dir, metric_name, class_name, 
             import warnings
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
-                g = sns.clustermap(matrix, row_linkage=Z, col_linkage=Z, xticklabels=names, yticklabels=names, cmap='viridis', figsize=(fig_w, fig_h))
+                g = sns.clustermap(matrix, row_linkage=Z, col_linkage=Z, xticklabels=names, yticklabels=names, cmap='viridis', figsize=(fig_w, fig_h), annot=True, fmt='.3g', annot_kws={'size': 10})
                 g.fig.suptitle(f"Clustermap {metric_name} Distance", fontsize=28, y=1.02)
                 plt.setp(g.ax_heatmap.get_xticklabels(), rotation=90, fontsize=16)
                 plt.setp(g.ax_heatmap.get_yticklabels(), rotation=0, fontsize=16)
@@ -308,23 +374,19 @@ def generate_scatter_plots(features, ds_labels, cl_labels, output_dir):
     perplexities = [30, 50, 70, 90]
     
     for labels, label_type in [(ds_labels, 'dataset'), (cl_labels, 'cell_line')]:
-        fig, axes = plt.subplots(2, 2, figsize=(20, 20), dpi=300)
-        axes = axes.flatten()
-        
-        for i, p in enumerate(perplexities):
+        for p in perplexities:
             if n_samples - 1 < p:
                 continue
             tsne = TSNE(n_components=2, perplexity=p, random_state=42)
             tsne_2d = tsne.fit_transform(features)
             
-            sns.scatterplot(x=tsne_2d[:, 0], y=tsne_2d[:, 1], hue=labels, ax=axes[i], palette="tab10", s=50)
-            axes[i].set_title(f"t-SNE perp={p}")
-            axes[i].legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=10, borderaxespad=0.)
-            
-        plt.suptitle(f"t-SNE colored by {label_type}", fontsize=24)
-        plt.tight_layout()
-        plt.savefig(os.path.join(output_dir, f"tsne_{label_type}.png"), bbox_inches='tight')
-        plt.close()
+            plt.figure(figsize=(12, 10), dpi=300)
+            sns.scatterplot(x=tsne_2d[:, 0], y=tsne_2d[:, 1], hue=labels, palette="tab10", s=50)
+            plt.title(f"t-SNE colored by {label_type} (perp={p})", fontsize=20)
+            plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=10, borderaxespad=0.)
+            plt.tight_layout()
+            plt.savefig(os.path.join(output_dir, f"tsne_{label_type}_perp{p}.png"), bbox_inches='tight')
+            plt.close()
     
     # UMAP
     for labels, label_type in [(ds_labels, 'dataset'), (cl_labels, 'cell_line')]:
@@ -358,14 +420,33 @@ def compute_and_plot_metrics(class_name, embeddings_dict, level_name, out_dir):
     }
     
     stats = {}
-    for name in names:
+    print(f"Computing per-dataset statistics (mean, var, cov)...")
+    csv_rows = []
+    for idx, name in enumerate(names):
         embs = embeddings_dict[name]
+        print(f"  [{idx+1}/{num_entities}] {name}: {embs.shape[0]} instances")
+        csv_rows.append(f"{name},{embs.shape[0]},{class_name},{level_name}")
         mu = np.mean(embs, axis=0)
         var = np.var(embs, axis=0)
-        cov = LedoitWolf().fit(embs).covariance_ if embs.shape[0] > 1 else np.zeros((embs.shape[1], embs.shape[1]))
+        # Subsample for LedoitWolf to avoid O(N*D^2) blowup with large datasets
+        if embs.shape[0] > 5000:
+            sub_idx = np.random.choice(embs.shape[0], 5000, replace=False)
+            cov = LedoitWolf().fit(embs[sub_idx]).covariance_
+        elif embs.shape[0] > 1:
+            cov = LedoitWolf().fit(embs).covariance_
+        else:
+            cov = np.zeros((embs.shape[1], embs.shape[1]))
         stats[name] = {'mu': mu, 'var': var, 'cov': cov, 'embs': embs}
+    csv_path = os.path.join(out_dir, "dataset_statistics.csv")
+    with open(csv_path, 'w') as f:
+        f.write("dataset_name,num_instances,class,level\n")
+        f.write("\n".join(csv_rows) + "\n")
+    print(f"Statistics saved to {csv_path}")
         
-    print(f"Computing metrics for {class_name} ({level_name}) - {num_entities} entities")
+    total_pairs = num_entities * (num_entities - 1) // 2
+    print(f"Computing metrics for {class_name} ({level_name}) - {num_entities} entities, {total_pairs} pairs")
+    pbar = tqdm(total=total_pairs, desc=f"{class_name} {level_name}", position=0, leave=True, file=sys.stdout)
+    pair_idx = 0
     
     for i in range(num_entities):
         for j in range(i, num_entities):
@@ -382,7 +463,9 @@ def compute_and_plot_metrics(class_name, embeddings_dict, level_name, out_dir):
             metrics['var_norm_dim'][i, j] = metrics['var_norm_dim'][j, i] = dist_var_norm_dim(s_A['mu'], s_B['mu'], s_A['var'], s_B['var'])
             metrics['fid'][i, j] = metrics['fid'][j, i] = dist_fid(s_A['mu'], s_B['mu'], s_A['cov'], s_B['cov'])
             metrics['mmd_rbf'][i, j] = metrics['mmd_rbf'][j, i] = dist_mmd_rbf(s_A['embs'], s_B['embs'])
-            
+            pair_idx += 1
+            pbar.update(1)
+    pbar.close()
     for metric_name, matrix in metrics.items():
         generate_distance_plots(matrix, names, out_dir, metric_name, class_name, level_name)
 
@@ -455,8 +538,8 @@ def main():
         
         for ds, embs in dataset_embs.items():
             n = embs.shape[0]
-            if n > 500:
-                indices = np.random.choice(n, 500, replace=False)
+            if n > 1000:
+                indices = np.random.choice(n, 1000, replace=False)
                 sub_embs = embs[indices]
             else:
                 sub_embs = embs
