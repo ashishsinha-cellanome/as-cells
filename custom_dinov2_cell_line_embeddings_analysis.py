@@ -408,7 +408,9 @@ def generate_scatter_plots(features, ds_labels, cl_labels, output_dir):
             tsne_2d = tsne.fit_transform(features)
             
             plt.figure(figsize=(12, 10), dpi=300)
-            sns.scatterplot(x=tsne_2d[:, 0], y=tsne_2d[:, 1], hue=labels, palette="tab10", s=50)
+            unique_labels = len(np.unique(labels))
+            palette = sns.color_palette("husl", unique_labels)
+            sns.scatterplot(x=tsne_2d[:, 0], y=tsne_2d[:, 1], hue=labels, palette=palette, s=10)
             plt.title(f"t-SNE colored by {label_type} (perp={p})", fontsize=20)
             plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=10, borderaxespad=0.)
             plt.tight_layout()
@@ -419,7 +421,9 @@ def generate_scatter_plots(features, ds_labels, cl_labels, output_dir):
         umap_reducer = umap.UMAP(n_components=2, n_neighbors=n_neighbors, random_state=42)
         umap_2d = umap_reducer.fit_transform(features)
         plt.figure(figsize=(12, 10), dpi=300)
-        sns.scatterplot(x=umap_2d[:, 0], y=umap_2d[:, 1], hue=labels, palette="tab10", s=50)
+        unique_labels = len(np.unique(labels))
+        palette = sns.color_palette("husl", unique_labels)
+        sns.scatterplot(x=umap_2d[:, 0], y=umap_2d[:, 1], hue=labels, palette=palette, s=10)
         plt.title(f"UMAP colored by {label_type}", fontsize=20)
         plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=10, borderaxespad=0.)
         plt.tight_layout()
@@ -447,9 +451,13 @@ def compute_and_plot_metrics(class_name, embeddings_dict, level_name, out_dir):
     for idx, name in enumerate(names):
         embs = embeddings_dict[name]
         print(f"  [{idx+1}/{num_entities}] {name}: {embs.shape[0]} instances")
-        csv_rows.append(f"{name},{embs.shape[0]},{class_name},{level_name}")
         mu = np.mean(embs, axis=0)
         var = np.var(embs, axis=0)
+        
+        mu_norm = np.linalg.norm(mu)
+        var_norm = np.linalg.norm(var)
+        csv_rows.append(f"{name},{embs.shape[0]},{class_name},{level_name},{mu_norm},{var_norm}")
+        
         if embs.shape[0] > 5000:
             sub_idx = np.random.choice(embs.shape[0], 5000, replace=False)
             cov = LedoitWolf().fit(embs[sub_idx]).covariance_
@@ -458,11 +466,19 @@ def compute_and_plot_metrics(class_name, embeddings_dict, level_name, out_dir):
         else:
             cov = np.eye(embs.shape[1]) * 1e-6
         stats[name] = {'mu': mu, 'var': var, 'cov': cov, 'embs': embs}
+        
     csv_path = os.path.join(out_dir, "dataset_statistics.csv")
     with open(csv_path, 'w') as f:
-        f.write("dataset_name,num_instances,class,level\n")
+        header = "dataset_name,num_instances,class,level,mean_l2_norm,var_l2_norm"
+        f.write(header + "\n")
         f.write("\n".join(csv_rows) + "\n")
-    print(f"Statistics saved to {csv_path}")
+        
+    pkl_path = os.path.join(out_dir, "dataset_statistics.pkl")
+    stats_to_save = {name: {'mu': stats[name]['mu'], 'var': stats[name]['var']} for name in names}
+    with open(pkl_path, 'wb') as f:
+        pickle.dump(stats_to_save, f)
+        
+    print(f"Statistics saved to {csv_path} and {pkl_path}")
     print(f"Computing metrics for {class_name} ({level_name}) - {num_entities} entities")
     for i in range(num_entities):
         for j in range(i, num_entities):
@@ -522,7 +538,11 @@ def main():
                 cell_line_embs[cl] = []
             cell_line_embs[cl].append(embs)
         for cl in cell_line_embs:
-            cell_line_embs[cl] = np.vstack(cell_line_embs[cl])
+            stacked = np.vstack(cell_line_embs[cl])
+            if stacked.shape[0] > 5000:
+                sub_idx = np.random.choice(stacked.shape[0], 5000, replace=False)
+                stacked = stacked[sub_idx]
+            cell_line_embs[cl] = stacked
         compute_and_plot_metrics(class_name, dataset_embs, "dataset_level", os.path.join(class_dir, "dataset_level"))
         compute_and_plot_metrics(class_name, cell_line_embs, "cell_line_level", os.path.join(class_dir, "cell_line_level"))
         inst_dir = os.path.join(class_dir, "instances")
@@ -531,8 +551,8 @@ def main():
         cl_labels = []
         for ds, embs in dataset_embs.items():
             n = embs.shape[0]
-            if n > 1000:
-                indices = np.random.choice(n, 1000, replace=False)
+            if n > 5000:
+                indices = np.random.choice(n, 5000, replace=False)
                 sub_embs = embs[indices]
             else:
                 sub_embs = embs
@@ -542,6 +562,11 @@ def main():
             cl_labels.extend([cl] * sub_embs.shape[0])
         if all_features:
             all_features = np.vstack(all_features)
+            os.makedirs(inst_dir, exist_ok=True)
+            scatter_data_path = os.path.join(inst_dir, "scatter_plot_data.pkl")
+            with open(scatter_data_path, 'wb') as f:
+                pickle.dump({'features': all_features, 'ds_labels': ds_labels, 'cl_labels': cl_labels}, f)
+            print(f"Saved scatter plot features to {scatter_data_path}")
             generate_scatter_plots(all_features, ds_labels, cl_labels, inst_dir)
 
 
