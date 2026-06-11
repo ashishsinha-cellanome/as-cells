@@ -74,3 +74,13 @@ $$ D_M = \sqrt{(\mu_1 - \mu_2)^T \Sigma_{pooled}^{-1} (\mu_1 - \mu_2)} $$
 **Formula:**
 $$ SWD = \frac{1}{L} \sum_{l=1}^L \int_0^1 \left| F^{-1}_{\theta_l \cdot X}(p) - F^{-1}_{\theta_l \cdot Y}(p) \right|^2 dp $$
 **Interpretation:** A non-parametric distance computed directly from the empirical samples (raw embeddings) rather than assuming a Gaussian distribution. It slices the high-dimensional space into numerous 1D random projections ($\theta_l$), sorts the projected values, and averages the 1D Wasserstein distances. This captures complex, non-Gaussian structural differences in the embedding distributions perfectly.
+
+### 8. Asymmetric KL Divergence
+**Formula:**
+$$ KL(P || Q) = \frac{1}{2} \sum_{i=1}^{D} \left( \ln\left(\frac{\sigma_{Q,i}^2}{\sigma_{P,i}^2}\right) + \frac{\sigma_{P,i}^2 + (\mu_{P,i} - \mu_{Q,i})^2}{\sigma_{Q,i}^2} - 1 \right) $$
+**Interpretation:** Measures the penalty of approximating the target test distribution $P$ using the source training distribution $Q$. It evaluates subset/superset relationships: if training set $Q$ "covers" test set $P$, the penalty is low. If $P$ contains morphologies outside the span of $Q$, the penalty explodes.
+
+### 9. Coverage (Naeem et al., ICML 2020)
+**Formula:**
+$$ Coverage(X, Y) = \frac{1}{|X|} \sum_{x \in X} \mathbb{1} \left[ \min_{y \in Y} d(x, y) \le d(x, NNI_k(x, X)) \right] $$
+**Interpretation:** Evaluates the fraction of target test samples $X$ whose $k$-NN ball (computed within $X$) contains at least one source train sample $Y$. We compute the distance as **$1 - Coverage(X, Y)$**. This effectively measures whether the training manifold spatially encompasses the test manifold.
