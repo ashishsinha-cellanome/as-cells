@@ -97,106 +97,115 @@ def main():
         "DINOv2": "custom_dinov2_cell_line_embeddings_analysis"
     }
     
+    CLASS_MAP = {0: "cell", 2: "cell-adhered", 3: "soma"}
+    
     for model_name, folder in models.items():
-        stats_pkl = os.path.join(base_dir, folder, "class_cell", "dataset_level", "dataset_statistics.pkl")
         raw_pkl = os.path.join(base_dir, folder, "extracted_raw_embeddings.pkl")
-        if not os.path.exists(stats_pkl) or not os.path.exists(raw_pkl):
+        if not os.path.exists(raw_pkl):
             print(f"Warning: Missing files for {model_name}, skipping.")
             continue
             
         import gc
         
-        with open(stats_pkl, 'rb') as f:
-            stats = pickle.load(f)
         with open(raw_pkl, 'rb') as f:
-            raw_embs = pickle.load(f)[0] # class 0 (cell)
+            all_raw_embs = pickle.load(f)
             
-        # 1. Dataset Level
-        dataset_embs = {}
-        for ds, e in raw_embs.items():
-            cl = parse_dataset_name(ds)
-            if not cl: continue # Skip suspension datasets
-            dataset_embs[ds] = e
+        for class_id, class_name in CLASS_MAP.items():
+            if class_id not in all_raw_embs:
+                continue
+                
+            raw_embs = all_raw_embs[class_id]
+            if not raw_embs:
+                continue
             
-        # 2. Cell Line Level
-        cell_line_embs = {}
-        for ds, e in raw_embs.items():
-            cl = parse_dataset_name(ds)
-            if not cl: continue
-            if cl not in cell_line_embs:
-                cell_line_embs[cl] = []
-            cell_line_embs[cl].append(e)
-            
-        for cl in cell_line_embs:
-            stacked = np.vstack(cell_line_embs[cl])
-            if stacked.shape[0] > 5000:
-                sub_idx = np.random.choice(stacked.shape[0], 5000, replace=False)
-                stacked = stacked[sub_idx]
-            cell_line_embs[cl] = stacked
-            
-        # Free memory of raw_embs
-        del raw_embs
-        gc.collect()
-        
-        levels = [("dataset_level", dataset_embs), ("cell_line_level", cell_line_embs)]
-        
-        for level_name, embs_dict in levels:
-            print(f"Processing {model_name} at {level_name}...")
-            names = sorted(list(embs_dict.keys()))
-            num_entities = len(names)
-            
-            full_covs = {}
-            stacked_embs = {}
-            for name in names:
-                stacked = embs_dict[name]
+            # 1. Dataset Level
+            dataset_embs = {}
+            for ds, e in raw_embs.items():
+                cl = parse_dataset_name(ds)
+                if not cl: continue # Skip suspension datasets
+                dataset_embs[ds] = e
+                
+            # 2. Cell Line Level
+            cell_line_embs = {}
+            for ds, e in raw_embs.items():
+                cl = parse_dataset_name(ds)
+                if not cl: continue
+                if cl not in cell_line_embs:
+                    cell_line_embs[cl] = []
+                cell_line_embs[cl].append(e)
+                
+            for cl in cell_line_embs:
+                stacked = np.vstack(cell_line_embs[cl])
                 if stacked.shape[0] > 5000:
                     sub_idx = np.random.choice(stacked.shape[0], 5000, replace=False)
                     stacked = stacked[sub_idx]
-                stacked_embs[name] = stacked
-                
-                if stacked.shape[0] > 1:
-                    cov = LedoitWolf().fit(stacked).covariance_
-                else:
-                    cov = np.eye(stacked.shape[1]) * 1e-6
-                full_covs[name] = cov
-                
-            metrics = {
-                'wasserstein_diag': np.zeros((num_entities, num_entities)),
-                'sym_kl_diag': np.zeros((num_entities, num_entities)),
-                'bhattacharyya_diag': np.zeros((num_entities, num_entities)),
-                'hellinger_diag': np.zeros((num_entities, num_entities)),
-                'bhattacharyya_full': np.zeros((num_entities, num_entities)),
-                'mahalanobis_pooled': np.zeros((num_entities, num_entities)),
-                'sliced_wasserstein': np.zeros((num_entities, num_entities))
-            }
+                cell_line_embs[cl] = stacked
             
-            print(f"Computing advanced metrics for {model_name} ({level_name})...")
-            for i in range(num_entities):
-                for j in range(i, num_entities):
-                    if i == j: continue
-                    name_A, name_B = names[i], names[j]
-                    
-                    mu1, var1 = np.mean(stacked_embs[name_A], axis=0), np.var(stacked_embs[name_A], axis=0)
-                    mu2, var2 = np.mean(stacked_embs[name_B], axis=0), np.var(stacked_embs[name_B], axis=0)
-                    cov1, cov2 = full_covs[name_A], full_covs[name_B]
-                    n1, n2 = stacked_embs[name_A].shape[0], stacked_embs[name_B].shape[0]
-                    
-                    metrics['wasserstein_diag'][i, j] = metrics['wasserstein_diag'][j, i] = dist_wasserstein_diag(mu1, mu2, var1, var2)
-                    metrics['sym_kl_diag'][i, j] = metrics['sym_kl_diag'][j, i] = dist_sym_kl_diag(mu1, mu2, var1, var2)
-                    metrics['bhattacharyya_diag'][i, j] = metrics['bhattacharyya_diag'][j, i] = dist_bhattacharyya_diag(mu1, mu2, var1, var2)
-                    metrics['hellinger_diag'][i, j] = metrics['hellinger_diag'][j, i] = dist_hellinger_diag(mu1, mu2, var1, var2)
-                    
-                    metrics['bhattacharyya_full'][i, j] = metrics['bhattacharyya_full'][j, i] = dist_bhattacharyya_full(mu1, mu2, cov1, cov2)
-                    metrics['mahalanobis_pooled'][i, j] = metrics['mahalanobis_pooled'][j, i] = dist_mahalanobis_pooled(mu1, mu2, cov1, cov2, n1, n2)
-                    metrics['sliced_wasserstein'][i, j] = metrics['sliced_wasserstein'][j, i] = dist_swd(stacked_embs[name_A], stacked_embs[name_B])
-                    
-            out_dir = os.path.join(base_dir, folder, "class_cell", f"advanced_metrics_v2_{level_name}")
-            for metric_name, matrix in metrics.items():
-                generate_clustermap(matrix, names, out_dir, metric_name, model_name)
+            levels = [("dataset_level", dataset_embs), ("cell_line_level", cell_line_embs)]
+            
+            for level_name, embs_dict in levels:
+                print(f"Processing {model_name} | {class_name} at {level_name}...")
+                names = sorted(list(embs_dict.keys()))
+                num_entities = len(names)
                 
-        # Free memory of the un-subsampled grouped arrays
-        del dataset_embs
-        del cell_line_embs
+                if num_entities < 2:
+                    continue
+                
+                full_covs = {}
+                stacked_embs = {}
+                for name in names:
+                    stacked = embs_dict[name]
+                    if stacked.shape[0] > 5000:
+                        sub_idx = np.random.choice(stacked.shape[0], 5000, replace=False)
+                        stacked = stacked[sub_idx]
+                    stacked_embs[name] = stacked
+                    
+                    if stacked.shape[0] > 1:
+                        cov = LedoitWolf().fit(stacked).covariance_
+                    else:
+                        cov = np.eye(stacked.shape[1]) * 1e-6
+                    full_covs[name] = cov
+                    
+                metrics = {
+                    'wasserstein_diag': np.zeros((num_entities, num_entities)),
+                    'sym_kl_diag': np.zeros((num_entities, num_entities)),
+                    'bhattacharyya_diag': np.zeros((num_entities, num_entities)),
+                    'hellinger_diag': np.zeros((num_entities, num_entities)),
+                    'bhattacharyya_full': np.zeros((num_entities, num_entities)),
+                    'mahalanobis_pooled': np.zeros((num_entities, num_entities)),
+                    'sliced_wasserstein': np.zeros((num_entities, num_entities))
+                }
+                
+                print(f"Computing advanced metrics for {model_name} | {class_name} ({level_name})...")
+                for i in range(num_entities):
+                    for j in range(i, num_entities):
+                        if i == j: continue
+                        name_A, name_B = names[i], names[j]
+                        
+                        mu1, var1 = np.mean(stacked_embs[name_A], axis=0), np.var(stacked_embs[name_A], axis=0)
+                        mu2, var2 = np.mean(stacked_embs[name_B], axis=0), np.var(stacked_embs[name_B], axis=0)
+                        cov1, cov2 = full_covs[name_A], full_covs[name_B]
+                        n1, n2 = stacked_embs[name_A].shape[0], stacked_embs[name_B].shape[0]
+                        
+                        metrics['wasserstein_diag'][i, j] = metrics['wasserstein_diag'][j, i] = dist_wasserstein_diag(mu1, mu2, var1, var2)
+                        metrics['sym_kl_diag'][i, j] = metrics['sym_kl_diag'][j, i] = dist_sym_kl_diag(mu1, mu2, var1, var2)
+                        metrics['bhattacharyya_diag'][i, j] = metrics['bhattacharyya_diag'][j, i] = dist_bhattacharyya_diag(mu1, mu2, var1, var2)
+                        metrics['hellinger_diag'][i, j] = metrics['hellinger_diag'][j, i] = dist_hellinger_diag(mu1, mu2, var1, var2)
+                        
+                        metrics['bhattacharyya_full'][i, j] = metrics['bhattacharyya_full'][j, i] = dist_bhattacharyya_full(mu1, mu2, cov1, cov2)
+                        metrics['mahalanobis_pooled'][i, j] = metrics['mahalanobis_pooled'][j, i] = dist_mahalanobis_pooled(mu1, mu2, cov1, cov2, n1, n2)
+                        metrics['sliced_wasserstein'][i, j] = metrics['sliced_wasserstein'][j, i] = dist_swd(stacked_embs[name_A], stacked_embs[name_B])
+                        
+                out_dir = os.path.join(base_dir, folder, f"class_{class_name}", f"advanced_metrics_v2_{level_name}")
+                for metric_name, matrix in metrics.items():
+                    generate_clustermap(matrix, names, out_dir, metric_name, model_name)
+                    
+            # Free memory of the un-subsampled grouped arrays
+            del dataset_embs
+            del cell_line_embs
+            gc.collect()
+            
+        del all_raw_embs
         gc.collect()
 
 if __name__ == "__main__":
