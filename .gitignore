@@ -1,5 +1,6 @@
 **/*.ipynb
 cell-detection/
+clustering_analysis/
 output/
 **/__pycache__/**.pyc
 *.log
