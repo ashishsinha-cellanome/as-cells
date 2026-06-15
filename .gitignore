@@ -4,6 +4,8 @@ output/
 **/__pycache__/**.pyc
 *.log
 *.err
+PHASE2_*/
+custom_*/
 .codex
 ClAUDE.md
 AGENTS.md
