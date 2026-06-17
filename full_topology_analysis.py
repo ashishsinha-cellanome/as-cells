@@ -125,6 +125,40 @@ def analyze_topology(raw_embs_pkl_path, k_values, threshold=0.20, out_dir="topol
         for iso in isolates:
             report_lines.append(f"- `{iso}`")
             
+        report_lines.append("\n### Hierarchical Tree & Coverage (% Covered by Parent)")
+        for r in roots:
+            report_lines.append(f"- **[ROOT]** `{r}`")
+            
+            def print_tree(node, prefix="", visited=None):
+                if visited is None:
+                    visited = set()
+                visited.add(node)
+                # children are nodes that point to this node (Subset -> Superset)
+                children = list(G.predecessors(node))
+                # Sort children by distance (highest coverage first)
+                children.sort(key=lambda c: dist_matrix[names.index(c), names.index(node)])
+                
+                for i, child in enumerate(children):
+                    is_last = (i == len(children) - 1)
+                    dist = dist_matrix[names.index(child), names.index(node)]
+                    coverage = 100 * (1 - dist)
+                    
+                    connector = "└── " if is_last else "├── "
+                    role = "[LEAF]" if child in leaves else "[NODE]"
+                    
+                    # Markdown block code preserves spacing perfectly
+                    report_lines.append(f"{prefix}{connector}{role} `{child}` (Coverage: {coverage:.1f}%)")
+                    
+                    if child not in visited:
+                        extension = "    " if is_last else "│   "
+                        print_tree(child, prefix + extension, visited)
+                        
+            # Wrap the tree in a code block so markdown renders the spaces/lines correctly
+            report_lines.append("```text")
+            report_lines.append(f"[ROOT] {r}")
+            print_tree(r)
+            report_lines.append("```")
+
         report_lines.append("\n---\n")
         
         # Draw the graph
