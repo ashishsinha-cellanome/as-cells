@@ -275,13 +275,13 @@ initialization:
   load_from_checkpoint: "/mnt/personal/cellanome/checkpoints/ALL_CKPTS/RFDETR-Seg-ckpts/output/checkpoint_best_ema.pth"
 
 checkpointing:
-  save_dir: "/project/aip-robsc/asinha/cellanome/DATA/checkpoints/"
-  rtdetr_initial_checkpoint: "/project/aip-robsc/asinha/cellanome/DATA/checkpoints/${{checkpointing._folder_name}}"
-  dinov2_backbone_checkpoint: "/project/aip-robsc/asinha/cellanome/DATA/checkpoints/backbones/dinov2"
+  save_dir: "/home/ubuntu/scratch/cellanome/checkpoints/"
+  rtdetr_initial_checkpoint: "/home/ubuntu/scratch/cellanome/checkpoints/${{checkpointing._folder_name}}"
+  dinov2_backbone_checkpoint: "/mnt/personal/cellanome/checkpoints/backbones/dinov2"
 
 hydra:
   run:
-    dir: "/project/aip-robsc/asinha/cellanome/logs/${{now:%Y-%m-%d}}/${{now:%H-%M-%S}}_{run_prefix}"
+    dir: "/home/ubuntu/scratch/cellanome/logs/${{now:%Y-%m-%d}}/${{now:%H-%M-%S}}_{run_prefix}"
 """
     with open(yaml_path, "w") as f:
         f.write(content)
@@ -359,7 +359,7 @@ def main():
     
     for exp_name, exp_data in experiments.items():
         exp_dir_name = f"TRAINING_DATA_{exp_name.upper()}"
-        out_dir = Path("/project/aip-robsc/asinha/cellanome/DATA") / exp_dir_name
+        out_dir = Path("/mnt/direct-attached/GENERALIZATION_DATA") / exp_dir_name
         
         report_lines.append(f"## Experiment: `{exp_name}`")
         report_lines.append("| Split | Dataset | Kept Images | Kept Bboxes | Excluded Images (>300 Bboxes) |")

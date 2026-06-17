@@ -4,7 +4,7 @@ defaults:
   - default@data
 
 data:
-  path: "/project/aip-robsc/asinha/cellanome/DATA/TRAINING_DATA_CENTROIDS_TO_HELDOUT"
+  path: "/mnt/direct-attached/GENERALIZATION_DATA/TRAINING_DATA_CENTROIDS_TO_HELDOUT"
   val_name: 'val'
   test_name: 'test'
   train_name: 'train'
@@ -13,10 +13,10 @@ initialization:
   load_from_checkpoint: "/mnt/personal/cellanome/checkpoints/ALL_CKPTS/RFDETR-Seg-ckpts/output/checkpoint_best_ema.pth"
 
 checkpointing:
-  save_dir: "/project/aip-robsc/asinha/cellanome/DATA/checkpoints/"
-  rtdetr_initial_checkpoint: "/project/aip-robsc/asinha/cellanome/DATA/checkpoints/${checkpointing._folder_name}"
-  dinov2_backbone_checkpoint: "/project/aip-robsc/asinha/cellanome/DATA/checkpoints/backbones/dinov2"
+  save_dir: "/home/ubuntu/scratch/cellanome/checkpoints/"
+  rtdetr_initial_checkpoint: "/home/ubuntu/scratch/cellanome/checkpoints/${checkpointing._folder_name}"
+  dinov2_backbone_checkpoint: "/mnt/personal/cellanome/checkpoints/backbones/dinov2"
 
 hydra:
   run:
-    dir: "/project/aip-robsc/asinha/cellanome/logs/${now:%Y-%m-%d}/${now:%H-%M-%S}_CENTROIDS_TO_HELDOUT"
+    dir: "/home/ubuntu/scratch/cellanome/logs/${now:%Y-%m-%d}/${now:%H-%M-%S}_CENTROIDS_TO_HELDOUT"
