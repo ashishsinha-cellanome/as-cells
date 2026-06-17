@@ -277,7 +277,7 @@ hydra:
 
 
 def main():
-    BASE_PHASE2 = Path("/mnt/direct-attached")
+    BASE_PHASE2 = Path("/mnt/direct-attached/PHASE2")
     
     if not BASE_PHASE2.exists():
         print(f"Error: {BASE_PHASE2} not found. Script must be run on Vulcan.")
