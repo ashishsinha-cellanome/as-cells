@@ -350,8 +350,8 @@ def main(config: DictConfig):
 
     if finetuning_method == "decoder_only":
         print("Freezing Backbone and Encoder for Decoder/Head-Only Fine-Tuning...")
-        if hasattr(model, 'model'):
-            for name, param in model.model.named_parameters():
+        if hasattr(model, 'model') and hasattr(model.model, 'model'):
+            for name, param in model.model.model.named_parameters():
                 if "backbone" in name or "encoder" in name:
                     param.requires_grad = False
     elif finetuning_method == "lora":
@@ -365,9 +365,9 @@ def main(config: DictConfig):
                 lora_dropout=0.05,
                 bias="none",
             )
-            if hasattr(model, 'model'):
-                model.model = get_peft_model(model.model, config_lora)
-                model.model.print_trainable_parameters()
+            if hasattr(model, 'model') and hasattr(model.model, 'model'):
+                model.model.model = get_peft_model(model.model.model, config_lora)
+                model.model.model.print_trainable_parameters()
         except ImportError:
             print("PEFT not installed. Please install with `pip install peft` to use LoRA.")
     elif finetuning_method == "ema_ensemble":
