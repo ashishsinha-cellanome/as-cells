@@ -114,3 +114,58 @@ Furthermore, as we vary the neighborhood strictness ($K$) in Coverage Distance:
 When selecting datasets for fine-tuning, **Coverage is the safer metric to trust over MMD**. Even if MMD suggests two datasets have similar global distributions, poor Coverage means their local features are distinct. Fine-tuning on `dc` to zero-shot `a549` based on MMD would likely fail. 
 
 Because Coverage correctly reassigns `a549` to the Epithelial macro-cluster, we safely use `mc38` as the broad centroid for the epithelial lineages, while treating `dc` and `moc22` as the separate isolates that their local geometry demands. This forms the basis of the 6-Centroid recommendation.
+
+---
+
+## 6. Visualizations: Clustermaps and Dendrograms for Coverage Distance
+
+Below are the visualizations supporting the analysis above, generated at the cell-line level. The **Coverage Distance** metric was evaluated at sensitivities $K \in \{5, 10, 15, 30\}$. The clustermaps show the pairwise distance between datasets (Rows = Test, Cols = Train), and the dendrograms illustrate the hierarchical clustering structures.
+
+### K = 30 (Broad Manifold View / Loose Strictness)
+![Clustermap K=30](./custom_cell_line_embeddings_analysis/class_cell-adhered/cell_line_level/clustermap_coverage_distance_k30.png)
+![Dendrogram K=30 Train](./custom_cell_line_embeddings_analysis/class_cell-adhered/cell_line_level/dendrogram_coverage_distance_k30_train.png)
+![Dendrogram K=30 Test](./custom_cell_line_embeddings_analysis/class_cell-adhered/cell_line_level/dendrogram_coverage_distance_k30_test.png)
+
+### K = 15 (Moderate Strictness)
+![Clustermap K=15](./custom_cell_line_embeddings_analysis/class_cell-adhered/cell_line_level/clustermap_coverage_distance_k15.png)
+![Dendrogram K=15 Train](./custom_cell_line_embeddings_analysis/class_cell-adhered/cell_line_level/dendrogram_coverage_distance_k15_train.png)
+![Dendrogram K=15 Test](./custom_cell_line_embeddings_analysis/class_cell-adhered/cell_line_level/dendrogram_coverage_distance_k15_test.png)
+
+### K = 10 (Moderate Strictness)
+![Clustermap K=10](./custom_cell_line_embeddings_analysis/class_cell-adhered/cell_line_level/clustermap_coverage_distance_k10.png)
+![Dendrogram K=10 Train](./custom_cell_line_embeddings_analysis/class_cell-adhered/cell_line_level/dendrogram_coverage_distance_k10_train.png)
+![Dendrogram K=10 Test](./custom_cell_line_embeddings_analysis/class_cell-adhered/cell_line_level/dendrogram_coverage_distance_k10_test.png)
+
+### K = 5 (Highly Strict / Dense Overlap)
+![Clustermap K=5](./custom_cell_line_embeddings_analysis/class_cell-adhered/cell_line_level/clustermap_coverage_distance_k5.png)
+![Dendrogram K=5 Train](./custom_cell_line_embeddings_analysis/class_cell-adhered/cell_line_level/dendrogram_coverage_distance_k5_train.png)
+![Dendrogram K=5 Test](./custom_cell_line_embeddings_analysis/class_cell-adhered/cell_line_level/dendrogram_coverage_distance_k5_test.png)
+
+---
+
+## 7. Generalizability Sequences (Subset Chains)
+
+Based on the Coverage Distance analysis (using a strict coverage threshold of >80%, or distance < 0.20 at $K=10$), we can identify hierarchical sequences of datasets. We denote $X \in Y$ if training on dataset $Y$ heavily covers dataset $X$. This establishes a clear subsets topology.
+
+By training models on datasets at lower levels of the chain ($X_0, Y_0$) and testing them on higher levels ($X_2, Y_2$), we can empirically test generalizability. Since a subset does not cover its superset, the model should experience a drop in performance, proving the structural hierarchy of our datasets.
+
+### Chain 1: The Fibroblast Lineage
+**`Hs675Tfibroblasts` (and `imr90`) $\in$ `preadipocytes_caged` $\in$ `preadipocytes_uncaged`**
+*   *Interpretation*: The uncaged preadipocytes provide the broadest, most robust manifold, encompassing the caged variants, which in turn encompass the baseline fibroblasts and IMR90 (though `imr90` falls slightly below the strict 80% coverage threshold, it anchors definitively to `preadipocytes_caged`).
+*   *Experiment*: Train on `Hs675Tfibroblasts` ($X_0$), evaluate on `preadipocytes_uncaged` ($X_2$). We expect poor zero-shot performance. Train on `preadipocytes_uncaged` ($X_2$), evaluate on `Hs675Tfibroblasts` ($X_0$) and `imr90`. We expect excellent zero-shot performance.
+
+### Chain 2: The Epithelial/MC38 Lineage
+**`mc38_caged_0624` $\in$ `mc38_caged_0625` (and `hela`, `c8d1a_astrocytes`) $\in$ `u87_caged` $\in$ `mc38_uncaged_0624`**
+*   *Interpretation*: The 0624 uncaged batch of MC38 exhibits the highest feature diversity, cleanly covering the tight clusters of U87 and other MC38 variants. The 0624 caged batch is the narrowest subset. `hela` and `astrocytes` also act as supersets to `mc38_caged` and branch off near `mc38_caged_0625` but are grouped in parentheses as they slightly miss the strict multi-hop 80% thresholds.
+
+### Chain 3: The A549 to MOC22 Isolate Transition
+**`mc38_caged_0624` $\in$ `a549` $\in$ `moc22`**
+*   *Interpretation*: `moc22` occupies a massive, sparse region in feature space that loosely blankets the regions containing `a549` and `mc38`. However, `mc38` is tightly clustered and provides almost zero coverage for the outer boundaries of `a549` or `moc22`.
+*   *Experiment*: Training on `mc38` ($Z_0$) will likely fail to detect cells in `moc22` ($Z_2$), but training on `moc22` may surprisingly cover the basic epithelial structures of `mc38`.
+
+### Chain 4: The Dendritic Cell Progression
+**`mc38_caged_0624` $\in$ `DC_caged_0516` $\in$ `DC_caged_0515`**
+*   *Interpretation*: The 0515 batch of Dendritic Cells provides slightly broader representation than the 0516 batch. Both are strictly supersets relative to the core `mc38` distribution. 
+
+These chains present ideal empirical experiments. By systematically fine-tuning models on the $X_0, Y_0$ anchors and evaluating them upward through the chains, we can conclusively validate the predictive power of the Coverage Distance metric for deep learning generalizability.
+
