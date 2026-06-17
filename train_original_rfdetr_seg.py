@@ -315,12 +315,17 @@ def main():
     parser.add_argument("--fraction", type=float, default=1.0, help="Fraction of dataset to use for training/val")
     parser.add_argument("--devices", type=int, default=4)
     parser.add_argument("--num_workers", type=int, default=4)
-    parser.add_argument("--resume", type=str, default=None, help="Path to checkpoint to resume from")
+    parser.add_argument("--resume", type=str, default=None, help="Path to checkpoint to resume from (includes optimizer state)")
+    parser.add_argument("--weights", type=str, default=None, help="Path to pre-trained weights to initialize from (starts fresh at epoch 0)")
     parser.add_argument("--test_only", action="store_true", help="Only run validation/test on the validation set")
     args = parser.parse_args()
 
     print("Initializing RFDETRSegLarge...")
-    model = RFDETRSegLarge(group_detr=1, compile=True, num_classes=4)
+    if args.weights:
+        model = RFDETRSegLarge(group_detr=1, compile=True, num_classes=4, pretrain_weights=args.weights)
+        print(f"Loaded custom pretrain weights from: {args.weights}")
+    else:
+        model = RFDETRSegLarge(group_detr=1, compile=True, num_classes=4)
     
     import datetime
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")

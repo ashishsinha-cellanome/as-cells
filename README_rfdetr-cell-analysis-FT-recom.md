@@ -183,18 +183,17 @@ uv run python setup_all_generalization_tasks.py
 This script safely parses your original massive JSON data and generates **9 distinct dataset splits** directly mapping to the 4 chains identified above, plus a master test for the 6-Centroids strategy. It symlinks the images to save disk space and dynamically creates Hydra YAML files in your `configs/data/` directory.
 
 ### Available Hydra Data Configs
-Once generated, you can run any generalization experiment purely by changing the `data` override in your Hydra run. Because we want to start from the pre-computed embedding weights but train the optimizer from scratch (epoch 0), you must pass the checkpoint path using `initialization.load_from_checkpoint`:
+Once generated, you can run any generalization experiment purely by changing the `data` override in your Hydra run. The default checkpoint path (`/mnt/personal/cellanome/checkpoints/ALL_CKPTS/RFDETR-Seg-ckpts/output/checkpoint_best_ema.pth`) is now automatically injected into all these configs, so you don't even need to pass it manually!
 
 ```bash
 # Example: Train on Narrow Fibroblasts, Evaluate on Broad Preadipocytes
-uv run train_hydra_original_rfdetr_seg.py \
-  data=c1_fibro_to_preadipo \
-  initialization.load_from_checkpoint=/mnt/personal/cellanome/checkpoints/ALL_CKPTS/RFDETR-Seg-ckpts/output/checkpoint_best_ema.pth
+uv run train_hydra_original_rfdetr_seg.py data=c1_fibro_to_preadipo
 
 # Example: Train on Broad Preadipocytes, Evaluate on Narrow Fibroblasts & IMR90
-uv run train_hydra_original_rfdetr_seg.py \
-  data=c1_preadipo_to_fibro \
-  initialization.load_from_checkpoint=/mnt/personal/cellanome/checkpoints/ALL_CKPTS/RFDETR-Seg-ckpts/output/checkpoint_best_ema.pth
+uv run train_hydra_original_rfdetr_seg.py data=c1_preadipo_to_fibro
+
+# Example: Run the ultimate 6-Centroids minimal dataset evaluation
+uv run train_hydra_original_rfdetr_seg.py data=centroids_to_heldout
 ```
 
 **Full list of generated experiment configs:**

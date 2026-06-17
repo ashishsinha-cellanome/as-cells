@@ -5,7 +5,7 @@
 ## 🚨 AI ASSISTANT CONSTRAINTS (CRITICAL)
 
 1. **NEVER delete the branch `ashish` or force-merge it to `main`.**
-2. **ALWAYS run tests/training scripts on the `vulcan` server via SSH (`ask1gpu`, `sbatch`, `salloc`).** NEVER run them on the local macOS machine.
+2. **ALWAYS check the hostname before running tests/training scripts to decide whether to run  `vulcan` or `denvr: odin*` server. if running on vulcan (SLURM) viaa SSH (`ask1gpu`, `sbatch`, `salloc`) or when running on odin machines, also use ssh with simply `uv run <script.py> <options>`.** NEVER run them on the local macOS machine.
 3. **DO NOT assume dataset properties (e.g., image resolutions)**. Write probing scripts. All images are **672x672** for training/validation (Full-scale 4512x4512 is for future inference only).
 4. **ALWAYS use superpowers:** Invoke the `using-superpowers` skill before taking any action. If a task matches a skill description, you MUST use the `skill` tool to load it.
 5. **ALWAYS use `subagent-driven-development`:** When executing multi-step plans, use the Subagent process (dispatching fresh subagents per task with two-stage reviews). Do NOT execute tasks inline yourself.
@@ -45,4 +45,3 @@ sbatch run_rfdetr.sh
 uv run evaluate_all_models.py
 uv run inference.py initialization.load_from_checkpoint=ckpt.pt data.path=/path/to/data
 ```
-
