@@ -169,3 +169,42 @@ By training models on datasets at lower levels of the chain ($X_0, Y_0$) and tes
 
 These chains present ideal empirical experiments. By systematically fine-tuning models on the $X_0, Y_0$ anchors and evaluating them upward through the chains, we can conclusively validate the predictive power of the Coverage Distance metric for deep learning generalizability.
 
+---
+
+## 8. Running the Generalization Experiments
+
+To seamlessly execute all these zero-shot testing strategies, a master configuration script has been created. 
+
+On your cluster, simply run:
+```bash
+uv run python setup_all_generalization_tasks.py
+```
+
+This script safely parses your original massive JSON data and generates **9 distinct dataset splits** directly mapping to the 4 chains identified above, plus a master test for the 6-Centroids strategy. It symlinks the images to save disk space and dynamically creates Hydra YAML files in your `configs/data/` directory.
+
+### Available Hydra Data Configs
+Once generated, you can run any generalization experiment purely by changing the `data` override in your Hydra run. Because we want to start from the pre-computed embedding weights but train the optimizer from scratch (epoch 0), you must pass the checkpoint path using `initialization.load_from_checkpoint`:
+
+```bash
+# Example: Train on Narrow Fibroblasts, Evaluate on Broad Preadipocytes
+uv run train_hydra_original_rfdetr_seg.py \
+  data=c1_fibro_to_preadipo \
+  initialization.load_from_checkpoint=/mnt/personal/cellanome/checkpoints/ALL_CKPTS/RFDETR-Seg-ckpts/output/checkpoint_best_ema.pth
+
+# Example: Train on Broad Preadipocytes, Evaluate on Narrow Fibroblasts & IMR90
+uv run train_hydra_original_rfdetr_seg.py \
+  data=c1_preadipo_to_fibro \
+  initialization.load_from_checkpoint=/mnt/personal/cellanome/checkpoints/ALL_CKPTS/RFDETR-Seg-ckpts/output/checkpoint_best_ema.pth
+```
+
+**Full list of generated experiment configs:**
+- `data=c1_fibro_to_preadipo` (Train Narrow $\to$ Test Broad)
+- `data=c1_preadipo_to_fibro` (Train Broad $\to$ Test Narrow)
+- `data=c2_mc38caged_to_broad` (Train Narrow $\to$ Test Broad)
+- `data=c2_mc38uncaged_to_narrow` (Train Broad $\to$ Test Narrow)
+- `data=c3_mc38_to_moc22`
+- `data=c3_moc22_to_mc38`
+- `data=c4_mc38_to_dc`
+- `data=c4_dc_to_mc38`
+- `data=centroids_to_heldout` (The ultimate 6-Centroid evaluation set)
+

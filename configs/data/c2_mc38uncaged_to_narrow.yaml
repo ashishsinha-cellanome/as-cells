@@ -1,0 +1,19 @@
+# @package _global_
+
+defaults:
+  - default@data
+
+data:
+  path: "/project/aip-robsc/asinha/cellanome/DATA/TRAINING_DATA_C2_MC38UNCAGED_TO_NARROW"
+  val_name: 'valid_no300'
+  test_name: 'test_no300'
+  train_name: 'train'
+
+checkpointing:
+  save_dir: "/project/aip-robsc/asinha/cellanome/DATA/checkpoints/"
+  rtdetr_initial_checkpoint: "/project/aip-robsc/asinha/cellanome/DATA/checkpoints/${checkpointing._folder_name}"
+  dinov2_backbone_checkpoint: "/project/aip-robsc/asinha/cellanome/DATA/checkpoints/backbones/dinov2"
+
+hydra:
+  run:
+    dir: "/project/aip-robsc/asinha/cellanome/logs/${now:%Y-%m-%d}/${now:%H-%M-%S}_C2_MC38UNCAGED_TO_NARROW"
