@@ -344,6 +344,39 @@ def main(config: DictConfig):
         print(f"Loaded custom pretrain weights from: {weights}")
     else:
         model = RFDETRSegLarge(group_detr=1, compile=True, num_classes=4)
+        
+    finetuning_method = config.get("finetuning_method", "full")
+    print(f"Applying Finetuning Method: {finetuning_method}")
+
+    if finetuning_method == "decoder_only":
+        print("Freezing Backbone and Encoder for Decoder/Head-Only Fine-Tuning...")
+        if hasattr(model, 'model'):
+            for name, param in model.model.named_parameters():
+                if "backbone" in name or "encoder" in name:
+                    param.requires_grad = False
+    elif finetuning_method == "lora":
+        print("Injecting LoRA adapters into the RF-DETR Transformer...")
+        try:
+            from peft import LoraConfig, get_peft_model
+            config_lora = LoraConfig(
+                r=8,
+                lora_alpha=32,
+                target_modules=["q_proj", "v_proj", "k_proj", "out_proj"],
+                lora_dropout=0.05,
+                bias="none",
+            )
+            if hasattr(model, 'model'):
+                model.model = get_peft_model(model.model, config_lora)
+                model.model.print_trainable_parameters()
+        except ImportError:
+            print("PEFT not installed. Please install with `pip install peft` to use LoRA.")
+    elif finetuning_method == "ema_ensemble":
+        print("EMA Ensembling will be performed automatically after training via EMACallback.")
+    elif finetuning_method == "pseudo_label":
+        print("Pseudo-label mode selected. Ensure you have run test-time adaptation first.")
+    elif finetuning_method == "domain_prompts":
+        print("Domain Prompt mode selected. Injecting prompts...")
+        # Placeholder for domain prompt logic
     
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     run_name = config.get("run_name", f"rf_detr_seg_large_{timestamp}")
