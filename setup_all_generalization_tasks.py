@@ -8,11 +8,7 @@ import hashlib
 def merge_train_datasets(dataset_names, output_dir, base_phase2, report_lines):
     split_name = "train"
     output_dir = Path(output_dir)
-    out_images_dir = output_dir / "images" / split_name
-    out_images_dir.mkdir(parents=True, exist_ok=True)
-    
-    out_masks_dir = output_dir / "masks" / split_name
-    out_masks_dir.mkdir(parents=True, exist_ok=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
     
     merged_coco = {
         "info": {},
@@ -112,19 +108,11 @@ def merge_train_datasets(dataset_names, output_dir, base_phase2, report_lines):
 
 def merge_and_split_test_datasets(dataset_names, output_dir, base_phase2, report_lines):
     output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
     splits = ["val", "test"]
     
-    out_dirs = {}
     merged_coco = {}
     for s in splits:
-        out_images_dir = output_dir / "images" / s
-        out_images_dir.mkdir(parents=True, exist_ok=True)
-        
-        out_masks_dir = output_dir / "masks" / s
-        out_masks_dir.mkdir(parents=True, exist_ok=True)
-        
-        out_dirs[s] = {"images": out_images_dir, "masks": out_masks_dir}
-        
         merged_coco[s] = {
             "info": {},
             "licenses": [],
@@ -289,7 +277,7 @@ hydra:
 
 
 def main():
-    BASE_PHASE2 = Path("/mnt/direct-attached/PHASE2")
+    BASE_PHASE2 = Path("/mnt/direct-attached")
     
     if not BASE_PHASE2.exists():
         print(f"Error: {BASE_PHASE2} not found. Script must be run on Vulcan.")
