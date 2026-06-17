@@ -4,9 +4,18 @@ defaults:
   - default@data
 
 data:
-  path: "/project/aip-robsc/asinha/cellanome/DATA/TRAINING_DATA_C4_MC38_TO_DC"
-  val_name: 'valid_no300'
-  test_name: 'test_no300'
+  datasets:
+    train:
+      - /mnt/direct-attached/PHASE2/20240624_mc38_10x_caged_4_class
+    val:
+      - /mnt/direct-attached/PHASE2/20240515_DC-adhered_10x_caged_4_class
+      - /mnt/direct-attached/PHASE2/20240516_DC-adhered_10x_caged_4_class
+    test:
+      - /mnt/direct-attached/PHASE2/20240515_DC-adhered_10x_caged_4_class
+      - /mnt/direct-attached/PHASE2/20240516_DC-adhered_10x_caged_4_class
+
+  val_name: 'test'
+  test_name: 'test'
   train_name: 'train'
 
 initialization:

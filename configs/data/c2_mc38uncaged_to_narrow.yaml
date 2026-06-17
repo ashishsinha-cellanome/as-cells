@@ -4,9 +4,24 @@ defaults:
   - default@data
 
 data:
-  path: "/project/aip-robsc/asinha/cellanome/DATA/TRAINING_DATA_C2_MC38UNCAGED_TO_NARROW"
-  val_name: 'valid_no300'
-  test_name: 'test_no300'
+  datasets:
+    train:
+      - /mnt/direct-attached/PHASE2/20240624_mc38_10x_uncaged_4_class
+    val:
+      - /mnt/direct-attached/PHASE2/20240624_mc38_10x_caged_4_class
+      - /mnt/direct-attached/PHASE2/20240625_mc38_10x_caged_4_class
+      - /mnt/direct-attached/PHASE2/20240905_u87-adhered_10x_caged_4_class
+      - /mnt/direct-attached/PHASE2/20240509_hela-adhered_10x_caged_4_class
+      - /mnt/direct-attached/PHASE2/20250820_c8d1a_astrocytes-adherent_10x_caged_4_class
+    test:
+      - /mnt/direct-attached/PHASE2/20240624_mc38_10x_caged_4_class
+      - /mnt/direct-attached/PHASE2/20240625_mc38_10x_caged_4_class
+      - /mnt/direct-attached/PHASE2/20240905_u87-adhered_10x_caged_4_class
+      - /mnt/direct-attached/PHASE2/20240509_hela-adhered_10x_caged_4_class
+      - /mnt/direct-attached/PHASE2/20250820_c8d1a_astrocytes-adherent_10x_caged_4_class
+
+  val_name: 'test'
+  test_name: 'test'
   train_name: 'train'
 
 initialization:
