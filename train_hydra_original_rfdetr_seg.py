@@ -55,6 +55,10 @@ def custom_build_roboflow_from_coco(image_set, args, resolution):
         include_masks=include_masks,
         remap_category_ids=False,
     )
+    
+    from custom_coco_utils import CustomConvertCoco
+    dataset.prepare = CustomConvertCoco(include_masks=include_masks, cat2label=dataset.cat2label)
+    
     return dataset
 
 # Apply the patches
