@@ -3,7 +3,7 @@ import json
 import os
 from pathlib import Path
 
-def merge_coco_datasets(dataset_names, split_name, output_dir, base_phase2):
+def merge_coco_datasets(dataset_names, split_name, output_dir, base_phase2, report_lines):
     output_dir = Path(output_dir)
     out_images_dir = output_dir / "images" / split_name
     out_images_dir.mkdir(parents=True, exist_ok=True)
@@ -22,6 +22,9 @@ def merge_coco_datasets(dataset_names, split_name, output_dir, base_phase2):
     image_id_offset = 0
     annotation_id_offset = 0
     
+    total_images_in_split = 0
+    total_bboxes_in_split = 0
+    
     for ds_name in dataset_names:
         ds_path = base_phase2 / ds_name
         json_path = ds_path / f"{split_name}_annotations.json"
@@ -33,11 +36,25 @@ def merge_coco_datasets(dataset_names, split_name, output_dir, base_phase2):
         with open(json_path, 'r') as f:
             coco = json.load(f)
             
+        # Count annotations per image to filter >300
+        ann_counts = {}
+        for ann in coco.get("annotations", []):
+            img_id = ann["image_id"]
+            ann_counts[img_id] = ann_counts.get(img_id, 0) + 1
+            
         id_map = {}
         max_img_id = 0
         
+        kept_images_count = 0
+        kept_bboxes_count = 0
+        
         for img in coco.get("images", []):
             old_id = img["id"]
+            
+            # Check annotation count for this image
+            if ann_counts.get(old_id, 0) > 300:
+                continue
+                
             new_id = old_id + image_id_offset
             id_map[old_id] = new_id
             
@@ -48,6 +65,7 @@ def merge_coco_datasets(dataset_names, split_name, output_dir, base_phase2):
             img_copy["file_name"] = new_file_name
             merged_coco["images"].append(img_copy)
             
+            kept_images_count += 1
             max_img_id = max(max_img_id, old_id)
             
             # Symlink image
@@ -56,7 +74,7 @@ def merge_coco_datasets(dataset_names, split_name, output_dir, base_phase2):
             if src_img.exists() and not dst_img.exists():
                 os.symlink(src_img, dst_img)
                 
-            # Symlink mask if exists (matches stem of original file_name)
+            # Symlink mask if exists
             mask_src_dir = ds_path / "masks" / split_name
             if mask_src_dir.exists():
                 stem = Path(img["file_name"]).stem
@@ -82,15 +100,22 @@ def merge_coco_datasets(dataset_names, split_name, output_dir, base_phase2):
             ann_copy["image_id"] = new_img_id
             merged_coco["annotations"].append(ann_copy)
             
+            kept_bboxes_count += 1
             max_ann_id = max(max_ann_id, old_ann_id)
             
         image_id_offset += max_img_id + 1
         annotation_id_offset += max_ann_id + 1
         
+        report_lines.append(f"| {split_name} | {ds_name} | {kept_images_count} | {kept_bboxes_count} |")
+        total_images_in_split += kept_images_count
+        total_bboxes_in_split += kept_bboxes_count
+        
     out_json = output_dir / f"{split_name}_annotations.json"
     with open(out_json, 'w') as f:
         json.dump(merged_coco, f)
         
+    report_lines.append(f"| **TOTAL {split_name.upper()}** | | **{total_images_in_split}** | **{total_bboxes_in_split}** |")
+    report_lines.append("")
     print(f"Merged {len(dataset_names)} datasets for {split_name} split into {out_json}")
 
 
@@ -185,16 +210,34 @@ def main():
     
     os.makedirs("configs/data", exist_ok=True)
     
+    report_lines = [
+        "# Generalization Experiments Data Report (Filtered >300 Bboxes)",
+        "",
+        "This report details the number of images and bounding boxes for each merged data split, after filtering out any image that contained more than 300 bounding boxes.",
+        ""
+    ]
+    
     for exp_name, exp_data in experiments.items():
         exp_dir_name = f"TRAINING_DATA_{exp_name.upper()}"
         out_dir = Path("/project/aip-robsc/asinha/cellanome/DATA") / exp_dir_name
         
+        report_lines.append(f"## Experiment: `{exp_name}`")
+        report_lines.append("| Split | Dataset | Images | Bboxes |")
+        report_lines.append("| :--- | :--- | ---: | ---: |")
+        
         if BASE_PHASE2.exists():
             print(f"\nProcessing {exp_name}...")
-            merge_coco_datasets(exp_data["train"], "train", out_dir, BASE_PHASE2)
-            merge_coco_datasets(exp_data["test"], "test", out_dir, BASE_PHASE2)
+            merge_coco_datasets(exp_data["train"], "train", out_dir, BASE_PHASE2, report_lines)
+            merge_coco_datasets(exp_data["test"], "test", out_dir, BASE_PHASE2, report_lines)
+        else:
+            report_lines.append("| (Skipped) | Vulcan Storage Not Found | 0 | 0 |")
             
         write_hydra_yaml(exp_name, out_dir, exp_name.upper())
+
+    report_path = Path("generalization_data_report.md")
+    with open(report_path, "w") as f:
+        f.write("\n".join(report_lines))
+    print(f"\nReport written to {report_path}")
 
 if __name__ == "__main__":
     main()
