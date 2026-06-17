@@ -67,28 +67,12 @@ def merge_train_datasets(dataset_names, output_dir, base_phase2, report_lines):
             img_copy = dict(img)
             img_copy["id"] = new_id
             
-            new_file_name = f"{ds_name}_{img['file_name']}"
+            new_file_name = str((ds_path / "images" / split_name / img['file_name']).resolve())
             img_copy["file_name"] = new_file_name
             merged_coco["images"].append(img_copy)
             
             kept_images_count += 1
             max_img_id = max(max_img_id, old_id)
-            
-            # Symlink image
-            src_img = ds_path / "images" / split_name / img["file_name"]
-            dst_img = out_images_dir / new_file_name
-            if src_img.exists() and not dst_img.exists():
-                os.symlink(src_img, dst_img)
-                
-            # Symlink mask if exists
-            mask_src_dir = ds_path / "masks" / split_name
-            if mask_src_dir.exists():
-                stem = Path(img["file_name"]).stem
-                for mask_file in mask_src_dir.glob(f"{stem}.*"):
-                    new_mask_name = f"{ds_name}_{mask_file.name}"
-                    dst_mask = out_masks_dir / new_mask_name
-                    if not dst_mask.exists():
-                        os.symlink(mask_file, dst_mask)
         
         max_ann_id = 0
         for ann in coco.get("annotations", []):
@@ -227,26 +211,12 @@ def merge_and_split_test_datasets(dataset_names, output_dir, base_phase2, report
             img_copy = dict(img)
             img_copy["id"] = new_id
             
-            new_file_name = f"{ds_name}_{img['file_name']}"
+            new_file_name = str((ds_path / "images" / "test" / img['file_name']).resolve())
             img_copy["file_name"] = new_file_name
             merged_coco[target_split]["images"].append(img_copy)
             
             kept_images_count[target_split] += 1
             max_img_id[target_split] = max(max_img_id[target_split], old_id)
-            
-            src_img = ds_path / "images" / "test" / img["file_name"]
-            dst_img = out_dirs[target_split]["images"] / new_file_name
-            if src_img.exists() and not dst_img.exists():
-                os.symlink(src_img, dst_img)
-                
-            mask_src_dir = ds_path / "masks" / "test"
-            if mask_src_dir.exists():
-                stem = Path(img["file_name"]).stem
-                for mask_file in mask_src_dir.glob(f"{stem}.*"):
-                    new_mask_name = f"{ds_name}_{mask_file.name}"
-                    dst_mask = out_dirs[target_split]["masks"] / new_mask_name
-                    if not dst_mask.exists():
-                        os.symlink(mask_file, dst_mask)
                         
         max_ann_id = {"val": 0, "test": 0}
         for ann in coco.get("annotations", []):
