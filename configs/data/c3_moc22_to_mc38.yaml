@@ -4,16 +4,7 @@ defaults:
   - default@data
 
 data:
-  datasets:
-    train:
-      - /mnt/direct-attached/PHASE2/20250917_moc22-adhered_10x_caged_4_class
-    val:
-      - /mnt/direct-attached/PHASE2/20260316_a549-tomm20-gfp-adhered_10x_caged_at_4x_4_class
-      - /mnt/direct-attached/PHASE2/20240624_mc38_10x_caged_4_class
-    test:
-      - /mnt/direct-attached/PHASE2/20260316_a549-tomm20-gfp-adhered_10x_caged_at_4x_4_class
-      - /mnt/direct-attached/PHASE2/20240624_mc38_10x_caged_4_class
-
+  path: "/project/aip-robsc/asinha/cellanome/DATA/TRAINING_DATA_C3_MOC22_TO_MC38"
   val_name: 'test'
   test_name: 'test'
   train_name: 'train'

@@ -4,20 +4,7 @@ defaults:
   - default@data
 
 data:
-  datasets:
-    train:
-      - /mnt/direct-attached/PHASE2/20241212_preadipocytes-adhered_10x_uncaged_4_class
-    val:
-      - /mnt/direct-attached/PHASE2/20240509_Hs675Tfibroblasts_10x_caged_4_class
-      - /mnt/direct-attached/PHASE2/231212_imr90_multichannel_overlay_4_class
-      - /mnt/direct-attached/PHASE2/240213_imr90_multichannel_overlay_4_class
-      - /mnt/direct-attached/PHASE2/20250227_preadipocytes-adhered_10x_caged_4_class
-    test:
-      - /mnt/direct-attached/PHASE2/20240509_Hs675Tfibroblasts_10x_caged_4_class
-      - /mnt/direct-attached/PHASE2/231212_imr90_multichannel_overlay_4_class
-      - /mnt/direct-attached/PHASE2/240213_imr90_multichannel_overlay_4_class
-      - /mnt/direct-attached/PHASE2/20250227_preadipocytes-adhered_10x_caged_4_class
-
+  path: "/project/aip-robsc/asinha/cellanome/DATA/TRAINING_DATA_C1_PREADIPO_TO_FIBRO"
   val_name: 'test'
   test_name: 'test'
   train_name: 'train'
