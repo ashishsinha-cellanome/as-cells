@@ -27,6 +27,7 @@ def merge_train_datasets(dataset_names, output_dir, base_phase2, report_lines):
     
     total_images_in_split = 0
     total_bboxes_in_split = 0
+    total_excluded_in_split = 0
     
     for ds_name in dataset_names:
         ds_path = base_phase2 / ds_name
@@ -50,12 +51,14 @@ def merge_train_datasets(dataset_names, output_dir, base_phase2, report_lines):
         
         kept_images_count = 0
         kept_bboxes_count = 0
+        excluded_images_count = 0
         
         for img in coco.get("images", []):
             old_id = img["id"]
             
             # Check annotation count for this image
             if ann_counts.get(old_id, 0) > 300:
+                excluded_images_count += 1
                 continue
                 
             new_id = old_id + image_id_offset
@@ -109,15 +112,16 @@ def merge_train_datasets(dataset_names, output_dir, base_phase2, report_lines):
         image_id_offset += max_img_id + 1
         annotation_id_offset += max_ann_id + 1
         
-        report_lines.append(f"| {split_name} | {ds_name} | {kept_images_count} | {kept_bboxes_count} |")
+        report_lines.append(f"| {split_name} | {ds_name} | {kept_images_count} | {kept_bboxes_count} | {excluded_images_count} |")
         total_images_in_split += kept_images_count
         total_bboxes_in_split += kept_bboxes_count
+        total_excluded_in_split += excluded_images_count
         
     out_json = output_dir / f"{split_name}_annotations.json"
     with open(out_json, 'w') as f:
         json.dump(merged_coco, f)
         
-    report_lines.append(f"| **TOTAL {split_name.upper()}** | | **{total_images_in_split}** | **{total_bboxes_in_split}** |")
+    report_lines.append(f"| **TOTAL {split_name.upper()}** | | **{total_images_in_split}** | **{total_bboxes_in_split}** | **{total_excluded_in_split}** |")
     report_lines.append("")
     print(f"Merged {len(dataset_names)} datasets for {split_name} split into {out_json}")
 
@@ -150,6 +154,7 @@ def merge_and_split_test_datasets(dataset_names, output_dir, base_phase2, report
     
     total_images_in_split = {"val": 0, "test": 0}
     total_bboxes_in_split = {"val": 0, "test": 0}
+    total_excluded_in_split = {"val": 0, "test": 0}
     
     for ds_name in dataset_names:
         ds_path = base_phase2 / ds_name
@@ -168,9 +173,12 @@ def merge_and_split_test_datasets(dataset_names, output_dir, base_phase2, report
             ann_counts[img_id] = ann_counts.get(img_id, 0) + 1
             
         valid_images = []
+        excluded_images = []
         for img in coco.get("images", []):
             if ann_counts.get(img["id"], 0) <= 300:
                 valid_images.append(img)
+            else:
+                excluded_images.append(img)
                 
         base_name_groups = {}
         for img in valid_images:
@@ -178,6 +186,12 @@ def merge_and_split_test_datasets(dataset_names, output_dir, base_phase2, report
             if base_name not in base_name_groups:
                 base_name_groups[base_name] = []
             base_name_groups[base_name].append(img)
+            
+        # Also group excluded images to track which split they "would" have belonged to
+        for img in excluded_images:
+            base_name = img["file_name"].split("_crp_")[0]
+            if base_name not in base_name_groups:
+                base_name_groups[base_name] = []
             
         base_names = list(base_name_groups.keys())
         base_names.sort()
@@ -195,7 +209,13 @@ def merge_and_split_test_datasets(dataset_names, output_dir, base_phase2, report
         
         kept_images_count = {"val": 0, "test": 0}
         kept_bboxes_count = {"val": 0, "test": 0}
+        excluded_images_count = {"val": 0, "test": 0}
         
+        for img in excluded_images:
+            base_name = img["file_name"].split("_crp_")[0]
+            target_split = "val" if base_name in val_bases else "test"
+            excluded_images_count[target_split] += 1
+            
         for img in valid_images:
             base_name = img["file_name"].split("_crp_")[0]
             target_split = "val" if base_name in val_bases else "test"
@@ -252,16 +272,17 @@ def merge_and_split_test_datasets(dataset_names, output_dir, base_phase2, report
             image_id_offset[s] += max_img_id[s] + 1
             annotation_id_offset[s] += max_ann_id[s] + 1
             
-            report_lines.append(f"| {s} | {ds_name} | {kept_images_count[s]} | {kept_bboxes_count[s]} |")
+            report_lines.append(f"| {s} | {ds_name} | {kept_images_count[s]} | {kept_bboxes_count[s]} | {excluded_images_count[s]} |")
             total_images_in_split[s] += kept_images_count[s]
             total_bboxes_in_split[s] += kept_bboxes_count[s]
+            total_excluded_in_split[s] += excluded_images_count[s]
             
     for s in splits:
         out_json = output_dir / f"{s}_annotations.json"
         with open(out_json, 'w') as f:
             json.dump(merged_coco[s], f)
         
-        report_lines.append(f"| **TOTAL {s.upper()}** | | **{total_images_in_split[s]}** | **{total_bboxes_in_split[s]}** |")
+        report_lines.append(f"| **TOTAL {s.upper()}** | | **{total_images_in_split[s]}** | **{total_bboxes_in_split[s]}** | **{total_excluded_in_split[s]}** |")
         report_lines.append("")
         print(f"Merged {len(dataset_names)} datasets for {s} split into {out_json}")
 
@@ -371,8 +392,8 @@ def main():
         out_dir = Path("/project/aip-robsc/asinha/cellanome/DATA") / exp_dir_name
         
         report_lines.append(f"## Experiment: `{exp_name}`")
-        report_lines.append("| Split | Dataset | Images | Bboxes |")
-        report_lines.append("| :--- | :--- | ---: | ---: |")
+        report_lines.append("| Split | Dataset | Kept Images | Kept Bboxes | Excluded Images (>300 Bboxes) |")
+        report_lines.append("| :--- | :--- | ---: | ---: | ---: |")
         
         if BASE_PHASE2.exists():
             print(f"\nProcessing {exp_name}...")
