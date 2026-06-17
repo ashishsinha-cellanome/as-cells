@@ -55,108 +55,15 @@ def custom_build_roboflow_from_coco(image_set, args, resolution):
         include_masks=include_masks,
         remap_category_ids=False,
     )
+    
+    from custom_coco_utils import CustomConvertCoco
+    dataset.prepare = CustomConvertCoco(include_masks=include_masks, cat2label=dataset.cat2label)
+    
     return dataset
 
 # Apply the patches
 rfdetr.datasets.coco.build_roboflow_from_coco = custom_build_roboflow_from_coco
 rfdetr.datasets.build_roboflow_from_coco = custom_build_roboflow_from_coco
-
-import torch
-import pycocotools.mask as coco_mask
-
-def custom_convert_coco_call(self, image, target):
-    w, h = image.size
-    image_id = target["image_id"]
-    image_id = torch.tensor([image_id])
-
-    anno = target["annotations"]
-    anno = [obj for obj in anno if "iscrowd" not in obj or obj["iscrowd"] == 0]
-
-    boxes = [obj["bbox"] for obj in anno]
-    boxes = torch.as_tensor(boxes, dtype=torch.float32).reshape(-1, 4)
-    boxes[:, 2:] += boxes[:, :2]
-    boxes[:, 0::2].clamp_(min=0, max=w)
-    boxes[:, 1::2].clamp_(min=0, max=h)
-
-    classes = []
-    for obj in anno:
-        category_id = obj["category_id"]
-        if getattr(self, "cat2label", None) is not None:
-            classes.append(self.cat2label[category_id])
-        else:
-            classes.append(category_id)
-    classes = torch.tensor(classes, dtype=torch.int64)
-
-    keep = (boxes[:, 3] > boxes[:, 1]) & (boxes[:, 2] > boxes[:, 0])
-    boxes = boxes[keep]
-    classes = classes[keep]
-
-    new_target = {}
-    new_target["boxes"] = boxes
-    new_target["labels"] = classes
-    new_target["image_id"] = image_id
-
-    area = torch.tensor([obj["area"] for obj in anno])
-    iscrowd = torch.tensor([obj["iscrowd"] if "iscrowd" in obj else 0 for obj in anno])
-    new_target["area"] = area[keep]
-    new_target["iscrowd"] = iscrowd[keep]
-
-    if self.include_masks:
-        masks = []
-        for i, obj in enumerate(anno):
-            if not keep[i]:
-                continue
-            seg = obj.get("segmentation", [])
-            if not seg:
-                masks.append(torch.zeros((h, w), dtype=torch.uint8))
-                continue
-                
-            if isinstance(seg, dict):
-                rles = seg
-                mask = coco_mask.decode(rles)
-                if mask.ndim < 3:
-                    mask = mask[..., None]
-                mask = torch.as_tensor(mask, dtype=torch.uint8).any(dim=2)
-                
-                # Check if it's a bounding box sized RLE
-                if mask.shape[0] != h or mask.shape[1] != w:
-                    bbox = obj["bbox"]
-                    x1, y1, bw, bh = [int(v) for v in bbox]
-                    full_mask = torch.zeros((h, w), dtype=torch.uint8)
-                    x1_c = max(0, x1)
-                    y1_c = max(0, y1)
-                    x2_c = min(w, x1 + mask.shape[1])
-                    y2_c = min(h, y1 + mask.shape[0])
-                    
-                    mw = x2_c - x1_c
-                    mh = y2_c - y1_c
-                    if mw > 0 and mh > 0:
-                        full_mask[y1_c:y2_c, x1_c:x2_c] = mask[:mh, :mw]
-                    masks.append(full_mask)
-                else:
-                    masks.append(mask)
-            else:
-                try:
-                    rles = coco_mask.frPyObjects(seg, h, w)
-                except:
-                    rles = seg
-                mask = coco_mask.decode(rles)
-                if mask.ndim < 3:
-                    mask = mask[..., None]
-                mask = torch.as_tensor(mask, dtype=torch.uint8).any(dim=2)
-                masks.append(mask)
-                
-        if len(masks) > 0:
-            new_target["masks"] = torch.stack(masks, dim=0).bool()
-        else:
-            new_target["masks"] = torch.zeros((0, h, w), dtype=torch.bool)
-    
-    new_target["orig_size"] = torch.as_tensor([int(h), int(w)])
-    new_target["size"] = torch.as_tensor([int(h), int(w)])
-
-    return image, new_target
-
-rfdetr.datasets.coco.ConvertCoco.__call__ = custom_convert_coco_call
 
 # 2. Setup training
 from rfdetr import RFDETRSegLarge
