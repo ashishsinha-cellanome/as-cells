@@ -5,7 +5,7 @@ defaults:
 
 data:
   path: "/project/aip-robsc/asinha/cellanome/DATA/TRAINING_DATA_C3_MC38_TO_MOC22"
-  val_name: 'test'
+  val_name: 'val'
   test_name: 'test'
   train_name: 'train'
 

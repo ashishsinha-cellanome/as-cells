@@ -5,7 +5,7 @@ defaults:
 
 data:
   path: "/project/aip-robsc/asinha/cellanome/DATA/TRAINING_DATA_C2_MC38CAGED_TO_BROAD"
-  val_name: 'test'
+  val_name: 'val'
   test_name: 'test'
   train_name: 'train'
 

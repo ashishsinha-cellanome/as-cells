@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 import json
 import os
+import random
 from pathlib import Path
+import hashlib
 
-def merge_coco_datasets(dataset_names, split_name, output_dir, base_phase2, report_lines):
+def merge_train_datasets(dataset_names, output_dir, base_phase2, report_lines):
+    split_name = "train"
     output_dir = Path(output_dir)
     out_images_dir = output_dir / "images" / split_name
     out_images_dir.mkdir(parents=True, exist_ok=True)
@@ -119,6 +122,150 @@ def merge_coco_datasets(dataset_names, split_name, output_dir, base_phase2, repo
     print(f"Merged {len(dataset_names)} datasets for {split_name} split into {out_json}")
 
 
+def merge_and_split_test_datasets(dataset_names, output_dir, base_phase2, report_lines):
+    output_dir = Path(output_dir)
+    splits = ["val", "test"]
+    
+    out_dirs = {}
+    merged_coco = {}
+    for s in splits:
+        out_images_dir = output_dir / "images" / s
+        out_images_dir.mkdir(parents=True, exist_ok=True)
+        
+        out_masks_dir = output_dir / "masks" / s
+        out_masks_dir.mkdir(parents=True, exist_ok=True)
+        
+        out_dirs[s] = {"images": out_images_dir, "masks": out_masks_dir}
+        
+        merged_coco[s] = {
+            "info": {},
+            "licenses": [],
+            "categories": [{"id": 0, "name": "cell"}, {"id": 1, "name": "bead"}, {"id": 2, "name": "cell-adhered"}, {"id": 3, "name": "soma"}],
+            "images": [],
+            "annotations": []
+        }
+    
+    image_id_offset = {"val": 0, "test": 0}
+    annotation_id_offset = {"val": 0, "test": 0}
+    
+    total_images_in_split = {"val": 0, "test": 0}
+    total_bboxes_in_split = {"val": 0, "test": 0}
+    
+    for ds_name in dataset_names:
+        ds_path = base_phase2 / ds_name
+        json_path = ds_path / "test_annotations.json"
+        
+        if not json_path.exists():
+            print(f"Warning: {json_path} not found")
+            continue
+            
+        with open(json_path, 'r') as f:
+            coco = json.load(f)
+            
+        ann_counts = {}
+        for ann in coco.get("annotations", []):
+            img_id = ann["image_id"]
+            ann_counts[img_id] = ann_counts.get(img_id, 0) + 1
+            
+        valid_images = []
+        for img in coco.get("images", []):
+            if ann_counts.get(img["id"], 0) <= 300:
+                valid_images.append(img)
+                
+        base_name_groups = {}
+        for img in valid_images:
+            base_name = img["file_name"].split("_crp_")[0]
+            if base_name not in base_name_groups:
+                base_name_groups[base_name] = []
+            base_name_groups[base_name].append(img)
+            
+        base_names = list(base_name_groups.keys())
+        base_names.sort()
+        
+        seed_val = int(hashlib.md5(ds_name.encode()).hexdigest(), 16) % (2**32)
+        random.seed(seed_val)
+        random.shuffle(base_names)
+        
+        split_idx = int(len(base_names) * 0.2)
+        val_bases = set(base_names[:split_idx])
+        test_bases = set(base_names[split_idx:])
+        
+        id_map = {}
+        max_img_id = {"val": 0, "test": 0}
+        
+        kept_images_count = {"val": 0, "test": 0}
+        kept_bboxes_count = {"val": 0, "test": 0}
+        
+        for img in valid_images:
+            base_name = img["file_name"].split("_crp_")[0]
+            target_split = "val" if base_name in val_bases else "test"
+            
+            old_id = img["id"]
+            new_id = old_id + image_id_offset[target_split]
+            id_map[old_id] = {"id": new_id, "split": target_split}
+            
+            img_copy = dict(img)
+            img_copy["id"] = new_id
+            
+            new_file_name = f"{ds_name}_{img['file_name']}"
+            img_copy["file_name"] = new_file_name
+            merged_coco[target_split]["images"].append(img_copy)
+            
+            kept_images_count[target_split] += 1
+            max_img_id[target_split] = max(max_img_id[target_split], old_id)
+            
+            src_img = ds_path / "images" / "test" / img["file_name"]
+            dst_img = out_dirs[target_split]["images"] / new_file_name
+            if src_img.exists() and not dst_img.exists():
+                os.symlink(src_img, dst_img)
+                
+            mask_src_dir = ds_path / "masks" / "test"
+            if mask_src_dir.exists():
+                stem = Path(img["file_name"]).stem
+                for mask_file in mask_src_dir.glob(f"{stem}.*"):
+                    new_mask_name = f"{ds_name}_{mask_file.name}"
+                    dst_mask = out_dirs[target_split]["masks"] / new_mask_name
+                    if not dst_mask.exists():
+                        os.symlink(mask_file, dst_mask)
+                        
+        max_ann_id = {"val": 0, "test": 0}
+        for ann in coco.get("annotations", []):
+            old_ann_id = ann["id"]
+            old_img_id = ann["image_id"]
+            
+            if old_img_id not in id_map:
+                continue
+                
+            target_split = id_map[old_img_id]["split"]
+            new_ann_id = old_ann_id + annotation_id_offset[target_split]
+            new_img_id = id_map[old_img_id]["id"]
+            
+            ann_copy = dict(ann)
+            ann_copy["id"] = new_ann_id
+            ann_copy["image_id"] = new_img_id
+            merged_coco[target_split]["annotations"].append(ann_copy)
+            
+            kept_bboxes_count[target_split] += 1
+            max_ann_id[target_split] = max(max_ann_id[target_split], old_ann_id)
+            
+        for s in splits:
+            image_id_offset[s] += max_img_id[s] + 1
+            annotation_id_offset[s] += max_ann_id[s] + 1
+            
+            report_lines.append(f"| {s} | {ds_name} | {kept_images_count[s]} | {kept_bboxes_count[s]} |")
+            total_images_in_split[s] += kept_images_count[s]
+            total_bboxes_in_split[s] += kept_bboxes_count[s]
+            
+    for s in splits:
+        out_json = output_dir / f"{s}_annotations.json"
+        with open(out_json, 'w') as f:
+            json.dump(merged_coco[s], f)
+        
+        report_lines.append(f"| **TOTAL {s.upper()}** | | **{total_images_in_split[s]}** | **{total_bboxes_in_split[s]}** |")
+        report_lines.append("")
+        print(f"Merged {len(dataset_names)} datasets for {s} split into {out_json}")
+
+
 def write_hydra_yaml(yaml_name, data_path, run_prefix):
     yaml_path = Path("configs/data") / f"{yaml_name}.yaml"
     
@@ -129,7 +276,7 @@ defaults:
 
 data:
   path: "{data_path}"
-  val_name: 'test'
+  val_name: 'val'
   test_name: 'test'
   train_name: 'train'
 
@@ -148,6 +295,7 @@ hydra:
     with open(yaml_path, "w") as f:
         f.write(content)
     print(f"Created config: {yaml_path}")
+
 
 def main():
     BASE_PHASE2 = Path("/mnt/direct-attached/PHASE2")
@@ -213,7 +361,8 @@ def main():
     report_lines = [
         "# Generalization Experiments Data Report (Filtered >300 Bboxes)",
         "",
-        "This report details the number of images and bounding boxes for each merged data split, after filtering out any image that contained more than 300 bounding boxes.",
+        "This report details the number of images and bounding boxes for each merged data split.",
+        "The Test sets were generated by taking 80% of unique base images, while 20% were reserved for the Val sets (preventing crop leakage).",
         ""
     ]
     
@@ -227,8 +376,8 @@ def main():
         
         if BASE_PHASE2.exists():
             print(f"\nProcessing {exp_name}...")
-            merge_coco_datasets(exp_data["train"], "train", out_dir, BASE_PHASE2, report_lines)
-            merge_coco_datasets(exp_data["test"], "test", out_dir, BASE_PHASE2, report_lines)
+            merge_train_datasets(exp_data["train"], out_dir, BASE_PHASE2, report_lines)
+            merge_and_split_test_datasets(exp_data["test"], out_dir, BASE_PHASE2, report_lines)
         else:
             report_lines.append("| (Skipped) | Vulcan Storage Not Found | 0 | 0 |")
             
