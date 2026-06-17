@@ -1,0 +1,22 @@
+# @package _global_
+
+defaults:
+  - default@data
+
+data:
+  path: "/project/aip-robsc/asinha/cellanome/DATA/TRAINING_DATA_C4_DC_TO_MC38"
+  val_name: 'val'
+  test_name: 'test'
+  train_name: 'train'
+
+initialization:
+  load_from_checkpoint: "/mnt/personal/cellanome/checkpoints/ALL_CKPTS/RFDETR-Seg-ckpts/output/checkpoint_best_ema.pth"
+
+checkpointing:
+  save_dir: "/project/aip-robsc/asinha/cellanome/DATA/checkpoints/"
+  rtdetr_initial_checkpoint: "/project/aip-robsc/asinha/cellanome/DATA/checkpoints/${checkpointing._folder_name}"
+  dinov2_backbone_checkpoint: "/project/aip-robsc/asinha/cellanome/DATA/checkpoints/backbones/dinov2"
+
+hydra:
+  run:
+    dir: "/project/aip-robsc/asinha/cellanome/logs/${now:%Y-%m-%d}/${now:%H-%M-%S}_C4_DC_TO_MC38"
