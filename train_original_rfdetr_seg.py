@@ -20,8 +20,8 @@ def custom_build_roboflow_from_coco(image_set, args, resolution):
     
     PATHS = {
         "train": (root / "images" / "train", root / "train_annotations.json"),
-        "val": (root / "images" / "valid_no300", root / "valid_no300_annotations.json"),
-        "test": (root / "images" / "test_no300", root / "test_no300_annotations.json"),
+        "val": (root / "images" / "val", root / "val_annotations.json"),
+        "test": (root / "images" / "test", root / "test_annotations.json"),
     }
     
     # Identify split ('train', 'val', or 'test')
