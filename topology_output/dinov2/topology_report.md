@@ -61,12 +61,12 @@ Threshold for Coverage: Distance < 0.2 (> 80% Coverage)
 - **[ROOT]** `20240624_mc38_10x_uncaged_4_class`
 ```text
 [ROOT] 20240624_mc38_10x_uncaged_4_class
-└── [LEAF] `20240624_mc38_10x_caged_4_class` (Coverage: 95.3%)
+└── [LEAF] `20240624_mc38_10x_caged_4_class` (Coverage: 96.7%)
 ```
 - **[ROOT]** `20260316_a549-tomm20-gfp-adhered_10x_caged_at_4x_4_class`
 ```text
 [ROOT] 20260316_a549-tomm20-gfp-adhered_10x_caged_at_4x_4_class
-└── [LEAF] `20240624_mc38_10x_caged_4_class` (Coverage: 85.5%)
+└── [LEAF] `20240624_mc38_10x_caged_4_class` (Coverage: 86.1%)
 ```
 
 ---
@@ -101,23 +101,23 @@ Threshold for Coverage: Distance < 0.2 (> 80% Coverage)
 - **[ROOT]** `20240509_hela-adhered_10x_caged_4_class`
 ```text
 [ROOT] 20240509_hela-adhered_10x_caged_4_class
-└── [LEAF] `20240624_mc38_10x_caged_4_class` (Coverage: 80.8%)
+└── [LEAF] `20240624_mc38_10x_caged_4_class` (Coverage: 80.7%)
 ```
 - **[ROOT]** `20240624_mc38_10x_uncaged_4_class`
 ```text
 [ROOT] 20240624_mc38_10x_uncaged_4_class
-└── [LEAF] `20240624_mc38_10x_caged_4_class` (Coverage: 99.2%)
+└── [LEAF] `20240624_mc38_10x_caged_4_class` (Coverage: 99.7%)
 ```
 - **[ROOT]** `20240905_u87-adhered_10x_caged_4_class`
 ```text
 [ROOT] 20240905_u87-adhered_10x_caged_4_class
-├── [LEAF] `20240624_mc38_10x_caged_4_class` (Coverage: 85.9%)
+├── [LEAF] `20240624_mc38_10x_caged_4_class` (Coverage: 86.2%)
 └── [LEAF] `20240625_mc38_10x_caged_4_class` (Coverage: 84.0%)
 ```
 - **[ROOT]** `20260316_a549-tomm20-gfp-adhered_10x_caged_at_4x_4_class`
 ```text
 [ROOT] 20260316_a549-tomm20-gfp-adhered_10x_caged_at_4x_4_class
-└── [LEAF] `20240624_mc38_10x_caged_4_class` (Coverage: 92.4%)
+└── [LEAF] `20240624_mc38_10x_caged_4_class` (Coverage: 93.7%)
 ```
 
 ---
@@ -152,22 +152,22 @@ Threshold for Coverage: Distance < 0.2 (> 80% Coverage)
 - **[ROOT]** `20240509_hela-adhered_10x_caged_4_class`
 ```text
 [ROOT] 20240509_hela-adhered_10x_caged_4_class
-└── [NODE] `20240624_mc38_10x_caged_4_class` (Coverage: 91.7%)
+└── [NODE] `20240624_mc38_10x_caged_4_class` (Coverage: 91.2%)
     └── [NODE] `20240624_mc38_10x_uncaged_4_class` (Coverage: 85.1%)
         ├── [NODE] `20240624_mc38_10x_caged_4_class` (Coverage: 100.0%)
-        ├── [NODE] `20240625_mc38_10x_caged_4_class` (Coverage: 88.3%)
-        │   ├── [NODE] `20240624_mc38_10x_caged_4_class` (Coverage: 93.4%)
-        │   ├── [NODE] `20240905_u87-adhered_10x_caged_4_class` (Coverage: 90.4%)
-        │   │   ├── [NODE] `20240625_mc38_10x_caged_4_class` (Coverage: 96.8%)
-        │   │   ├── [NODE] `20240624_mc38_10x_caged_4_class` (Coverage: 95.9%)
-        │   │   └── [NODE] `20240624_mc38_10x_uncaged_4_class` (Coverage: 84.4%)
+        ├── [NODE] `20240625_mc38_10x_caged_4_class` (Coverage: 87.5%)
+        │   ├── [NODE] `20240624_mc38_10x_caged_4_class` (Coverage: 92.5%)
+        │   ├── [NODE] `20240905_u87-adhered_10x_caged_4_class` (Coverage: 91.5%)
+        │   │   ├── [NODE] `20240624_mc38_10x_caged_4_class` (Coverage: 96.4%)
+        │   │   ├── [NODE] `20240625_mc38_10x_caged_4_class` (Coverage: 96.1%)
+        │   │   └── [NODE] `20240624_mc38_10x_uncaged_4_class` (Coverage: 85.8%)
         │   └── [LEAF] `20240509_Hs675Tfibroblasts_10x_caged_4_class` (Coverage: 85.2%)
-        └── [NODE] `20260316_a549-tomm20-gfp-adhered_10x_caged_at_4x_4_class` (Coverage: 82.3%)
-            ├── [NODE] `20240624_mc38_10x_caged_4_class` (Coverage: 99.5%)
-            ├── [NODE] `20240624_mc38_10x_uncaged_4_class` (Coverage: 91.0%)
-            └── [NODE] `20250917_moc22-adhered_10x_caged_4_class` (Coverage: 81.3%)
-                ├── [NODE] `20240624_mc38_10x_caged_4_class` (Coverage: 91.7%)
-                └── [NODE] `20260316_a549-tomm20-gfp-adhered_10x_caged_at_4x_4_class` (Coverage: 85.9%)
+        └── [NODE] `20260316_a549-tomm20-gfp-adhered_10x_caged_at_4x_4_class` (Coverage: 84.8%)
+            ├── [NODE] `20240624_mc38_10x_caged_4_class` (Coverage: 98.8%)
+            ├── [NODE] `20240624_mc38_10x_uncaged_4_class` (Coverage: 92.7%)
+            └── [NODE] `20250917_moc22-adhered_10x_caged_4_class` (Coverage: 82.8%)
+                ├── [NODE] `20240624_mc38_10x_caged_4_class` (Coverage: 92.5%)
+                └── [NODE] `20260316_a549-tomm20-gfp-adhered_10x_caged_at_4x_4_class` (Coverage: 86.9%)
 ```
 
 ---

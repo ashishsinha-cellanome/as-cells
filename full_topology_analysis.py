@@ -189,11 +189,19 @@ def main():
     print("=== RF-DETR Analysis ===")
     rf_pkl = "/Users/ashish.sinha/Documents/project/cellanome/as-cells/custom_cell_line_embeddings_analysis/extracted_raw_embeddings.pkl"
     if os.path.exists(rf_pkl):
+        continue
+    else:
+        rf_pkl = "/mnt/direct-attached/PHASE2_EVAL_RESULTS/custom_cell_line_embeddings_analysis/extracted_raw_embeddings.pkl"
+    if os.path.exists(rf_pkl):
         analyze_topology(rf_pkl, k_values=[5, 10, 15, 30], out_dir="topology_output/rfdetr")
     
     # Run for DINOv2
     print("\n=== DINOv2 Analysis ===")
     dino_pkl = "/Users/ashish.sinha/Documents/project/cellanome/as-cells/custom_dinov2_cell_line_embeddings_analysis/extracted_raw_embeddings.pkl"
+    if os.path.exists(dino_pkl):
+        continue
+    else:
+        dino_pkl = "/mnt/direct-attached/PHASE2_EVAL_RESULTS/custom_dinov2_cell_line_embeddings_analysis/extracted_raw_embeddings.pkl"
     if os.path.exists(dino_pkl):
         analyze_topology(dino_pkl, k_values=[5, 10, 15, 30], out_dir="topology_output/dinov2")
     else:
