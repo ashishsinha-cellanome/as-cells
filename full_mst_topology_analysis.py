@@ -38,22 +38,32 @@ def hierarchy_pos(G, root=None, width=1., vert_gap=0.2, vert_loc=0, xcenter=0.5)
     if root is None:
         root = next(iter(nx.topological_sort(G)))
         
-    def _hierarchy_pos(G, root, width=1., vert_gap=0.2, vert_loc=0, xcenter=0.5, pos=None, parent=None):
+    def _hierarchy_pos(G, root, left, right, vert_gap, vert_loc, pos=None):
         if pos is None:
-            pos = {root: (xcenter, vert_loc)}
+            pos = {root: ((left + right) / 2, vert_loc)}
         else:
-            pos[root] = (xcenter, vert_loc)
+            pos[root] = ((left + right) / 2, vert_loc)
+            
         children = list(G.successors(root))
         if len(children) != 0:
-            dx = width / len(children)
-            nextx = xcenter - width/2 - dx/2
-            for child in children:
-                nextx += dx
-                pos = _hierarchy_pos(G, child, width=dx, vert_gap=vert_gap,
-                                     vert_loc=vert_loc-vert_gap, xcenter=nextx,
-                                     pos=pos, parent=root)
+            def get_leaves(node):
+                c = list(G.successors(node))
+                if not c:
+                    return 1
+                return sum(get_leaves(child) for child in c)
+                
+            leaves_counts = [get_leaves(child) for child in children]
+            total_leaves = sum(leaves_counts)
+            
+            dx = (right - left) / total_leaves
+            current_left = left
+            for child, count in zip(children, leaves_counts):
+                current_right = current_left + dx * count
+                pos = _hierarchy_pos(G, child, current_left, current_right,
+                                     vert_gap, vert_loc - vert_gap, pos=pos)
+                current_left = current_right
         return pos
-    return _hierarchy_pos(G, root, width, vert_gap, vert_loc, xcenter)
+    return _hierarchy_pos(G, root, xcenter - width/2, xcenter + width/2, vert_gap, vert_loc)
 
 def format_node_label(name):
     clean = name.replace("_10x", "").replace("_4_class", "").replace("-adhered", "").replace("-adherent", "")
