@@ -197,16 +197,17 @@ def process_all_datasets(model, device):
         cell_line = parse_dataset_name(ds.name)
         if not cell_line: continue
         
-        img_dir = ds / "images" / "test"
-        mask_dir = ds / "masks" / "test"
+        img_dir = ds / "images" / "train"
+        mask_dir = ds / "masks" / "train"
         if not img_dir.exists() or not mask_dir.exists():
-            img_dir = ds / "images" / "train"
-            mask_dir = ds / "masks" / "train"
+            img_dir = ds / "images" / "test"
+            mask_dir = ds / "masks" / "test"
         if not img_dir.exists() or not mask_dir.exists(): continue
         
         imgs = sorted(list(img_dir.iterdir()))
         print(f"  -> Processing {ds.name} ({len(imgs)} images)")
         viz_saved = {cat: False for cat in TARGET_CLASSES}
+        viz_accum = {cat: [] for cat in TARGET_CLASSES}
         viz_dir = os.path.join(OUTPUT_DIR, "crop_visualizations")
         
         # Collect all image+mask paths with masks
@@ -235,14 +236,17 @@ def process_all_datasets(model, device):
                     if not tensors:
                         continue
                     
-                    # Save visualizations once per dataset
+                    # Save visualizations once per dataset with accumulated crops
                     if not viz_saved[cat]:
-                        # Convert tensors back to numpy for visualization
-                        crop_nps = [t.permute(1, 2, 0).cpu().numpy() for t in tensors[:16]]
-                        crop_nps = [(c * 0.229 + 0.485) * 255 for c in crop_nps]
-                        crop_nps = [c.clip(0, 255).astype(np.uint8) for c in crop_nps]
-                        save_crop_visualizations(ds.name, str(cat), crop_nps, viz_dir)
-                        viz_saved[cat] = True
+                        viz_accum[cat].extend(tensors)
+                        if len(viz_accum[cat]) >= 16:
+                            # Convert tensors back to numpy for visualization
+                            crop_nps = [t.permute(1, 2, 0).cpu().numpy() for t in viz_accum[cat][:16]]
+                            crop_nps = [(c * 0.229 + 0.485) * 255 for c in crop_nps]
+                            crop_nps = [c.clip(0, 255).astype(np.uint8) for c in crop_nps]
+                            save_crop_visualizations(ds.name, str(cat), crop_nps, viz_dir)
+                            viz_saved[cat] = True
+                            viz_accum[cat] = []
                     
                     pending[cat].extend(tensors)
                     
@@ -262,6 +266,13 @@ def process_all_datasets(model, device):
             
             # Flush remaining
             for cat in TARGET_CLASSES:
+                if not viz_saved[cat] and len(viz_accum[cat]) > 0:
+                    crop_nps = [t.permute(1, 2, 0).cpu().numpy() for t in viz_accum[cat][:16]]
+                    crop_nps = [(c * 0.229 + 0.485) * 255 for c in crop_nps]
+                    crop_nps = [c.clip(0, 255).astype(np.uint8) for c in crop_nps]
+                    save_crop_visualizations(ds.name, str(cat), crop_nps, viz_dir)
+                    viz_saved[cat] = True
+                    
                 if pending[cat]:
                     batch = torch.stack(pending[cat]).to(device)
                     with torch.no_grad():

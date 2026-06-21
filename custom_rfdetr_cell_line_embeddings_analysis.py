@@ -200,15 +200,16 @@ def process_all_datasets(encoder, device):
         cell_line = parse_dataset_name(ds.name)
         if not cell_line: continue
         
-        img_dir = ds / "images" / "test"
-        mask_dir = ds / "masks" / "test"
+        img_dir = ds / "images" / "train"
+        mask_dir = ds / "masks" / "train"
         if not img_dir.exists() or not mask_dir.exists():
-            img_dir = ds / "images" / "train"
-            mask_dir = ds / "masks" / "train"
+            img_dir = ds / "images" / "test"
+            mask_dir = ds / "masks" / "test"
         if not img_dir.exists() or not mask_dir.exists(): continue
         
         imgs = sorted(list(img_dir.iterdir()))
         viz_saved = {cat: False for cat in TARGET_CLASSES}
+        viz_accum = {cat: [] for cat in TARGET_CLASSES}
         viz_dir = os.path.join(OUTPUT_DIR, "crop_visualizations")
         
         with ThreadPoolExecutor(max_workers=16) as executor:
@@ -226,8 +227,11 @@ def process_all_datasets(encoder, device):
                     if not crops: continue
                     
                     if not viz_saved[cat]:
-                        save_crop_visualizations(ds.name, str(cat), crops, viz_dir)
-                        viz_saved[cat] = True
+                        viz_accum[cat].extend(crops)
+                        if len(viz_accum[cat]) >= 16:
+                            save_crop_visualizations(ds.name, str(cat), viz_accum[cat][:16], viz_dir)
+                            viz_saved[cat] = True
+                            viz_accum[cat] = []
                         
                     tensors = [transform(c) for c in crops]
                     cat_embs = []
@@ -243,6 +247,12 @@ def process_all_datasets(encoder, device):
                             all_embeddings[cat][ds.name] = []
                         all_embeddings[cat][ds.name].extend(cat_embs)
                         
+            # Flush remaining visualizations if any
+            for cat in TARGET_CLASSES:
+                if not viz_saved[cat] and len(viz_accum[cat]) > 0:
+                    save_crop_visualizations(ds.name, str(cat), viz_accum[cat][:16], viz_dir)
+                    viz_saved[cat] = True
+                    
     return all_embeddings
 
 
