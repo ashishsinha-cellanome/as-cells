@@ -93,8 +93,8 @@ def parse_dataset_name(ds_name):
 def main():
     base_dir = "/mnt/direct-attached/PHASE2_EVAL_RESULTS"
     models = {
-        "RF-DETR": "custom_cell_line_embeddings_analysis",
-        "DINOv2": "custom_dinov2_cell_line_embeddings_analysis"
+        "RF-DETR": "custom_cell_line_embeddings_analysis_train",
+        "DINOv2": "custom_dinov2_cell_line_embeddings_analysis_train"
     }
     
     CLASS_MAP = {0: "cell", 2: "cell-adhered", 3: "soma"}

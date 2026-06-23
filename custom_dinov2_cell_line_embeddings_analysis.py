@@ -19,7 +19,7 @@ from scipy.linalg import sqrtm
 from omegaconf import OmegaConf
 
 DATA_DIR = "/mnt/direct-attached/PHASE2"
-OUTPUT_DIR = "/mnt/direct-attached/PHASE2_EVAL_RESULTS/custom_dinov2_cell_line_embeddings_analysis"
+OUTPUT_DIR = "/mnt/direct-attached/PHASE2_EVAL_RESULTS/custom_dinov2_cell_line_embeddings_analysis_train"
 
 _model_cfg = OmegaConf.load("configs/model/rfdetr_seg.yaml")
 CLASS_MAP = OmegaConf.to_container(_model_cfg.label_map, resolve=True)
@@ -192,10 +192,14 @@ def process_all_datasets(model, device):
                 result[cat] = tensors
         return result
     
-    for ds in tqdm(list(base_dir.iterdir()), desc="Datasets"):
+    valid_datasets = []
+    for ds in base_dir.iterdir():
         if not ds.is_dir(): continue
         cell_line = parse_dataset_name(ds.name)
         if not cell_line: continue
+        valid_datasets.append(ds)
+
+    for ds in tqdm(valid_datasets, desc="Datasets"):
         
         img_dir = ds / "images" / "train"
         mask_dir = ds / "masks" / "train"
@@ -217,52 +221,54 @@ def process_all_datasets(model, device):
             if mask_path.exists():
                 tasks.append((img, mask_path, input_size))
         
-        print(f"     {len(tasks)} images with masks, extracting crops with 32 workers...")
+        print(f"     {len(tasks)} images with masks, extracting crops with 16 workers...")
+        pending = {cat: [] for cat in TARGET_CLASSES}
+        completed = 0
+        chunk_size = 10000
+        
         # Use larger worker pool
-        with ThreadPoolExecutor(max_workers=32) as executor:
-            futures = {executor.submit(extract_crops_with_transform, task): task[0] for task in tasks}
-            
-            # Accumulate tensors across images for larger GPU batches
-            pending = {cat: [] for cat in TARGET_CLASSES}
-            completed = 0
-            
-            for future in as_completed(futures):
-                completed += 1
-                result = future.result()
-                if not result:
-                    continue
+        with ThreadPoolExecutor(max_workers=16) as executor:
+            for chunk_start in range(0, len(tasks), chunk_size):
+                task_chunk = tasks[chunk_start:chunk_start + chunk_size]
+                futures = {executor.submit(extract_crops_with_transform, task): task[0] for task in task_chunk}
                 
-                for cat, tensors in result.items():
-                    if not tensors:
+                for future in as_completed(futures):
+                    completed += 1
+                    result = future.result()
+                    if not result:
                         continue
                     
-                    # Save visualizations once per dataset with accumulated crops
-                    if not viz_saved[cat]:
-                        viz_accum[cat].extend(tensors)
-                        if len(viz_accum[cat]) >= 16:
-                            # Convert tensors back to numpy for visualization
-                            crop_nps = [t.permute(1, 2, 0).cpu().numpy() for t in viz_accum[cat][:16]]
-                            crop_nps = [(c * 0.229 + 0.485) * 255 for c in crop_nps]
-                            crop_nps = [c.clip(0, 255).astype(np.uint8) for c in crop_nps]
-                            save_crop_visualizations(ds.name, str(cat), crop_nps, viz_dir)
-                            viz_saved[cat] = True
-                            viz_accum[cat] = []
+                    for cat, tensors in result.items():
+                        if not tensors:
+                            continue
+                        
+                        # Save visualizations once per dataset with accumulated crops
+                        if not viz_saved[cat]:
+                            viz_accum[cat].extend(tensors)
+                            if len(viz_accum[cat]) >= 16:
+                                # Convert tensors back to numpy for visualization
+                                crop_nps = [t.permute(1, 2, 0).cpu().numpy() for t in viz_accum[cat][:16]]
+                                crop_nps = [(c * 0.229 + 0.485) * 255 for c in crop_nps]
+                                crop_nps = [c.clip(0, 255).astype(np.uint8) for c in crop_nps]
+                                save_crop_visualizations(ds.name, str(cat), crop_nps, viz_dir)
+                                viz_saved[cat] = True
+                                viz_accum[cat] = []
+                        
+                        pending[cat].extend(tensors)
+                        
+                        # Flush to GPU when we have enough accumulated
+                        if len(pending[cat]) >= 128:
+                            batch = torch.stack(pending[cat]).to(device)
+                            with torch.no_grad():
+                                cls_tokens = model(batch)
+                            embs_list = cls_tokens.cpu().numpy()
+                            if ds.name not in all_embeddings[cat]:
+                                all_embeddings[cat][ds.name] = []
+                            all_embeddings[cat][ds.name].extend(embs_list)
+                            pending[cat] = []
                     
-                    pending[cat].extend(tensors)
-                    
-                    # Flush to GPU when we have enough accumulated
-                    if len(pending[cat]) >= 128:
-                        batch = torch.stack(pending[cat]).to(device)
-                        with torch.no_grad():
-                            cls_tokens = model(batch)
-                        embs_list = cls_tokens.cpu().numpy()
-                        if ds.name not in all_embeddings[cat]:
-                            all_embeddings[cat][ds.name] = []
-                        all_embeddings[cat][ds.name].extend(embs_list)
-                        pending[cat] = []
-                
-                if completed % 200 == 0:
-                    print(f"     {completed}/{len(tasks)} images processed...")
+                    if completed % 200 == 0:
+                        print(f"     {completed}/{len(tasks)} images processed...")
             
             # Flush remaining
             for cat in TARGET_CLASSES:
@@ -443,6 +449,7 @@ def generate_scatter_plots(features, ds_labels, cl_labels, output_dir):
 
 
 def compute_and_plot_metrics(class_name, embeddings_dict, level_name, out_dir):
+    os.makedirs(out_dir, exist_ok=True)
     names = sorted(list(embeddings_dict.keys()))
     num_entities = len(names)
     if num_entities < 2:
@@ -528,6 +535,10 @@ def main():
                     del all_embeddings[cat][ds]
         with open(out_pkl, 'wb') as f:
             pickle.dump(all_embeddings, f)
+    
+    print("Extraction complete. Use compute_all_metrics.py for downstream analysis.")
+    return
+
     for cat in TARGET_CLASSES:
         if cat not in CLASS_MAP or cat not in all_embeddings:
             continue
