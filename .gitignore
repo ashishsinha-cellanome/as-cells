@@ -6,6 +6,7 @@ output/
 *.log
 *.err
 PHASE2_*/
+topology_*/
 custom_*/
 .codex
 ClAUDE.md

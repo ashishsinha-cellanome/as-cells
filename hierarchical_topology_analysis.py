@@ -83,35 +83,54 @@ def analyze_hierarchical_topology(raw_embs_pkl_path, k_values, out_dir="topology
         
         root_node, node_list = to_tree(Z, rd=True)
         
-        report_lines.append("```text")
-        
-        def print_tree(node, prefix=""):
+        def build_dataset_tree(node):
             if node.is_leaf():
-                return
+                return node.id, []
             
             left = node.get_left()
             right = node.get_right()
             
-            children = [left, right]
-            # sort children by size or something so tree looks nice
-            children.sort(key=lambda c: getattr(c, 'count', 0), reverse=True)
+            left_rep, left_children = build_dataset_tree(left)
+            right_rep, right_children = build_dataset_tree(right)
             
-            for i, child in enumerate(children):
+            # Coverage(Parent -> Child). dist_matrix[i, j] is 1 - Coverage(j over i)
+            cov_left_over_right = 1.0 - dist_matrix[right_rep, left_rep]
+            cov_right_over_left = 1.0 - dist_matrix[left_rep, right_rep]
+            
+            # The node that better covers the other becomes the parent of this combined cluster
+            if cov_left_over_right >= cov_right_over_left:
+                parent = left_rep
+                # The right representative becomes a child of the left representative
+                new_children = left_children + [(right_rep, right_children, cov_left_over_right)]
+            else:
+                parent = right_rep
+                new_children = right_children + [(left_rep, left_children, cov_right_over_left)]
+                
+            return parent, new_children
+            
+        global_rep, tree_structure = build_dataset_tree(root_node)
+        
+        report_lines.append("```text")
+        
+        def print_dataset_tree(rep_id, children, prefix=""):
+            # Sort children by coverage (highest first)
+            children.sort(key=lambda x: x[2], reverse=True)
+            
+            for i, (child_rep, child_children, coverage) in enumerate(children):
                 is_last = (i == len(children) - 1)
                 connector = "└── " if is_last else "├── "
                 
-                if child.is_leaf():
-                    name = names[child.id]
-                    report_lines.append(f"{prefix}{connector}[LEAF] `{name}`")
-                else:
-                    child_cov = 100 * (1 - child.dist)
-                    report_lines.append(f"{prefix}{connector}[CLUSTER] (Merged at {child_cov:.1f}% mutual coverage)")
-                    extension = "    " if is_last else "│   "
-                    print_tree(child, prefix + extension)
-        
-        root_cov = 100 * (1 - root_node.dist)
-        report_lines.append(f"[GLOBAL ROOT] (Merged at {root_cov:.1f}% mutual coverage)")
-        print_tree(root_node)
+                role = "[NODE]" if child_children else "[LEAF]"
+                name = names[child_rep]
+                
+                warning = " ⚠️ WEAK LINK" if coverage < 0.5 else ""
+                report_lines.append(f"{prefix}{connector}{role} `{name}` (Covered by parent at {100*coverage:.1f}%){warning}")
+                
+                extension = "    " if is_last else "│   "
+                print_dataset_tree(child_rep, child_children, prefix + extension)
+                
+        report_lines.append(f"[GLOBAL ROOT] `{names[global_rep]}`")
+        print_dataset_tree(global_rep, tree_structure)
         report_lines.append("```\n")
         
     report_path = os.path.join(out_dir, "hierarchical_topology_report.md")
