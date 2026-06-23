@@ -20,8 +20,8 @@ from scipy.linalg import sqrtm
 from omegaconf import OmegaConf
 
 DATA_DIR = "/mnt/direct-attached/PHASE2"
-OUTPUT_DIR = "/mnt/direct-attached/PHASE2_EVAL_RESULTS/custom_cell_line_embeddings_analysis"
-CHECKPOINT_PATH = "/mnt/personal/cellanome/checkpoints/ALL_CKPTS/RFDETR-Seg-ckpts/output/checkpoint_best_ema.pth"
+OUTPUT_DIR = "/mnt/direct-attached/PHASE2_EVAL_RESULTS/custom_cell_line_embeddings_analysis_train"
+CHECKPOINT_PATH = "/mnt/personal/cellanome/checkpoints/RFDETR-Seg-ckpts/output/checkpoint_best_ema.pth"
 
 # Load the label map dynamically from the rfdetr_seg model config
 _model_cfg = OmegaConf.load("configs/model/rfdetr_seg.yaml")
@@ -195,10 +195,14 @@ def process_all_datasets(encoder, device):
     ])
     input_size = 240
     
-    for ds in tqdm(list(base_dir.iterdir())):
+    valid_datasets = []
+    for ds in base_dir.iterdir():
         if not ds.is_dir(): continue
         cell_line = parse_dataset_name(ds.name)
         if not cell_line: continue
+        valid_datasets.append(ds)
+
+    for ds in tqdm(valid_datasets, desc="Datasets"):
         
         img_dir = ds / "images" / "train"
         mask_dir = ds / "masks" / "train"
@@ -212,41 +216,53 @@ def process_all_datasets(encoder, device):
         viz_accum = {cat: [] for cat in TARGET_CLASSES}
         viz_dir = os.path.join(OUTPUT_DIR, "crop_visualizations")
         
-        with ThreadPoolExecutor(max_workers=16) as executor:
-            futures = []
-            for img in imgs:
-                mask_path = mask_dir / f"{img.stem}.pkl"
-                if mask_path.exists():
+        valid_imgs = []
+        for img in imgs:
+            mask_path = mask_dir / f"{img.stem}.pkl"
+            if mask_path.exists():
+                valid_imgs.append((img, mask_path))
+                
+        chunk_size = 10000
+        completed = 0
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            for chunk_start in range(0, len(valid_imgs), chunk_size):
+                chunk_imgs = valid_imgs[chunk_start:chunk_start + chunk_size]
+                futures = []
+                for img, mask_path in chunk_imgs:
                     futures.append(executor.submit(extract_crops_cpu, img, mask_path, input_size))
             
-            for future in as_completed(futures):
-                crops_by_cat = future.result()
-                if not crops_by_cat: continue
-                
-                for cat, crops in crops_by_cat.items():
-                    if not crops: continue
+                for future in as_completed(futures):
+                    completed += 1
+                    crops_by_cat = future.result()
+                    if not crops_by_cat: continue
                     
-                    if not viz_saved[cat]:
-                        viz_accum[cat].extend(crops)
-                        if len(viz_accum[cat]) >= 16:
-                            save_crop_visualizations(ds.name, str(cat), viz_accum[cat][:16], viz_dir)
-                            viz_saved[cat] = True
-                            viz_accum[cat] = []
+                    for cat, crops in crops_by_cat.items():
+                        if not crops: continue
                         
-                    tensors = [transform(c) for c in crops]
-                    cat_embs = []
-                    for i in range(0, len(tensors), 32):
-                        batch = torch.stack(tensors[i:i + 32]).to(device)
-                        with torch.no_grad():
-                            features = encoder(batch)
-                            cls_tokens = features[-1].mean(dim=(2, 3))
-                        cat_embs.extend(cls_tokens.cpu().numpy())
-                        
-                    if cat_embs:
-                        if ds.name not in all_embeddings[cat]:
-                            all_embeddings[cat][ds.name] = []
-                        all_embeddings[cat][ds.name].extend(cat_embs)
-                        
+                        if not viz_saved[cat]:
+                            viz_accum[cat].extend(crops)
+                            if len(viz_accum[cat]) >= 16:
+                                save_crop_visualizations(ds.name, str(cat), viz_accum[cat][:16], viz_dir)
+                                viz_saved[cat] = True
+                                viz_accum[cat] = []
+                            
+                        tensors = [transform(c) for c in crops]
+                        cat_embs = []
+                        for i in range(0, len(tensors), 32):
+                            batch = torch.stack(tensors[i:i + 32]).to(device)
+                            with torch.no_grad():
+                                features = encoder(batch)
+                                cls_tokens = features[-1].mean(dim=(2, 3))
+                            cat_embs.extend(cls_tokens.cpu().numpy())
+                            
+                        if cat_embs:
+                            if ds.name not in all_embeddings[cat]:
+                                all_embeddings[cat][ds.name] = []
+                            all_embeddings[cat][ds.name].extend(cat_embs)
+                    
+                    if completed % 200 == 0:
+                        print(f"     {completed}/{len(valid_imgs)} images processed...")
+                            
             # Flush remaining visualizations if any
             for cat in TARGET_CLASSES:
                 if not viz_saved[cat] and len(viz_accum[cat]) > 0:
@@ -417,6 +433,7 @@ def generate_scatter_plots(features, ds_labels, cl_labels, output_dir):
         plt.close()
 
 def compute_and_plot_metrics(class_name, embeddings_dict, level_name, out_dir):
+    os.makedirs(out_dir, exist_ok=True)
     names = sorted(list(embeddings_dict.keys()))
     num_entities = len(names)
     
@@ -521,7 +538,9 @@ def main():
         with open(out_pkl, 'wb') as f:
             pickle.dump(all_embeddings, f)
             
-    # 2. Process per class
+    print("Extraction complete. Use compute_all_metrics.py for downstream analysis.")
+    return
+
     for cat in TARGET_CLASSES:
         if cat not in CLASS_MAP or cat not in all_embeddings:
             continue

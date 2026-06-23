@@ -1,78 +1,36 @@
 import numpy as np
 import os
-import pickle
-import torch
 import networkx as nx
-from collections import defaultdict
 import matplotlib.pyplot as plt
 
-def compute_coverage_distance(X, Y, k=5):
-    if X.shape[0] < k + 1:
-        return 1.0
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    if torch.backends.mps.is_available():
-        device = torch.device('mps')
-        
-    X_t = torch.tensor(X, device=device)
-    Y_t = torch.tensor(Y, device=device)
-    
-    dists_X = torch.cdist(X_t, X_t)
-    radii_X = torch.kthvalue(dists_X, k+1, dim=1).values
-    
-    dists_Y_to_X = torch.cdist(X_t, Y_t)
-    min_dists_Y = torch.min(dists_Y_to_X, dim=1).values
-    
-    covered = (min_dists_Y <= radii_X).float()
-    coverage = torch.mean(covered).item()
-    return 1.0 - coverage
-
-def parse_dataset_name(ds_name):
-    lower_name = ds_name.lower()
-    suspension_keywords = ["suspension", "jurkat", "k562", "nk92", "pbmc", "mousepbmc", "tall104", "raji", "jerat", "tal104"]
-    for kw in suspension_keywords:
-        if kw in lower_name: return None
-    return ds_name
-
-def analyze_topology(raw_embs_pkl_path, k_values, threshold=0.20, out_dir="topology_output"):
+def analyze_topology(base_metrics_dir, k_values, threshold=0.20, out_dir="topology_output"):
     os.makedirs(out_dir, exist_ok=True)
     
-    print(f"Loading {raw_embs_pkl_path}...")
-    with open(raw_embs_pkl_path, 'rb') as f:
-        all_raw_embs = pickle.load(f)
-        
-    class_id = 2 # cell-adhered
-    raw_embs = all_raw_embs.get(class_id, {})
-    if not raw_embs:
-        print("No embeddings found for class 2.")
+    names_path = os.path.join(base_metrics_dir, "entity_names.txt")
+    if not os.path.exists(names_path):
+        print(f"Warning: {names_path} not found.")
         return
         
-    dataset_embs = {}
-    for ds, e in raw_embs.items():
-        parsed_name = parse_dataset_name(ds)
-        if parsed_name:
-            if e.shape[0] > 3000:
-                idx = np.random.choice(e.shape[0], 3000, replace=False)
-                dataset_embs[parsed_name] = e[idx]
-            else:
-                dataset_embs[parsed_name] = e
-                
-    names = sorted(list(dataset_embs.keys()))
+    with open(names_path, "r") as f:
+        names = [line.strip() for line in f if line.strip()]
+        
     n = len(names)
-    print(f"Loaded {n} valid cell-adhered datasets.")
+    print(f"Loaded {n} entities from {base_metrics_dir}")
     
     report_lines = [f"# Topology Analysis Report"]
     report_lines.append(f"Threshold for Coverage: Distance < {threshold} (> {100*(1-threshold):.0f}% Coverage)\n")
     
     for k in k_values:
+        matrix_path = os.path.join(base_metrics_dir, f"matrix_coverage_distance_k{k}.npy")
+        if not os.path.exists(matrix_path):
+            print(f"Warning: {matrix_path} not found, skipping K={k}")
+            continue
+            
+        dist_matrix = np.load(matrix_path)
+        
         print(f"\n--- Analyzing K={k} ---")
         report_lines.append(f"## Analysis for K={k}")
         
-        dist_matrix = np.zeros((n, n))
-        for i in range(n):
-            for j in range(n):
-                if i == j: continue
-                dist_matrix[i, j] = compute_coverage_distance(dataset_embs[names[i]], dataset_embs[names[j]], k=k)
-                
         G = nx.DiGraph()
         for name in names:
             G.add_node(name)
@@ -84,12 +42,6 @@ def analyze_topology(raw_embs_pkl_path, k_values, threshold=0.20, out_dir="topol
                     # Edge X -> Y means Y covers X (Y is superset of X)
                     G.add_edge(names[i], names[j], weight=dist_matrix[i, j])
                     
-        # Classify nodes based on the graph topology
-        # Roots (Parents): Out-degree > 0, In-degree == 0 (They cover others, but nobody covers them)
-        # However, because our edge direction is X -> Y (meaning Y covers X), 
-        # Y is the superset. 
-        # So a "Root" (the ultimate superset) has IN-DEGREE > 0 (many things point to it), OUT-DEGREE == 0 (it points to nothing else as a superset)
-        
         roots = []
         leaves = []
         internal = []
@@ -133,9 +85,7 @@ def analyze_topology(raw_embs_pkl_path, k_values, threshold=0.20, out_dir="topol
                 if visited is None:
                     visited = set()
                 visited.add(node)
-                # children are nodes that point to this node (Subset -> Superset)
                 children = list(G.predecessors(node))
-                # Sort children by distance (highest coverage first)
                 children.sort(key=lambda c: dist_matrix[names.index(c), names.index(node)])
                 
                 for i, child in enumerate(children):
@@ -146,14 +96,12 @@ def analyze_topology(raw_embs_pkl_path, k_values, threshold=0.20, out_dir="topol
                     connector = "└── " if is_last else "├── "
                     role = "[LEAF]" if child in leaves else "[NODE]"
                     
-                    # Markdown block code preserves spacing perfectly
                     report_lines.append(f"{prefix}{connector}{role} `{child}` (Coverage: {coverage:.1f}%)")
                     
                     if child not in visited:
                         extension = "    " if is_last else "│   "
                         print_tree(child, prefix + extension, visited)
                         
-            # Wrap the tree in a code block so markdown renders the spaces/lines correctly
             report_lines.append("```text")
             report_lines.append(f"[ROOT] {r}")
             print_tree(r)
@@ -161,17 +109,15 @@ def analyze_topology(raw_embs_pkl_path, k_values, threshold=0.20, out_dir="topol
 
         report_lines.append("\n---\n")
         
-        # Draw the graph
         plt.figure(figsize=(16, 12))
         pos = nx.spring_layout(G, seed=42)
         nx.draw_networkx_nodes(G, pos, node_size=3000, node_color='lightblue')
         nx.draw_networkx_labels(G, pos, font_size=8)
         
-        # Edge arrows (X -> Y)
         edges = G.edges()
         nx.draw_networkx_edges(G, pos, edgelist=edges, arrowstyle='->', arrowsize=20, edge_color='gray')
         
-        plt.title(f"Dataset Topology K={k} (Edge X->Y means Y covers X)")
+        plt.title(f"Topology K={k} (Edge X->Y means Y covers X)")
         plt.axis('off')
         
         plot_path = os.path.join(out_dir, f"topology_graph_k{k}.png")
@@ -184,28 +130,38 @@ def analyze_topology(raw_embs_pkl_path, k_values, threshold=0.20, out_dir="topol
         f.write("\n".join(report_lines))
     print(f"Saved report to {report_path}")
 
+import argparse
+
 def main():
-    # Run for RF-DETR
-    print("=== RF-DETR Analysis ===")
-    rf_pkl = "/Users/ashish.sinha/Documents/project/cellanome/as-cells/custom_cell_line_embeddings_analysis/extracted_raw_embeddings.pkl"
-    if os.path.exists(rf_pkl):
-        continue
-    else:
-        rf_pkl = "/mnt/direct-attached/PHASE2_EVAL_RESULTS/custom_cell_line_embeddings_analysis/extracted_raw_embeddings.pkl"
-    if os.path.exists(rf_pkl):
-        analyze_topology(rf_pkl, k_values=[5, 10, 15, 30], out_dir="topology_output/rfdetr")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--model", type=str, default="dinov2_base", help="Model name (rf-detr, dinov2_base, dinov2_large, dinov2_giant)")
+    parser.add_argument("--split", type=str, default="train", help="Dataset split (train, test)")
+    args = parser.parse_args()
+
+    base_dir = "/mnt/direct-attached/PHASE2_EVAL_RESULTS"
+    MODEL_FOLDERS = {
+        "rf-detr":        "custom_cell_line_embeddings_analysis_{split}",
+        "dinov2_base":    "custom_dinov2_base_cell_line_embeddings_analysis_{split}",
+        "dinov2_large":   "custom_dinov2_large_cell_line_embeddings_analysis_{split}",
+        "dinov2_giant":   "custom_dinov2_giant_cell_line_embeddings_analysis_{split}",
+    }
     
-    # Run for DINOv2
-    print("\n=== DINOv2 Analysis ===")
-    dino_pkl = "/Users/ashish.sinha/Documents/project/cellanome/as-cells/custom_dinov2_cell_line_embeddings_analysis/extracted_raw_embeddings.pkl"
-    if os.path.exists(dino_pkl):
-        continue
-    else:
-        dino_pkl = "/mnt/direct-attached/PHASE2_EVAL_RESULTS/custom_dinov2_cell_line_embeddings_analysis/extracted_raw_embeddings.pkl"
-    if os.path.exists(dino_pkl):
-        analyze_topology(dino_pkl, k_values=[5, 10, 15, 30], out_dir="topology_output/dinov2")
-    else:
-        print(f"Warning: DINOv2 embeddings not found at {dino_pkl}")
+    if args.model not in MODEL_FOLDERS:
+        print(f"Error: Unknown model '{args.model}'. Choose from: {list(MODEL_FOLDERS.keys())}")
+        return
+
+    folder = MODEL_FOLDERS[args.model].format(split=args.split)
+    levels = ["dataset_level", "cell_line_level"]
+    
+    print(f"\n=== {args.model} Analysis ({args.split}) ===")
+    for level in levels:
+        metrics_dir = os.path.join(base_dir, folder, "class_cell-adhered", level)
+        if os.path.exists(metrics_dir):
+            print(f"Processing {level}...")
+            out_dir = os.path.join(f"topology_output_{args.split}", args.model.lower(), level)
+            analyze_topology(metrics_dir, k_values=[5, 10, 15, 30], out_dir=out_dir)
+        else:
+            print(f"Metrics dir not found: {metrics_dir}")
 
 if __name__ == "__main__":
     main()

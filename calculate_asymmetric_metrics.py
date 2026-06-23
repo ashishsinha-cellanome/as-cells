@@ -132,8 +132,8 @@ def process_level(level_name, embs_dict, out_dir, model_name, class_name):
 def main():
     base_dir = "/mnt/direct-attached/PHASE2_EVAL_RESULTS"
     models = {
-        "RF-DETR": "custom_cell_line_embeddings_analysis",
-        "DINOv2": "custom_dinov2_cell_line_embeddings_analysis"
+        "RF-DETR": "custom_cell_line_embeddings_analysis_train",
+        "DINOv2": "custom_dinov2_cell_line_embeddings_analysis_train"
     }
     
     # Class map from original scripts

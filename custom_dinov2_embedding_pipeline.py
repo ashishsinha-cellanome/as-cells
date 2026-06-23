@@ -8,10 +8,128 @@ from sklearn.covariance import LedoitWolf
 from sklearn.manifold import TSNE
 import umap.umap_ as umap
 import torch
+import torchvision
 import gc
 from scipy.linalg import sqrtm
 from sklearn.metrics import pairwise_distances
 import re
+from concurrent.futures import ProcessPoolExecutor, as_completed
+import cv2
+import pycocotools.mask as mask_util
+from pathlib import Path
+from tqdm import tqdm
+import argparse
+
+TARGET_CLASSES = {2, 3}
+
+DINO_MODELS = {
+    "base": "dinov2_vitb14",
+    "large": "dinov2_vitl14",
+    "giant": "dinov2_vitg14"
+}
+
+def parse_dataset_name(ds_name):
+    lower_name = ds_name.lower()
+    suspension_keywords = ["suspension", "jurkat", "k562", "nk92", "pbmc", "mousepbmc", "tall104", "raji", "jerat", "tal104"]
+    for kw in suspension_keywords:
+        if kw in lower_name: return None
+    clean_name = lower_name
+    
+    # Remove leading date
+    clean_name = re.sub(r'^\d{6,8}_', '', clean_name)
+    # Remove trailing _4_class
+    clean_name = clean_name.replace('_4_class', '')
+    
+    # Strip caging, magnification, and adherence
+    to_remove = ["-adhered", "-adherent", "_10x", "10x_", "_1x", "1x_", "_20x", "20x_", "_at_4x", "at_4x", "_caged", "-caged", "caged", "_uncaged", "-uncaged", "uncaged"]
+    for word in to_remove:
+        clean_name = clean_name.replace(word, "")
+        
+    return clean_name.strip("-_")
+
+def extract_crops_process(args):
+    img_path, mask_pkl_path, input_size = args
+    img = cv2.imread(str(img_path))
+    if img is None:
+        return {}
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+
+    with open(mask_pkl_path, 'rb') as f:
+        mask_data = pickle.load(f)
+
+    if not mask_data.get('annotations'):
+        return {}
+
+    crops_by_cat = {cat: [] for cat in TARGET_CLASSES}
+
+    for ann in mask_data['annotations']:
+        cat = int(ann['category_id'])
+        if cat not in TARGET_CLASSES:
+            continue
+
+        x, y, x2, y2 = [int(float(v)) for v in ann['bbox']]
+        w, h = x2 - x, y2 - y
+        if w <= 0 or h <= 0:
+            continue
+
+        img_h, img_w = img.shape[:2]
+
+        if isinstance(ann['segmentation'], list):
+            rle = mask_util.frPyObjects(ann['segmentation'], img_h, img_w)
+            mask = mask_util.decode(rle)
+        else:
+            mask = mask_util.decode(ann['segmentation'])
+        if len(mask.shape) == 3:
+            mask = mask.squeeze(2)
+
+        mask_3d = np.repeat(mask[:, :, np.newaxis], 3, axis=2)
+
+        x1_clip, y1_clip = max(0, x), max(0, y)
+        x2_clip, y2_clip = min(img_w, x + w), min(img_h, y + h)
+
+        if mask.shape[:2] == (img_h, img_w):
+            mask_3d_cropped = mask_3d[y1_clip:y2_clip, x1_clip:x2_clip]
+        else:
+            mask_y1 = y1_clip - y
+            mask_y2 = mask_y1 + (y2_clip - y1_clip)
+            mask_x1 = x1_clip - x
+            mask_x2 = mask_x1 + (x2_clip - x1_clip)
+            mask_3d_cropped = mask_3d[mask_y1:mask_y2, mask_x1:mask_x2]
+
+        masked_img = np.zeros_like(img)
+        masked_img[y1_clip:y2_clip, x1_clip:x2_clip] = img[y1_clip:y2_clip, x1_clip:x2_clip] * mask_3d_cropped
+
+        size = max(w, h)
+        cx, cy = x + w // 2, y + h // 2
+        sq_x1, sq_y1 = cx - size // 2, cy - size // 2
+        sq_x2, sq_y2 = sq_x1 + size, sq_y1 + size
+
+        sq_x1_img, sq_y1_img = max(0, sq_x1), max(0, sq_y1)
+        sq_x2_img, sq_y2_img = min(img.shape[1], sq_x2), min(img.shape[0], sq_y2)
+
+        actual_crop = masked_img[sq_y1_img:sq_y2_img, sq_x1_img:sq_x2_img]
+        if actual_crop.size == 0:
+            continue
+
+        crop = np.zeros((size, size, 3), dtype=np.uint8)
+        offset_x, offset_y = sq_x1_img - sq_x1, sq_y1_img - sq_y1
+        crop[offset_y:offset_y + actual_crop.shape[0], offset_x:offset_x + actual_crop.shape[1]] = actual_crop
+
+        resized_crop = cv2.resize(crop, (input_size, input_size), interpolation=cv2.INTER_AREA)
+        crops_by_cat[cat].append(resized_crop)
+
+    return crops_by_cat
+
+def build_dinov2_backbone(model_type):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Loading DINOv2-{model_type} from torch.hub...")
+    model_name = DINO_MODELS[model_type]
+    model = torch.hub.load("facebookresearch/dinov2", model_name)
+    for param in model.parameters():
+        param.requires_grad_(False)
+    model.to(device)
+    model.eval()
+    return model, device
 
 def dist_l2_var_norm(mu_A, mu_B, var_A, var_B, eps=1e-8):
     num = np.linalg.norm(mu_A - mu_B)
@@ -202,25 +320,6 @@ def generate_scatter_plots(features, labels, output_dir, prefix):
     plt.savefig(os.path.join(output_dir, f"scatter_umap_nn{n_neighbors}.png"), bbox_inches='tight')
     plt.close()
 
-def parse_dataset_name(ds_name):
-    lower_name = ds_name.lower()
-    suspension_keywords = ["suspension", "jurkat", "k562", "nk92", "pbmc", "mousepbmc", "tall104", "raji", "jerat", "tal104"]
-    for kw in suspension_keywords:
-        if kw in lower_name: return None
-    clean_name = lower_name
-    
-    # Remove leading date
-    clean_name = re.sub(r'^\d{6,8}_', '', clean_name)
-    # Remove trailing _4_class
-    clean_name = clean_name.replace('_4_class', '')
-    
-    # Strip caging, magnification, and adherence
-    to_remove = ["-adhered", "-adherent", "_10x", "10x_", "_1x", "1x_", "_20x", "20x_", "_at_4x", "at_4x", "_caged", "-caged", "caged", "_uncaged", "-uncaged", "uncaged"]
-    for word in to_remove:
-        clean_name = clean_name.replace(word, "")
-        
-    return clean_name.strip("-_")
-
 def process_level(level_name, embs_dict, out_dir, model_name, class_name, coverage_subsample=10000, scatter_subsample=5000):
     names = sorted(list(embs_dict.keys()))
     num_entities = len(names)
@@ -317,70 +416,178 @@ def process_level(level_name, embs_dict, out_dir, model_name, class_name, covera
 
     # Save Scatter plots directly in the same folder under a scatter_plots subdirectory
     scatter_dir = os.path.join(out_dir, "scatter_plots")
-    all_features = np.vstack(all_features)
-    generate_scatter_plots(all_features, all_labels, scatter_dir, f"{model_name}_{class_name}_{level_name}")
+    all_features_np = np.vstack(all_features)
+    generate_scatter_plots(all_features_np, all_labels, scatter_dir, f"{model_name}_{class_name}_{level_name}")
+
+def extract_and_compute_embeddings(args, model, device):
+    all_embeddings = {cat: {} for cat in TARGET_CLASSES}
+    base_dir = Path(args.data_dir)
+    
+    transform = torchvision.transforms.Compose([
+        torchvision.transforms.ToTensor(),
+        torchvision.transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+    ])
+    input_size = 224
+    
+    valid_datasets = []
+    for ds in base_dir.iterdir():
+        if not ds.is_dir(): continue
+        if parse_dataset_name(ds.name) is not None:
+            valid_datasets.append(ds)
+
+    for ds in tqdm(valid_datasets, desc="Datasets"):
+        img_dir = ds / "images" / args.split
+        mask_dir = ds / "masks" / args.split
+        if not img_dir.exists() or not mask_dir.exists():
+            continue
+            
+        imgs = sorted(list(img_dir.iterdir()))
+        print(f"  -> Processing {ds.name} ({len(imgs)} images)")
+        
+        tasks = []
+        for img in imgs:
+            mask_path = mask_dir / f"{img.stem}.pkl"
+            if mask_path.exists():
+                tasks.append((img, mask_path, input_size))
+                
+        pending = {cat: [] for cat in TARGET_CLASSES}
+        
+        # ProcessPoolExecutor for CPU extraction
+        with ProcessPoolExecutor(max_workers=args.max_workers) as executor:
+            chunk_size = 1000
+            for chunk_start in range(0, len(tasks), chunk_size):
+                task_chunk = tasks[chunk_start:chunk_start + chunk_size]
+                futures = {executor.submit(extract_crops_process, task): task[0] for task in task_chunk}
+                
+                for future in as_completed(futures):
+                    result = future.result()
+                    if not result:
+                        continue
+                        
+                    for cat, crops in result.items():
+                        if not crops:
+                            continue
+                        
+                        tensors = [transform(c) for c in crops]
+                        pending[cat].extend(tensors)
+                        
+                        if len(pending[cat]) >= 128:
+                            batch = torch.stack(pending[cat]).to(device)
+                            with torch.no_grad():
+                                cls_tokens = model(batch)
+                            embs_list = cls_tokens.cpu().numpy()
+                            if ds.name not in all_embeddings[cat]:
+                                all_embeddings[cat][ds.name] = []
+                            all_embeddings[cat][ds.name].extend(embs_list)
+                            pending[cat] = []
+                            
+            for cat in TARGET_CLASSES:
+                while pending[cat]:
+                    # Process remaining batches
+                    batch_tensors = pending[cat][:128]
+                    pending[cat] = pending[cat][128:]
+                    batch = torch.stack(batch_tensors).to(device)
+                    with torch.no_grad():
+                        cls_tokens = model(batch)
+                    embs_list = cls_tokens.cpu().numpy()
+                    if ds.name not in all_embeddings[cat]:
+                        all_embeddings[cat][ds.name] = []
+                    all_embeddings[cat][ds.name].extend(embs_list)
+    
+    # Concatenate all embeddings to numpy arrays
+    for cat in all_embeddings:
+        for ds in list(all_embeddings[cat].keys()):
+            if len(all_embeddings[cat][ds]) > 0:
+                all_embeddings[cat][ds] = np.vstack(all_embeddings[cat][ds])
+            else:
+                del all_embeddings[cat][ds]
+                
+    return all_embeddings
 
 def main():
-    base_dir = "/mnt/direct-attached/PHASE2_EVAL_RESULTS"
-    models = {
-        "RF-DETR": "custom_cell_line_embeddings_analysis_train",
-        "DINOv2": "custom_dinov2_cell_line_embeddings_analysis_train"
-    }
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--model", choices=['base', 'large', 'giant'], default='base')
+    parser.add_argument("--split", choices=['train', 'test'], default='train')
+    parser.add_argument("--data-dir", default='/mnt/direct-attached/PHASE2')
+    parser.add_argument("--output-dir", default="")
+    parser.add_argument("--max-workers", type=int, default=os.cpu_count())
+    parser.add_argument("--subsample-limit", type=int, default=10000)
+
+    args = parser.parse_args()
+
+    if not args.output_dir:
+        args.output_dir = f"/mnt/direct-attached/PHASE2_EVAL_RESULTS/custom_dinov2_{args.model}_cell_line_embeddings_analysis_{args.split}"
+        
+    os.makedirs(args.output_dir, exist_ok=True)
     
-    for model_name, folder in models.items():
-        raw_pkl = os.path.join(base_dir, folder, "extracted_raw_embeddings.pkl")
-        if not os.path.exists(raw_pkl):
-            print(f"Warning: Missing files for {model_name}, skipping.")
-            continue
-            
-        with open(raw_pkl, 'rb') as f:
+    out_pkl = os.path.join(args.output_dir, "extracted_raw_embeddings.pkl")
+    
+    if os.path.exists(out_pkl):
+        print(f"Loading cached embeddings from {out_pkl}")
+        with open(out_pkl, 'rb') as f:
             all_raw_embs = pickle.load(f)
-            
-        dataset_embs = {}
-        all_ds_names = set()
-        for cls_id in [2, 3]:
-            if cls_id in all_raw_embs:
-                all_ds_names.update(all_raw_embs[cls_id].keys())
+    else:
+        model, device = build_dinov2_backbone(args.model)
+        print("Extracting Embeddings...")
+        all_raw_embs = extract_and_compute_embeddings(args, model, device)
         
-        for ds in sorted(list(all_ds_names)):
-            if "neuron" in ds.lower():
-                if 3 in all_raw_embs and ds in all_raw_embs[3] and all_raw_embs[3][ds].shape[0] > 0:
-                    dataset_embs[ds] = all_raw_embs[3][ds]
-            else:
-                if 2 in all_raw_embs and ds in all_raw_embs[2] and all_raw_embs[2][ds].shape[0] > 0:
-                    dataset_embs[ds] = all_raw_embs[2][ds]
-                    
-        # Filter suspension
-        dataset_embs_filtered = {}
-        for ds, e in dataset_embs.items():
-            if parse_dataset_name(ds) is not None:
-                dataset_embs_filtered[ds] = e
-                
-        if not dataset_embs_filtered:
-            print(f"No valid datasets found for {model_name}.")
-            continue
+        with open(out_pkl, 'wb') as f:
+            pickle.dump(all_raw_embs, f)
             
-        class_name = "cell-adhered" # Using fixed name for downstream compatibility
-        
-        out_dir_ds = os.path.join(base_dir, folder, f"class_{class_name}", "dataset_level")
-        process_level("dataset_level", dataset_embs_filtered, out_dir_ds, model_name, class_name)
-        
-        cell_line_embs = {}
-        for ds, e in dataset_embs_filtered.items():
-            cl = parse_dataset_name(ds)
-            if not cl: continue
-            if cl not in cell_line_embs:
-                cell_line_embs[cl] = []
-            cell_line_embs[cl].append(e)
-            
-        for cl in cell_line_embs:
-            cell_line_embs[cl] = np.vstack(cell_line_embs[cl])
-            
-        out_dir_cl = os.path.join(base_dir, folder, f"class_{class_name}", "cell_line_level")
-        process_level("cell_line_level", cell_line_embs, out_dir_cl, model_name, class_name)
-        
-        del all_raw_embs
+        # Free model memory
+        del model
+        torch.cuda.empty_cache()
         gc.collect()
+
+    print("Embeddings loaded. Running metrics computation...")
+    
+    dataset_embs = {}
+    all_ds_names = set()
+    for cls_id in [2, 3]:
+        if cls_id in all_raw_embs:
+            all_ds_names.update(all_raw_embs[cls_id].keys())
+    
+    for ds in sorted(list(all_ds_names)):
+        if "neuron" in ds.lower():
+            if 3 in all_raw_embs and ds in all_raw_embs[3] and all_raw_embs[3][ds].shape[0] > 0:
+                dataset_embs[ds] = all_raw_embs[3][ds]
+        else:
+            if 2 in all_raw_embs and ds in all_raw_embs[2] and all_raw_embs[2][ds].shape[0] > 0:
+                dataset_embs[ds] = all_raw_embs[2][ds]
+                
+    # Filter suspension
+    dataset_embs_filtered = {}
+    for ds, e in dataset_embs.items():
+        if parse_dataset_name(ds) is not None:
+            dataset_embs_filtered[ds] = e
+            
+    if not dataset_embs_filtered:
+        print("No valid datasets found.")
+        return
+        
+    class_name = "cell-adhered"
+    model_name = f"DINOv2-{args.model}"
+    
+    out_dir_ds = os.path.join(args.output_dir, f"class_{class_name}", "dataset_level")
+    os.makedirs(out_dir_ds, exist_ok=True)
+    process_level("dataset_level", dataset_embs_filtered, out_dir_ds, model_name, class_name, coverage_subsample=args.subsample_limit)
+    
+    cell_line_embs = {}
+    for ds, e in dataset_embs_filtered.items():
+        cl = parse_dataset_name(ds)
+        if not cl: continue
+        if cl not in cell_line_embs:
+            cell_line_embs[cl] = []
+        cell_line_embs[cl].append(e)
+        
+    for cl in cell_line_embs:
+        cell_line_embs[cl] = np.vstack(cell_line_embs[cl])
+        
+    out_dir_cl = os.path.join(args.output_dir, f"class_{class_name}", "cell_line_level")
+    os.makedirs(out_dir_cl, exist_ok=True)
+    process_level("cell_line_level", cell_line_embs, out_dir_cl, model_name, class_name, coverage_subsample=args.subsample_limit)
+    
+    print("Pipeline complete.")
 
 if __name__ == "__main__":
     main()

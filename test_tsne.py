@@ -6,7 +6,7 @@ from sklearn.manifold import TSNE
 import umap.umap_ as umap
 import os
 
-OUTPUT_DIR = "/mnt/direct-attached/PHASE2_EVAL_RESULTS/custom_cell_line_embeddings_analysis"
+OUTPUT_DIR = "/mnt/direct-attached/PHASE2_EVAL_RESULTS/custom_cell_line_embeddings_analysis_train"
 pkl_path = os.path.join(OUTPUT_DIR, "extracted_raw_embeddings.pkl")
 
 print(f"Loading cached embeddings from {pkl_path}")

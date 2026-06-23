@@ -1,36 +1,7 @@
 import numpy as np
 import os
-import pickle
-import torch
 import networkx as nx
 import matplotlib.pyplot as plt
-
-def compute_coverage_distance(X, Y, k=5):
-    if X.shape[0] < k + 1:
-        return 1.0
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    if torch.backends.mps.is_available():
-        device = torch.device('mps')
-        
-    X_t = torch.tensor(X, device=device)
-    Y_t = torch.tensor(Y, device=device)
-    
-    dists_X = torch.cdist(X_t, X_t)
-    radii_X = torch.kthvalue(dists_X, k+1, dim=1).values
-    
-    dists_Y_to_X = torch.cdist(X_t, Y_t)
-    min_dists_Y = torch.min(dists_Y_to_X, dim=1).values
-    
-    covered = (min_dists_Y <= radii_X).float()
-    coverage = torch.mean(covered).item()
-    return 1.0 - coverage
-
-def parse_dataset_name(ds_name):
-    lower_name = ds_name.lower()
-    suspension_keywords = ["suspension", "jurkat", "k562", "nk92", "pbmc", "mousepbmc", "tall104", "raji", "jerat", "tal104"]
-    for kw in suspension_keywords:
-        if kw in lower_name: return None
-    return ds_name
 
 def hierarchy_pos(G, root=None, width=1., vert_gap=0.2, vert_loc=0, xcenter=0.5):
     if not nx.is_tree(G):
@@ -70,32 +41,19 @@ def format_node_label(name):
     clean = clean.replace("_caged", "\nCAGED").replace("_uncaged", "\nUNCAGED")
     return clean
 
-def analyze_mst_topology(raw_embs_pkl_path, k_values, out_dir="topology_mst_output"):
+def analyze_mst_topology(base_metrics_dir, k_values, out_dir="topology_mst_output"):
     os.makedirs(out_dir, exist_ok=True)
     
-    print(f"Loading {raw_embs_pkl_path}...")
-    with open(raw_embs_pkl_path, 'rb') as f:
-        all_raw_embs = pickle.load(f)
-        
-    class_id = 2 # cell-adhered
-    raw_embs = all_raw_embs.get(class_id, {})
-    if not raw_embs:
-        print("No embeddings found for class 2.")
+    names_path = os.path.join(base_metrics_dir, "entity_names.txt")
+    if not os.path.exists(names_path):
+        print(f"Warning: {names_path} not found.")
         return
         
-    dataset_embs = {}
-    for ds, e in raw_embs.items():
-        parsed_name = parse_dataset_name(ds)
-        if parsed_name:
-            if e.shape[0] > 3000:
-                idx = np.random.choice(e.shape[0], 3000, replace=False)
-                dataset_embs[parsed_name] = e[idx]
-            else:
-                dataset_embs[parsed_name] = e
-                
-    names = sorted(list(dataset_embs.keys()))
+    with open(names_path, "r") as f:
+        names = [line.strip() for line in f if line.strip()]
+        
     n = len(names)
-    print(f"Loaded {n} valid cell-adhered datasets.")
+    print(f"Loaded {n} entities from {base_metrics_dir}")
     
     report_lines = [f"# Optimal Minimum Spanning Tree Topology Report"]
     report_lines.append("This report constructs a fully connected Directed Tree (Minimum Spanning Arborescence) for all datasets.")
@@ -103,15 +61,16 @@ def analyze_mst_topology(raw_embs_pkl_path, k_values, out_dir="topology_mst_outp
     report_lines.append("The global root of the tree is the dataset that naturally provides the broadest overarching coverage for the entire domain.\n")
     
     for k in k_values:
+        matrix_path = os.path.join(base_metrics_dir, f"matrix_coverage_distance_k{k}.npy")
+        if not os.path.exists(matrix_path):
+            print(f"Warning: {matrix_path} not found, skipping K={k}")
+            continue
+            
+        dist_matrix = np.load(matrix_path)
+        
         print(f"\n--- Analyzing K={k} ---")
         report_lines.append(f"## Hierarchical Tree for K={k}\n")
         
-        dist_matrix = np.zeros((n, n))
-        for i in range(n):
-            for j in range(n):
-                if i == j: continue
-                dist_matrix[i, j] = compute_coverage_distance(dataset_embs[names[i]], dataset_embs[names[j]], k=k)
-                
         G = nx.DiGraph()
         for name in names:
             G.add_node(name)
@@ -123,7 +82,11 @@ def analyze_mst_topology(raw_embs_pkl_path, k_values, out_dir="topology_mst_outp
                 G.add_edge(names[j], names[i], weight=dist_matrix[i, j])
                 
         # Calculate Minimum Spanning Arborescence
-        T = nx.minimum_spanning_arborescence(G)
+        try:
+            T = nx.minimum_spanning_arborescence(G)
+        except nx.NetworkXException as e:
+            print(f"Could not compute minimum spanning arborescence for K={k}: {e}")
+            continue
         
         # Find the root (node with in_degree == 0)
         root = [n for n, d in T.in_degree() if d == 0][0]
@@ -187,16 +150,38 @@ def analyze_mst_topology(raw_embs_pkl_path, k_values, out_dir="topology_mst_outp
         f.write("\n".join(report_lines))
     print(f"Saved report to {report_path}")
 
+import argparse
+
 def main():
-    print("=== RF-DETR Analysis (MST) ===")
-    rf_pkl = "/Users/ashish.sinha/Documents/project/cellanome/as-cells/custom_cell_line_embeddings_analysis/extracted_raw_embeddings.pkl"
-    if os.path.exists(rf_pkl):
-        analyze_mst_topology(rf_pkl, k_values=[5, 10, 15, 30], out_dir="topology_mst_output/rfdetr")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--model", type=str, default="dinov2_base", help="Model name (rf-detr, dinov2_base, dinov2_large, dinov2_giant)")
+    parser.add_argument("--split", type=str, default="train", help="Dataset split (train, test)")
+    args = parser.parse_args()
+
+    base_dir = "/mnt/direct-attached/PHASE2_EVAL_RESULTS"
+    MODEL_FOLDERS = {
+        "rf-detr":        "custom_cell_line_embeddings_analysis_{split}",
+        "dinov2_base":    "custom_dinov2_base_cell_line_embeddings_analysis_{split}",
+        "dinov2_large":   "custom_dinov2_large_cell_line_embeddings_analysis_{split}",
+        "dinov2_giant":   "custom_dinov2_giant_cell_line_embeddings_analysis_{split}",
+    }
     
-    print("\n=== DINOv2 Analysis (MST) ===")
-    dino_pkl = "/Users/ashish.sinha/Documents/project/cellanome/as-cells/custom_dinov2_cell_line_embeddings_analysis/extracted_raw_embeddings.pkl"
-    if os.path.exists(dino_pkl):
-        analyze_mst_topology(dino_pkl, k_values=[5, 10, 15, 30], out_dir="topology_mst_output/dinov2")
+    if args.model not in MODEL_FOLDERS:
+        print(f"Error: Unknown model '{args.model}'. Choose from: {list(MODEL_FOLDERS.keys())}")
+        return
+
+    folder = MODEL_FOLDERS[args.model].format(split=args.split)
+    levels = ["dataset_level", "cell_line_level"]
+    
+    print(f"\n=== {args.model} MST Analysis ({args.split}) ===")
+    for level in levels:
+        metrics_dir = os.path.join(base_dir, folder, "class_cell-adhered", level)
+        if os.path.exists(metrics_dir):
+            print(f"Processing {level}...")
+            out_dir = os.path.join(f"topology_mst_output_{args.split}", args.model.lower(), level)
+            analyze_mst_topology(metrics_dir, k_values=[5, 10, 15, 30], out_dir=out_dir)
+        else:
+            print(f"Metrics dir not found: {metrics_dir}")
 
 if __name__ == "__main__":
     main()
