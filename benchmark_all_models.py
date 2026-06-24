@@ -6,39 +6,61 @@ import csv
 import tabulate
 from omegaconf import OmegaConf
 
-def run_benchmark(inner_model, dummy_input, batch_size, num_runs=50, label=""):
+OmegaConf.register_new_resolver("extract_name", lambda path: path.split("/")[-1], replace=True)
+
+def run_benchmark(inner_model, postprocess_fn, dummy_input, batch_size, num_runs=50, label=""):
+    orig_sizes = torch.tensor([[dummy_input.shape[2], dummy_input.shape[3]] for _ in range(batch_size)], device=dummy_input.device) if hasattr(dummy_input, "device") else None
     print(f"--- Benchmarking {label} ---")
     print("Warming up...")
     with torch.no_grad():
         for _ in range(10):
             try:
-                _ = inner_model(dummy_input)
+                outputs = inner_model(dummy_input)
             except TypeError:
-                _ = inner_model(*dummy_input) if isinstance(dummy_input, tuple) else inner_model(**dummy_input) if isinstance(dummy_input, dict) else inner_model(dummy_input)
+                outputs = inner_model(*dummy_input) if isinstance(dummy_input, tuple) else inner_model(**dummy_input) if isinstance(dummy_input, dict) else inner_model(dummy_input)
+            if postprocess_fn is not None:
+                try:
+                    _ = postprocess_fn(outputs, orig_sizes)
+                except Exception:
+                    pass
             
     torch.cuda.synchronize()
-    print("Benchmarking Forward Pass...")
+    print("Benchmarking Forward Pass + Post-processing...")
     
-    start_events = [torch.cuda.Event(enable_timing=True) for _ in range(num_runs)]
-    end_events = [torch.cuda.Event(enable_timing=True) for _ in range(num_runs)]
+    start_events_fwd = [torch.cuda.Event(enable_timing=True) for _ in range(num_runs)]
+    end_events_fwd = [torch.cuda.Event(enable_timing=True) for _ in range(num_runs)]
+    start_events_post = [torch.cuda.Event(enable_timing=True) for _ in range(num_runs)]
+    end_events_post = [torch.cuda.Event(enable_timing=True) for _ in range(num_runs)]
     
     with torch.no_grad():
         for i in range(num_runs):
-            start_events[i].record()
+            start_events_fwd[i].record()
             try:
-                _ = inner_model(dummy_input)
+                outputs = inner_model(dummy_input)
             except TypeError:
-                _ = inner_model(*dummy_input) if isinstance(dummy_input, tuple) else inner_model(**dummy_input) if isinstance(dummy_input, dict) else inner_model(dummy_input)
-            end_events[i].record()
+                outputs = inner_model(*dummy_input) if isinstance(dummy_input, tuple) else inner_model(**dummy_input) if isinstance(dummy_input, dict) else inner_model(dummy_input)
+            end_events_fwd[i].record()
+            
+            start_events_post[i].record()
+            if postprocess_fn is not None:
+                try:
+                    _ = postprocess_fn(outputs, orig_sizes)
+                except Exception:
+                    pass
+            end_events_post[i].record()
             
     torch.cuda.synchronize()
     
-    times = [s.elapsed_time(e) for s, e in zip(start_events, end_events)] # in milliseconds
-    avg_time_ms = np.mean(times)
-    time_per_image_ms = avg_time_ms / batch_size
-    fps = 1000.0 / time_per_image_ms
+    fwd_times = [s.elapsed_time(e) for s, e in zip(start_events_fwd, end_events_fwd)]
+    post_times = [s.elapsed_time(e) for s, e in zip(start_events_post, end_events_post)]
     
-    return avg_time_ms, time_per_image_ms, fps
+    avg_fwd_ms = np.mean(fwd_times) / batch_size
+    avg_post_ms = np.mean(post_times) / batch_size
+    
+    total_ms = avg_fwd_ms + avg_post_ms
+    fps = 1000.0 / total_ms if total_ms > 0 else 0.0
+    
+    return avg_fwd_ms, avg_post_ms, total_ms, fps
 
 def get_model_and_input(config, device, batch_size):
     model_name = config.get("model", {}).get("name", "")
@@ -77,37 +99,110 @@ def get_model_and_input(config, device, batch_size):
         except:
             inner_model = model_cls(config=model_config)
             
+        if config.get("model", {}).get("backbone", {}).get("type", "") == "dinov2":
+            from models.backbone_factory import build_backbone
+            # For dinov2 with rtdetr_v2, the custom backbone builder expects the rtdetr_model_name string 
+            # to determine the intermediate feature sizes (e.g. [128, 256, 512] for r18vd vs [512, 1024, 2048] for r50vd).
+            # If the user is evaluating rtdetr_v2_r50vd but we want to test dinov2, we need to pass the correct model string.
+            backbone_model, backbone_config_obj, _ = build_backbone(config.model.backbone, rtdetr_name)
+            inner_model.model.backbone = backbone_model
+            inner_model.config.backbone_config = backbone_config_obj
+            inner_model.config.encoder_in_channels = backbone_config_obj.intermediate_channel_sizes
+            inner_model.config.use_timm_backbone = False
+            
     elif "rf_detr" in model_name.lower() or "rfdetr" in model_name.lower():
+        group_detr = config.get("model", {}).get("rfdetr", {}).get("group_detr", 11)
         if "seg" in model_name.lower():
             from rfdetr import RFDETRSegLarge, RFDETRSegMedium, RFDETRSegSmall
-            if "small" in model_name.lower(): m = RFDETRSegSmall(num_classes=4)
-            elif "medium" in model_name.lower(): m = RFDETRSegMedium(num_classes=4)
-            else: m = RFDETRSegLarge(num_classes=4)
+            if "small" in model_name.lower(): m = RFDETRSegSmall(num_classes=4, group_detr=group_detr)
+            elif "medium" in model_name.lower(): m = RFDETRSegMedium(num_classes=4, group_detr=group_detr)
+            else: m = RFDETRSegLarge(num_classes=4, group_detr=group_detr)
         else:
             from rfdetr import RFDETR
-            m = RFDETR(num_classes=4)
+            m = RFDETR(num_classes=4, group_detr=group_detr)
         inner_model = m.model.model
         
     elif "yolo" in model_name.lower():
-        from models.yolov5_lightning_module import YOLOv5LightningModule
-        repo_path = config.get("model", {}).get("yolov5", {}).get("repo_path", "")
-        # fallback if repo path isn't local
-        if not os.path.exists(repo_path): repo_path = os.path.join(os.getcwd(), "models", "yolov5")
-        try:
-            m = YOLOv5LightningModule(config=OmegaConf.create(config), yolo_repo_path=repo_path)
-            inner_model = m.model
-        except Exception as e:
-            print(f"Failed to load YOLOv5: {e}")
+        import sys, os
+        import yaml
+        model_key = "yolov26" if "yolov26" in config.get("model", {}).get("name", "") else "yolov5"
+        
+        if model_key == "yolov5":
+            repo_path = os.path.join(os.getcwd(), "models", "yolov5")
+            if repo_path not in sys.path: 
+                sys.path.insert(0, repo_path)
+            try:
+                # Avoid Hydra interpolation error by reading directly
+                model_cfg_path = "models/yolov5m.yaml"
+                yaml_cfg_path = os.path.join(repo_path, model_cfg_path)
+                with open(yaml_cfg_path) as f:
+                    yaml_cfg = yaml.safe_load(f)
+                yaml_cfg['nc'] = 4
+                
+                from models.yolo import Model
+                inner_model = Model(cfg=yaml_cfg, ch=3, nc=4)
+                
+                def yolo_postprocess(outputs, orig_sizes=None):
+                    from utils.general import non_max_suppression
+                    preds = outputs[0] if isinstance(outputs, (tuple, list)) else outputs
+                    return non_max_suppression(preds, 0.05, 0.5)
+                postprocess_fn = yolo_postprocess
+            except Exception as e:
+                print(f"Failed to load YOLOv5: {e}")
+            finally:
+                if repo_path in sys.path:
+                    sys.path.remove(repo_path)
+                for k in list(sys.modules.keys()):
+                    if k.startswith(("models", "utils", "detect", "export")):
+                        del sys.modules[k]
+        else:
+            # YOLOv26 uses the ultralytics package
+            try:
+                from ultralytics import YOLO
+                m = YOLO("yolo26m.pt")
+                inner_model = m.model
+                def yolo_v8_postprocess(outputs, orig_sizes=None):
+                    from ultralytics.utils.ops import non_max_suppression
+                    # Ultralytics v8 outputs tuple (preds, ...). non_max_suppression expects preds
+                    preds = outputs[0] if isinstance(outputs, (tuple, list)) else outputs
+                    return non_max_suppression(preds, 0.05, 0.5)
+                postprocess_fn = yolo_v8_postprocess
+            except Exception as e:
+                print(f"Failed to load YOLOv26: {e}")
             
     elif "mask2former" in model_name.lower():
+        import sys, os
+        if os.getcwd() not in sys.path:
+            sys.path.insert(0, os.getcwd())
+        elif sys.path[0] != os.getcwd():
+            sys.path.remove(os.getcwd())
+            sys.path.insert(0, os.getcwd())
         from models.mask2former_model import build_original_mask2former, build_mask2former_with_dinov2_backbone
+        
+        m2f_pretrained = config.get("model", {}).get("mask2former", {}).get("pretrained_name_or_path", "")
+        if not m2f_pretrained:
+            if "large" in model_name.lower() or "large" in config.get("model", {}).get("backbone", {}).get("name", "").lower():
+                m2f_pretrained = "facebook/mask2former-swin-large-mapillary-vistas-panoptic"
+            else:
+                m2f_pretrained = "facebook/mask2former-swin-base-coco-panoptic"
+                
         bb_name = config.get("model", {}).get("backbone", {}).get("model_name", "")
         if "dinov2" in bb_name:
-            inner_model = build_mask2former_with_dinov2_backbone(id2label={0:'cell', 1:'bead', 2:'cell-adhered', 3:'soma'}, mask2former_pretrained_name_or_path="facebook/mask2former-swin-base-coco-panoptic")
+            inner_model = build_mask2former_with_dinov2_backbone(
+                id2label={0:'cell', 1:'bead', 2:'cell-adhered', 3:'soma'}, 
+                mask2former_pretrained_name_or_path=m2f_pretrained,
+                backbone_pretrained_name_or_path=config.get("model", {}).get("backbone", {}).get("pretrained_name_or_path", "facebook/dinov2-base")
+            )
         else:
-            inner_model = build_original_mask2former(id2label={0:'cell', 1:'bead', 2:'cell-adhered', 3:'soma'}, mask2former_pretrained_name_or_path="facebook/mask2former-swin-base-coco-panoptic")
+            inner_model = build_original_mask2former(id2label={0:'cell', 1:'bead', 2:'cell-adhered', 3:'soma'}, mask2former_pretrained_name_or_path=m2f_pretrained)
             
     elif "deim" in model_name.lower():
+        import sys, os
+        if os.getcwd() not in sys.path:
+            sys.path.insert(0, os.getcwd())
+        elif sys.path[0] != os.getcwd():
+            sys.path.remove(os.getcwd())
+            sys.path.insert(0, os.getcwd())
         from models.deim_v2_lightning_module import DeimV2LightningModule
         try:
             m = DeimV2LightningModule(config=OmegaConf.create(config))
@@ -122,7 +217,7 @@ def get_model_and_input(config, device, batch_size):
             inner_model = inner_model.bfloat16()
             dummy_input = dummy_input.bfloat16()
             
-    return inner_model, dummy_input
+    return inner_model, postprocess_fn, dummy_input
 
 def get_checkpoint_path(run):
     config = run.config
@@ -180,7 +275,7 @@ def benchmark_all_models(batch_size=1):
                     
                 print(f"\n---> Benchmarking {run.name} ({model_name}) from {ckpt_path}")
                 
-                inner_model, dummy_input = get_model_and_input(config, device, batch_size)
+                inner_model, postprocess_fn, dummy_input = get_model_and_input(config, device, batch_size)
                 if inner_model is None:
                     print(f"Failed to instantiate model architecture for {model_name}. Skipping.")
                     continue
@@ -196,7 +291,7 @@ def benchmark_all_models(batch_size=1):
                     print(f"Could not compute FLOPS: {e}")
                     
                 # 2. Baseline Inference Speed
-                avg_ms, img_ms, fps = run_benchmark(inner_model, dummy_input, batch_size, label="Baseline")
+                avg_fwd_native, avg_post_native, total_ms_native, fps_native = run_benchmark(inner_model, postprocess_fn, dummy_input, batch_size, label="Baseline")
                 
                 # 3. Torch Compile Inference Speed
                 compile_fps = 0.0
@@ -204,7 +299,7 @@ def benchmark_all_models(batch_size=1):
                     try:
                         print("Compiling model...")
                         compiled_model = torch.compile(inner_model, mode="reduce-overhead")
-                        _, _, compile_fps = run_benchmark(compiled_model, dummy_input, batch_size, label="torch.compile")
+                        _, _, _, compile_fps = run_benchmark(compiled_model, postprocess_fn, dummy_input, batch_size, label="torch.compile")
                     except Exception as e:
                         print(f"Failed to compile model: {e}")
                 
@@ -226,10 +321,14 @@ def benchmark_all_models(batch_size=1):
                     "Project": proj,
                     "Run Name": run.name,
                     "Model": model_name,
+                    "Batch Size": batch_size,
                     "mAP (50-95)": f"{map_val:.4f}" if isinstance(map_val, float) else map_val,
                     "EMA mAP": f"{map_ema:.4f}" if isinstance(map_ema, float) else map_ema,
-                    "GFLOPS": f"{gflops:.2f}",
-                    "Baseline FPS": f"{fps:.2f}",
+                    "GFLOPS/img": f"{gflops:.2f}",
+                    "Forward Time/img (ms)": f"{avg_fwd_native:.2f}",
+                    "Postproc Time/img (ms)": f"{avg_post_native:.2f}",
+                    "Total Time/img (ms)": f"{total_ms_native:.2f}",
+                    "Baseline FPS": f"{fps_native:.2f}",
                     "Compiled FPS": f"{compile_fps:.2f}"
                 }
                 results.append(res)

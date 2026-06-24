@@ -72,9 +72,28 @@ for orientation in ExifTags.TAGS.keys():
         break
 
 
+def _get_size(p):
+    return os.path.getsize(p) if os.path.exists(p) else 0
+
 def get_hash(paths):
     """Generates a single SHA256 hash for a list of file or directory paths by combining their sizes and paths."""
-    size = sum(os.path.getsize(p) for p in paths if os.path.exists(p))  # sizes
+    from multiprocessing.pool import ThreadPool
+    from utils.general import NUM_THREADS, TQDM_BAR_FORMAT
+    from tqdm import tqdm
+    import os
+    
+    size = 0
+    # Use ThreadPool to speed up checking sizes over network filesystem
+    with ThreadPool(NUM_THREADS) as pool:
+        pbar = tqdm(
+            pool.imap_unordered(_get_size, paths, chunksize=10000), 
+            total=len(paths), 
+            desc="Verifying cache integrity",
+            bar_format=TQDM_BAR_FORMAT
+        )
+        for s in pbar:
+            size += s
+            
     h = hashlib.sha256(str(size).encode())  # hash sizes
     h.update("".join(paths).encode())  # hash paths
     return h.hexdigest()  # return hash

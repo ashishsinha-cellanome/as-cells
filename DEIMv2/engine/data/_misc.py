@@ -5,6 +5,7 @@ Copyright(c) 2023 lyuwenyu. All Rights Reserved.
 
 import importlib.metadata
 from torch import Tensor
+from torchvision.transforms.v2 import SanitizeBoundingBoxes
 
 if '0.15.2' in importlib.metadata.version('torchvision'):
     import torchvision
@@ -19,13 +20,13 @@ elif '0.17' > importlib.metadata.version('torchvision') >= '0.16':
     torchvision.disable_beta_transforms_warning()
 
     from torchvision.tv_tensors import (
-        Image, Video, BoundingBoxes, BoundingBoxFormat, Mask)
+        BoundingBoxes, BoundingBoxFormat, Mask, Image, Video)
     _boxes_keys = ['format', 'canvas_size']
 
 elif importlib.metadata.version('torchvision') >= '0.17':
     import torchvision
     from torchvision.tv_tensors import (
-        Image, Video, BoundingBoxes, BoundingBoxFormat, Mask)
+        BoundingBoxes, BoundingBoxFormat, Mask, Image, Video)
     _boxes_keys = ['format', 'canvas_size']
 
 else:
