@@ -1,4 +1,5 @@
 **/*.ipynb
+aws/
 cell-detection/
 clustering_analysis/
 output/
