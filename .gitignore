@@ -1,10 +1,14 @@
 **/*.ipynb
 aws/
 cell-detection/
+clustering_analysis/
 output/
 **/__pycache__/**.pyc
 *.log
 *.err
+PHASE2_*/
+topology_*/
+custom_*/
 .codex
 ClAUDE.md
 AGENTS.md

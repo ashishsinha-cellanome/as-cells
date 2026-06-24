@@ -1,0 +1,16 @@
+# configs/config_rfdetr_seg.yaml
+defaults:
+  - model: rfdetr_seg
+  - optimizer: adamw_scaled
+  - scheduler: cosine_warmup
+  - trainer: default
+  - checkpointing: default
+  - logging: default
+  - initialization: default
+  - data: default
+  - _self_
+
+seed: 42
+run_name: "${model.name}_${now:%Y-%m-%d_%H-%M-%S}"
+debug: false
+finetuning_method: "decoder_only"
