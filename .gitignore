@@ -7,6 +7,7 @@ output/
 *.log
 *.err
 PHASE2_*/
+tree_*/
 topology_*/
 custom_*/
 .codex
