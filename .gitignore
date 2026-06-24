@@ -1,4 +1,5 @@
 **/*.ipynb
+tree_*/
 aws/
 cell-detection/
 clustering_analysis/
