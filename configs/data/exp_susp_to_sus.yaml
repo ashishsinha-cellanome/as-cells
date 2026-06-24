@@ -1,0 +1,42 @@
+defaults:
+- full: _self_
+name: exp_susp_to_sus
+test:
+  datasets:
+  - /mnt/direct-attached/PHASE2/20240314_imr90-suspension_10x_uncaged_4_class
+  - /mnt/direct-attached/PHASE2/20240305_pbmc-nobeads_10x_caged_4_class
+  - /mnt/direct-attached/PHASE2/20240306_mousepbmc-beads_10x_uncaged_4_class
+  - /mnt/direct-attached/PHASE2/20240314_imr90-suspension_10x_caged_4_class
+  - /mnt/direct-attached/PHASE2/20240228_k562_10x_caged_4_class
+  - /mnt/direct-attached/PHASE2/20240228_hela-suspension_10x_uncaged_4_class
+  - /mnt/direct-attached/PHASE2/20240905_raji_10x_caged_at_4x_4_class
+  - /mnt/direct-attached/PHASE2/20240306_mousepbmc-nobeads_10x_uncaged_4_class
+  - /mnt/direct-attached/PHASE2/20240228_jurkat_10x_uncaged_4_class
+  - /mnt/direct-attached/PHASE2/20240306_mousepbmc-nobeads_10x_caged_4_class
+  - /mnt/direct-attached/PHASE2/20240306_mousepbmc-beads_10x_caged_4_class
+  - /mnt/direct-attached/PHASE2/20241003_Hs675Tfibroblasts-suspension-beads_10x_uncaged_4_class
+  - /mnt/direct-attached/PHASE2/20240816_tall104_10x_caged_at_4x_4_class
+  - /mnt/direct-attached/PHASE2/20240228_jurkat_10x_caged_4_class
+  - /mnt/direct-attached/PHASE2/20240228_hela-suspension_10x_caged_4_class
+train:
+  datasets:
+  - /mnt/direct-attached/PHASE2/20240307_pbmc-beads_10x_uncaged_4_class
+  - /mnt/direct-attached/PHASE2/20240228_k562_10x_uncaged_4_class
+  - /mnt/direct-attached/PHASE2/20240305_pbmc-nobeads_10x_uncaged_4_class
+val:
+  datasets:
+  - /mnt/direct-attached/PHASE2/20240314_imr90-suspension_10x_uncaged_4_class
+  - /mnt/direct-attached/PHASE2/20240305_pbmc-nobeads_10x_caged_4_class
+  - /mnt/direct-attached/PHASE2/20240306_mousepbmc-beads_10x_uncaged_4_class
+  - /mnt/direct-attached/PHASE2/20240314_imr90-suspension_10x_caged_4_class
+  - /mnt/direct-attached/PHASE2/20240228_k562_10x_caged_4_class
+  - /mnt/direct-attached/PHASE2/20240228_hela-suspension_10x_uncaged_4_class
+  - /mnt/direct-attached/PHASE2/20240905_raji_10x_caged_at_4x_4_class
+  - /mnt/direct-attached/PHASE2/20240306_mousepbmc-nobeads_10x_uncaged_4_class
+  - /mnt/direct-attached/PHASE2/20240228_jurkat_10x_uncaged_4_class
+  - /mnt/direct-attached/PHASE2/20240306_mousepbmc-nobeads_10x_caged_4_class
+  - /mnt/direct-attached/PHASE2/20240306_mousepbmc-beads_10x_caged_4_class
+  - /mnt/direct-attached/PHASE2/20241003_Hs675Tfibroblasts-suspension-beads_10x_uncaged_4_class
+  - /mnt/direct-attached/PHASE2/20240816_tall104_10x_caged_at_4x_4_class
+  - /mnt/direct-attached/PHASE2/20240228_jurkat_10x_caged_4_class
+  - /mnt/direct-attached/PHASE2/20240228_hela-suspension_10x_caged_4_class

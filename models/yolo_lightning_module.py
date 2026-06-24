@@ -11,6 +11,7 @@ from pathlib import Path
 from pycocotools.cocoeval import COCOeval
 from PIL import Image, ImageDraw, ImageFont
 
+from utils.peft_utils import apply_peft
 from utils.distributed_utils import rank_zero_print
 # from models.yolov5.utils.augmentations import normalize, denormalize
 
@@ -53,6 +54,7 @@ class YOLOv5LightningModule(pl.LightningModule):
         model_to_coco: dict,
         val_coco_gt=None,
         test_coco_gt=None,
+        **kwargs,
     ):
         super().__init__()
         self.config = config
@@ -106,6 +108,9 @@ class YOLOv5LightningModule(pl.LightningModule):
 
         model.hyp = dict(model_cfg.hyp)
         self.model = model
+        self.peft = kwargs.get('peft', False) or (config.model.get('peft', False) if hasattr(config, 'model') else False)
+        if self.peft:
+            self.model = apply_peft(self.model, "yolo")
         self._compute_loss = None
 
         self.validation_step_outputs = []
@@ -715,10 +720,11 @@ class YOLOv5LightningModule(pl.LightningModule):
         optimizer.add_param_group({"params": g1, "weight_decay": opt_cfg.weight_decay})
         optimizer.add_param_group({"params": g2})
 
-        lf = lambda x: (
-            (1 - x / self.trainer.max_epochs) * (1.0 - self.config.model.yolov5.hyp.lrf)
-            + self.config.model.yolov5.hyp.lrf
-        )
+        def lf(x):
+            return (
+                (1 - x / self.trainer.max_epochs) * (1.0 - self.config.model.yolov5.hyp.lrf)
+                + self.config.model.yolov5.hyp.lrf
+            )
         scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lf)
         return [optimizer], [{"scheduler": scheduler, "interval": "epoch"}]
 

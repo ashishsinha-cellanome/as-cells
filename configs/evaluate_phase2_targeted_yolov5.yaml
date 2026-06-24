@@ -1,0 +1,13 @@
+inference:
+  data_root: /mnt/direct-attached/PHASE2
+  output_dir: /mnt/direct-attached/PHASE2_EVAL_RESULTS_TARGETED
+  max_viz: 10
+
+models:
+  yolov5m:
+    name: YOLOv5-Medium
+    type: yolo
+    config_file: configs/model/yolov5.yaml
+    weights: /mnt/direct-attached/as-cells/cell-detection/exp8/weights/best.pt
+    conf: 0.25
+    imgsz: 672

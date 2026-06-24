@@ -1,0 +1,34 @@
+inference:
+  data_root: /mnt/direct-attached/PHASE2
+  output_dir: /mnt/direct-attached/PHASE2_EVAL_RESULTS_TARGETED
+  max_viz: 10
+
+models:
+  yolov26m:
+    name: YOLOv26-Medium
+    type: yolo
+    config_file: configs/model/yolov26.yaml
+    weights: /mnt/direct-attached/checkpoints/yolov26/yolov26_train20/weights/best.pt
+    conf: 0.25
+    imgsz: 672
+  rf_detr_seg:
+    name: RF-DETR-Seg-Large
+    type: rf_detr
+    config_file: configs/model/rfdetr_seg.yaml
+    weights: /mnt/direct-attached/as-cells/RFDETR-Seg-ckpts/output/checkpoint_best_ema.pth
+    conf: 0.25
+    imgsz: 504
+  rf_detr_base:
+    name: RF-DETR-Base
+    type: rf_detr
+    config_file: configs/model/rfdetr.yaml
+    weights: /mnt/direct-attached/as-cells/rf-detr-base.pth
+    conf: 0.25
+    imgsz: 504
+  rf_detr_medium:
+    name: RF-DETR-Medium
+    type: rf_detr
+    config_file: configs/model/rfdetr.yaml
+    weights: /mnt/direct-attached/as-cells/rfdetr-ema-09-val_map_ema0.7293-converted.pt
+    conf: 0.25
+    imgsz: 504

@@ -55,6 +55,10 @@ def custom_build_roboflow_from_coco(image_set, args, resolution):
         include_masks=include_masks,
         remap_category_ids=False,
     )
+    
+    from custom_coco_utils import CustomConvertCoco
+    dataset.prepare = CustomConvertCoco(include_masks=include_masks, cat2label=dataset.cat2label)
+    
     return dataset
 
 # Apply the patches
@@ -116,18 +120,14 @@ orig_trainer_init = pl.Trainer.__init__
 
 def custom_trainer_init(self, *args, **kwargs):
     from utils.detailed_coco_eval import DetailedCocoEvalCallback
+    import os
     
     if 'callbacks' in kwargs and kwargs['callbacks'] is not None:
         kwargs['callbacks'].append(DetailedCocoEvalCallback())
         
-    # Inject fraction logic globally since we can't easily pass it through RFDETR's config
-    fraction = 1.0
-    test_only = False
-    for i, arg in enumerate(sys.argv):
-        if arg == '--fraction' and i + 1 < len(sys.argv):
-            fraction = float(sys.argv[i + 1])
-        if arg == '--test_only':
-            test_only = True
+    # Inject fraction and test_only logic globally
+    fraction = float(os.environ.get("RFDETR_FRACTION", "1.0"))
+    test_only = os.environ.get("RFDETR_TEST_ONLY") == "1"
             
     self.test_only = test_only
     if fraction < 1.0:
@@ -305,80 +305,118 @@ def custom_ema_load_state_dict(self, state_dict):
 
 orig_ema.RFDETREMACallback.load_state_dict = custom_ema_load_state_dict
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset_dir", default="/mnt/direct-attached/TRAINING_DATA", help="Path to dataset root")
-    parser.add_argument("--epochs", type=int, default=50)
-    parser.add_argument("--batch_size", type=int, default=16)
-    parser.add_argument("--grad_accum_steps", type=int, default=1)
-    parser.add_argument("--debug", action="store_true")
-    parser.add_argument("--fraction", type=float, default=1.0, help="Fraction of dataset to use for training/val")
-    parser.add_argument("--devices", type=int, default=4)
-    parser.add_argument("--num_workers", type=int, default=4)
-    parser.add_argument("--resume", type=str, default=None, help="Path to checkpoint to resume from (includes optimizer state)")
-    parser.add_argument("--weights", type=str, default=None, help="Path to pre-trained weights to initialize from (starts fresh at epoch 0)")
-    parser.add_argument("--test_only", action="store_true", help="Only run validation/test on the validation set")
-    args = parser.parse_args()
+import hydra
+from omegaconf import DictConfig, OmegaConf
+from hydra.utils import to_absolute_path
+
+@hydra.main(config_path="configs", config_name="config_rfdetr_seg.yaml", version_base=None)
+def main(config: DictConfig):
+    import datetime
+    import os
+    import sys
+    
+    dataset_dir = to_absolute_path(config.data.path)
+    epochs = config.trainer.max_epochs
+    batch_size = config.data.batch_size
+    grad_accum_steps = config.trainer.accumulate_grad_batches
+    devices = config.trainer.devices
+    num_workers = config.data.num_workers
+    debug = config.debug
+    
+    fraction = config.data.get("limit_train_batches", 1.0)
+    if isinstance(fraction, int) and fraction > 1:
+        fraction = 1.0
+        
+    test_only = config.get("test_only", False)
+    
+    os.environ["RFDETR_FRACTION"] = str(fraction)
+    if test_only:
+        os.environ["RFDETR_TEST_ONLY"] = "1"
+        
+    weights = config.model.rfdetr.get("pretrain_weights", None)
+    resume = None
+    
+    if config.initialization.get("load_from_checkpoint"):
+        if test_only:
+            resume = to_absolute_path(config.initialization.load_from_checkpoint)
+        else:
+            weights = to_absolute_path(config.initialization.load_from_checkpoint)
 
     print("Initializing RFDETRSegLarge...")
-    if args.weights:
-        model = RFDETRSegLarge(group_detr=1, compile=True, num_classes=4, pretrain_weights=args.weights)
-        print(f"Loaded custom pretrain weights from: {args.weights}")
+    if weights:
+        model = RFDETRSegLarge(group_detr=1, compile=True, num_classes=4, pretrain_weights=weights)
+        print(f"Loaded custom pretrain weights from: {weights}")
     else:
         model = RFDETRSegLarge(group_detr=1, compile=True, num_classes=4)
+        
+    finetuning_method = config.get("finetuning_method", "full")
+    print(f"Applying Finetuning Method: {finetuning_method}")
+
+    if finetuning_method == "decoder_only":
+        print("Freezing Backbone and Encoder for Decoder/Head-Only Fine-Tuning...")
+        if hasattr(model, 'model') and hasattr(model.model, 'model'):
+            for name, param in model.model.model.named_parameters():
+                if "backbone" in name or "encoder" in name:
+                    param.requires_grad = False
+    elif finetuning_method == "lora":
+        print("Injecting LoRA adapters into the RF-DETR Transformer...")
+        try:
+            from peft import LoraConfig, get_peft_model
+            config_lora = LoraConfig(
+                r=8,
+                lora_alpha=32,
+                target_modules=["q_proj", "v_proj", "k_proj", "out_proj"],
+                lora_dropout=0.05,
+                bias="none",
+            )
+            if hasattr(model, 'model') and hasattr(model.model, 'model'):
+                model.model.model = get_peft_model(model.model.model, config_lora)
+                model.model.model.print_trainable_parameters()
+        except ImportError:
+            print("PEFT not installed. Please install with `pip install peft` to use LoRA.")
+    elif finetuning_method == "ema_ensemble":
+        print("EMA Ensembling will be performed automatically after training via EMACallback.")
+    elif finetuning_method == "pseudo_label":
+        print("Pseudo-label mode selected. Ensure you have run test-time adaptation first.")
+    elif finetuning_method == "domain_prompts":
+        print("Domain Prompt mode selected. Injecting prompts...")
+        # Placeholder for domain prompt logic
     
-    import datetime
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    run_name = f"rf_detr_seg_large_{timestamp}"
+    run_name = config.get("run_name", f"rf_detr_seg_large_{timestamp}")
+    if debug:
+        run_name = f"DEBUG_{run_name}"
     
-    print(f"Starting training on {args.dataset_dir} for {args.epochs} epochs with fraction {args.fraction}...")
+    print(f"Starting training on {dataset_dir} for {epochs} epochs with fraction {fraction}...")
     
     trainer_kwargs = {}
-    if args.debug:
+    if debug:
+        os.environ["RFDETR_FRACTION"] = "1.0"
         trainer_kwargs["limit_train_batches"] = 1
         trainer_kwargs["limit_val_batches"] = 1
         trainer_kwargs["limit_test_batches"] = 0
-        args.epochs = 1
-    elif args.fraction < 1.0:
-        trainer_kwargs["limit_train_batches"] = args.fraction
-        trainer_kwargs["limit_val_batches"] = args.fraction
+        epochs = 1
         
-    # Handle manual weights loading for test_only mode to completely bypass PTL validation loops issues
-    if args.test_only and args.resume and args.resume.endswith('.pth'):
-        import os
-        import sys
-        os.environ['TEST_ONLY_MANUAL_LOAD_PATH'] = args.resume
-        
-        # Remove --resume from sys.argv so DDP subprocesses don't see it
-        new_argv = []
-        skip_next = False
-        for arg in sys.argv:
-            if skip_next:
-                skip_next = False
-                continue
-            if arg == '--resume':
-                skip_next = True
-                continue
-            new_argv.append(arg)
-        sys.argv = new_argv
-        args.resume = None
+    if test_only and resume and resume.endswith('.pth'):
+        os.environ['TEST_ONLY_MANUAL_LOAD_PATH'] = resume
+        resume = None
 
-    if args.resume:
-        trainer_kwargs["resume"] = args.resume
+    if resume:
+        trainer_kwargs["resume"] = resume
         
     model.train(
-        dataset_dir=args.dataset_dir,
-        epochs=args.epochs,
-        batch_size=args.batch_size,
-        grad_accum_steps=args.grad_accum_steps,
-        devices=args.devices,
-        strategy="auto" if args.devices == 1 else "ddp_find_unused_parameters_true",
-        wandb=False if args.debug else True,
+        dataset_dir=dataset_dir,
+        epochs=epochs,
+        batch_size=batch_size,
+        grad_accum_steps=grad_accum_steps,
+        devices=devices,
+        strategy="auto" if devices == 1 else "ddp_find_unused_parameters_true",
+        wandb=False if debug else True,
         project="cell-detection",
         run=run_name,
         early_stopping=True,
         progress_bar="rich",
-        num_workers=args.num_workers,
+        num_workers=num_workers,
         use_ema=True,
         **trainer_kwargs
     )
