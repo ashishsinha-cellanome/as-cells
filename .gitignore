@@ -1,4 +1,5 @@
 **/*.ipynb
+aws/
 cell-detection/
 output/
 **/__pycache__/**.pyc
