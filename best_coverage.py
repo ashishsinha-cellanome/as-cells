@@ -46,6 +46,7 @@ raw_embs_class3 = all_raw_embs.get(3, {})
 raw_embs = {**raw_embs_class2, **raw_embs_class3}
 
 dataset_embs = {}
+np.random.seed(42)
 for ds, e in raw_embs.items():
     if parse_dataset_name(ds):
         if e.shape[0] > 3000:
