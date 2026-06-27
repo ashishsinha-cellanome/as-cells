@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 import os
 import pickle
 import seaborn as sns
@@ -402,11 +403,13 @@ def process_level(level_name, embs_dict, out_dir, model_name, class_name, covera
     # Save Clustermaps and Heatmaps, and the Raw Matrices
     for metric_name, matrix in metrics_sym.items():
         np.save(os.path.join(out_dir, f"matrix_{metric_name}.npy"), matrix)
+        pd.DataFrame(matrix, index=names, columns=names).to_csv(os.path.join(out_dir, f"matrix_{metric_name}.csv"))
         generate_clustermap(matrix, names, out_dir, metric_name, model_name, is_asymmetric=False)
         generate_heatmap(matrix, names, out_dir, metric_name, model_name, is_asymmetric=False)
         
     for metric_name, matrix in metrics_asym.items():
         np.save(os.path.join(out_dir, f"matrix_{metric_name}.npy"), matrix)
+        pd.DataFrame(matrix, index=names, columns=names).to_csv(os.path.join(out_dir, f"matrix_{metric_name}.csv"))
         generate_clustermap(matrix, names, out_dir, metric_name, model_name, is_asymmetric=True)
         generate_heatmap(matrix, names, out_dir, metric_name, model_name, is_asymmetric=True)
         
