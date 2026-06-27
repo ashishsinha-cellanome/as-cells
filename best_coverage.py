@@ -25,8 +25,21 @@ def parse_dataset_name(ds_name):
         if kw in lower_name: return None
     return ds_name
 
-with open("/Users/ashish.sinha/Documents/project/cellanome/as-cells/custom_cell_line_embeddings_analysis/extracted_raw_embeddings.pkl", 'rb') as f:
-    all_raw_embs = pickle.load(f)
+import sys
+import os
+import argparse
+
+parser = argparse.ArgumentParser(description='Run Tree Topology Analysis')
+parser.add_argument('--input_pkl', type=str, required=True, help='Path to the raw embeddings pickle file')
+parser.add_argument('--output_prefix', type=str, required=True, help='Prefix for output files (e.g. dinov2_base)')
+args = parser.parse_args()
+
+try:
+    with open(args.input_pkl, 'rb') as f:
+        all_raw_embs = pickle.load(f)
+except FileNotFoundError:
+    print(f"ERROR: Embeddings file not found: {args.input_pkl}")
+    sys.exit(1)
 
 raw_embs = all_raw_embs.get(2, {})
 dataset_embs = {}
@@ -47,24 +60,27 @@ for i in range(n):
         if i == j: continue
         dist_matrix[i, j] = compute_coverage_distance(dataset_embs[names[i]], dataset_embs[names[j]], k=10)
 
-# For each dataset, print its best covering set (min distance in row i, excluding i)
-# i is the target (X), j is the source (Y). dist_matrix[i, j] = 1 - Coverage(X, Y)
-# We want the Y that best covers X. So for row i, find min over j.
+from coverage_arborescence_viz import visualize_arborescence, coverage_report
+import sys
+import contextlib
 
-for i in range(n):
-    best_j = np.argmin(dist_matrix[i, :])
-    if best_j == i: 
-        # ignore diag, find next
-        dists = dist_matrix[i, :].copy()
-        dists[i] = np.inf
-        best_j = np.argmin(dists)
+# Save the original stdout
+original_stdout = sys.stdout
+
+thresholds = [0.4, 0.5, 0.6]
+
+print("\n--- Coverage Arborescence Analysis ---")
+
+for thresh in thresholds:
+    print(f"\nProcessing Threshold: {thresh}")
     
-    print(f"{names[i]} is best covered by {names[best_j]} (dist={dist_matrix[i, best_j]:.3f})")
-
-print("\n--- Reverse: What does this dataset best cover? ---")
-for j in range(n):
-    dists = dist_matrix[:, j].copy()
-    dists[j] = np.inf
-    best_i = np.argmin(dists)
-    print(f"{names[j]} best covers {names[best_i]} (dist={dist_matrix[best_i, j]:.3f})")
+    report_path = f"coverage_arborescence_report_{args.output_prefix}_t{thresh}.txt"
+    with open(report_path, 'w') as f:
+        with contextlib.redirect_stdout(f):
+            coverage_report(dist_matrix, names, threshold=thresh)
+    print(f"Saved report to {report_path}")
+    
+    # Generate the visualization
+    plot_path = f"coverage_arborescence_plot_{args.output_prefix}_t{thresh}.png"
+    fig, G = visualize_arborescence(dist_matrix, names, threshold=thresh, save_path=plot_path)
 

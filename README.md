@@ -84,3 +84,34 @@ $$ KL(P || Q) = \frac{1}{2} \sum_{i=1}^{D} \left( \ln\left(\frac{\sigma_{Q,i}^2}
 **Formula:**
 $$ Coverage(X, Y) = \frac{1}{|X|} \sum_{x \in X} \mathbb{1} \left[ \min_{y \in Y} d(x, y) \le d(x, NNI_k(x, X)) \right] $$
 **Interpretation:** Evaluates the fraction of target test samples $X$ whose $k$-NN ball (computed within $X$) contains at least one source train sample $Y$. We compute the distance as **$1 - Coverage(X, Y)$**. This effectively measures whether the training manifold spatially encompasses the test manifold.
+
+## Analysis Pipeline and Scripts
+
+This section describes the order of execution for the various analysis scripts to compute embeddings, generate distance matrices (heatmaps/clustermaps), and perform tree topology analysis.
+
+### Step 1: Embedding Calculation
+**Script:** `custom_dinov2_embedding_pipeline.py` (or `rfdetr_seg_embeddings_analysis.py` / `custom_rfdetr_cell_line_embeddings_analysis.py`)
+- **What it does:** Loads datasets, passes them through the selected backbone (e.g., DINOv2 or RF-DETR), and extracts high-dimensional morphological embeddings. It saves the raw extracted embeddings (e.g., `extracted_raw_embeddings.pkl`) for downstream processing.
+- **How to run:**
+  ```bash
+  uv run custom_dinov2_embedding_pipeline.py
+  ```
+
+### Step 2: Distance Matrix & Heatmap/Clustermap Computation
+**Script:** `compute_all_metrics.py` (and variations like `calculate_advanced_metrics.py` / `calculate_asymmetric_metrics.py`)
+- **What it does:** Loads the raw embeddings from Step 1 and calculates all the distance metrics described above (Wasserstein, Sym-KL, Asymmetric KL, Coverage, etc.). It generates pairwise distance matrices and visualizes them using Seaborn heatmaps and hierarchical dendrogram clustermaps.
+- **How to run:**
+  ```bash
+  uv run compute_all_metrics.py
+  ```
+
+### Step 3: Tree Topology Analysis (Coverage Arborescence)
+**Script:** `best_coverage.py` (which utilizes `coverage_arborescence_viz.py`)
+- **What it does:** Uses the Coverage Distance metric (computed from the raw embeddings) to build a directed spanning arborescence (a rooted tree). This structure identifies the "broadest" dataset (the root) and creates a level-ordered hierarchy showing which datasets cover other datasets best. Edges are styled based on a coverage threshold to show strong vs. weak morphological coverage.
+- **How to run:**
+  ```bash
+  uv run best_coverage.py
+  ```
+- **Outputs:**
+  - `coverage_arborescence_report.txt`: A text summary of the ranked nodes and tree edges.
+  - `coverage_arborescence_plot.png`: A Matplotlib/NetworkX hierarchical tree visualization.

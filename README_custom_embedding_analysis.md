@@ -108,12 +108,33 @@ Computes the fraction of samples in the "Test" dataset whose $k$-nearest neighbo
 
 **Interpretation**: High coverage (e.g., > 0.8) means the Train dataset's morphological variations encompass almost all the variations seen in the Test dataset. This is a direct proxy for expected zero-shot model performance.
 
-## 11. Coverage Distance
-**Formula**: 
-$$ d_{Coverage}(Test, Train) = 1 - \text{Coverage}(Test, Train) $$
+## 12. Analysis Pipeline and Scripts
 
-**Intuition**: The inverse of the coverage metric. It represents the fraction of the Test manifold that is "out of distribution" relative to the Train manifold.
+This section describes the order of execution for the various analysis scripts to compute embeddings, generate distance matrices (heatmaps/clustermaps), and perform tree topology analysis.
 
-**Role of Variance**: Non-parametric, tracking point-cloud geometry.
+### Step 1: Embedding Calculation
+**Script:** `custom_dinov2_embedding_pipeline.py` (or `rfdetr_seg_embeddings_analysis.py` / `custom_rfdetr_cell_line_embeddings_analysis.py`)
+- **What it does:** Loads datasets, passes them through the selected backbone (e.g., DINOv2 or RF-DETR), and extracts high-dimensional morphological embeddings. It saves the raw extracted embeddings (e.g., `extracted_raw_embeddings.pkl`) for downstream processing.
+- **How to run:**
+  ```bash
+  uv run custom_dinov2_embedding_pipeline.py
+  ```
 
-**Interpretation**: Like Asymmetric KL, this is a highly effective asymmetric distance metric. A near-zero coverage distance implies the Train set acts as a perfect representational superset for the Test set, identifying optimal candidate datasets for model fine-tuning and adaptation.
+### Step 2: Distance Matrix & Heatmap/Clustermap Computation
+**Script:** `compute_all_metrics.py` (and variations like `calculate_advanced_metrics.py` / `calculate_asymmetric_metrics.py`)
+- **What it does:** Loads the raw embeddings from Step 1 and calculates all the distance metrics described above (Wasserstein, Sym-KL, Asymmetric KL, Coverage, etc.). It generates pairwise distance matrices and visualizes them using Seaborn heatmaps and hierarchical dendrogram clustermaps.
+- **How to run:**
+  ```bash
+  uv run compute_all_metrics.py
+  ```
+
+### Step 3: Tree Topology Analysis (Coverage Arborescence)
+**Script:** `best_coverage.py` (which utilizes `coverage_arborescence_viz.py`)
+- **What it does:** Uses the Coverage Distance metric (computed from the raw embeddings) to build a directed spanning arborescence (a rooted tree). This structure identifies the "broadest" dataset (the root) and creates a level-ordered hierarchy showing which datasets cover other datasets best. Edges are styled based on a coverage threshold to show strong vs. weak morphological coverage.
+- **How to run:**
+  ```bash
+  uv run best_coverage.py
+  ```
+- **Outputs:**
+  - `coverage_arborescence_report.txt`: A text summary of the ranked nodes and tree edges.
+  - `coverage_arborescence_plot.png`: A Matplotlib/NetworkX hierarchical tree visualization.
