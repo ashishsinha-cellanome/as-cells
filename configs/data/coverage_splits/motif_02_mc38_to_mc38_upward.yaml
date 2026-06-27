@@ -1,0 +1,26 @@
+# @package _global_
+defaults:
+- default@data
+data:
+  train_datasets:
+  - 20240624_mc38_10x_uncaged_4_class
+  test_datasets:
+  - 20240624_mc38_10x_caged_4_class
+  split_motif: Upward Single
+  coverage: !!python/object/apply:numpy._core.multiarray.scalar
+  - !!python/object/apply:numpy.dtype
+    args:
+    - f8
+    - false
+    - true
+    state: !!python/tuple
+    - 3
+    - <
+    - null
+    - null
+    - null
+    - -1
+    - -1
+    - 0
+  - !!binary |
+    OUVHcvkP7z8=
