@@ -325,13 +325,70 @@ def analyze_trees(base_metrics_dir, k_values, thresholds, out_dir):
         for k, t, nc, nnt, ni in evolution_rows:
             f.write(f"{k},{t},{nc},{nnt},{ni}\n")
 
+def analyze_from_csv(csv_path, thresholds, out_dir):
+    import pandas as pd
+    os.makedirs(out_dir, exist_ok=True)
+    df = pd.read_csv(csv_path, index_col=0)
+    names = list(df.index)
+    dist_matrix = df.values
+    n = len(names)
+
+    report_lines = [f"# Tree Topology Analysis Report (From CSV)"]
+    report_lines.append(f"Source: {csv_path}")
+    report_lines.append(f"Coverage thresholds: {thresholds}")
+    report_lines.append(f"\n*Arrow direction: Superset \u2192 Subset. Edge label = Coverage %.*\n")
+
+    evolution_rows = []
+    k = "CSV"
+    
+    G_full = nx.DiGraph()
+    for name in names:
+        G_full.add_node(name)
+    for i in range(n):
+        for j in range(n):
+            if i == j:
+                continue
+            G_full.add_edge(names[j], names[i], weight=dist_matrix[i, j])
+
+    try:
+        T_full = nx.minimum_spanning_arborescence(G_full)
+        _plot_trees([(set(names), T_full)], [], k, "fully_connected", out_dir, suffix="mst")
+    except nx.NetworkXException as e:
+        print(f"  Could not compute full MST for CSV: {e}")
+
+    for t in thresholds:
+        print(f"  Threshold coverage >= {t}")
+        nc, nnt, ni = _process_threshold(G_full, dist_matrix, names, k, t, out_dir, report_lines)
+        evolution_rows.append((k, t, nc, nnt, ni))
+
+    plot_dissolution(evolution_rows, k, out_dir)
+
+    report_path = os.path.join(out_dir, "tree_topology_report.md")
+    with open(report_path, "w") as f:
+        f.write("\n".join(report_lines))
+    print(f"Saved report to {report_path}")
+
+    csv_path_out = os.path.join(out_dir, "component_evolution.csv")
+    with open(csv_path_out, "w") as f:
+        f.write("k,threshold,n_components,n_non_trivial,n_isolates\n")
+        for k, t, nc, nnt, ni in evolution_rows:
+            f.write(f"{k},{t},{nc},{nnt},{ni}\n")
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", type=str, default="dinov2_base")
     parser.add_argument("--split", type=str, default="train")
     parser.add_argument("--k", type=int, nargs="+", default=[5, 10, 15, 30])
     parser.add_argument("--thresholds", type=float, nargs="+", default=[0.3, 0.4, 0.5, 0.6, 0.7])
+    parser.add_argument("--csv", type=str, help="Path to a precomputed CSV file to analyze directly")
+    parser.add_argument("--out-dir", type=str, default="tree_topology_output_csv", help="Output directory for CSV mode")
     args = parser.parse_args()
+
+    if args.csv:
+        print(f"\n=== CSV Tree Analysis ===")
+        print(f"Processing {args.csv}...")
+        analyze_from_csv(args.csv, args.thresholds, args.out_dir)
+        return
 
     base_dir = "/mnt/direct-attached/PHASE2_EVAL_RESULTS"
     MODEL_FOLDERS = {
