@@ -41,7 +41,10 @@ except FileNotFoundError:
     print(f"ERROR: Embeddings file not found: {args.input_pkl}")
     sys.exit(1)
 
-raw_embs = all_raw_embs.get(2, {})
+raw_embs_class2 = all_raw_embs.get(2, {})
+raw_embs_class3 = all_raw_embs.get(3, {})
+raw_embs = {**raw_embs_class2, **raw_embs_class3}
+
 dataset_embs = {}
 for ds, e in raw_embs.items():
     if parse_dataset_name(ds):
