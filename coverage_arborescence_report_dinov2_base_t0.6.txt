@@ -1,0 +1,45 @@
+============================================================
+COVERAGE ARBORESCENCE REPORT
+============================================================
+
+Root Node (Broadest Dataset): 20240625_mc38_10x_caged_4_class (Mean Out-Coverage: 0.553)
+
+Ranked Nodes (by Mean Out-Coverage):
+Rank  Node                          Mean Out-Coverage   
+--------------------------------------------------------
+1     20240625_mc38_10x_caged_4_class0.553
+2     20240624_mc38_10x_caged_4_class0.551
+3     20240905_u87-adhered_10x_caged_4_class0.539
+4     20240624_mc38_10x_uncaged_4_class0.536
+5     20240509_Hs675Tfibroblasts_10x_caged_4_class0.454
+6     20250820_c8d1a_astrocytes-adherent_10x_caged_4_class0.439
+7     20260316_a549-tomm20-gfp-adhered_10x_caged_at_4x_4_class0.427
+8     20250227_preadipocytes-adhered_10x_caged_4_class0.424
+9     20240516_DC-adhered_10x_caged_4_class0.353
+10    20240515_DC-adhered_10x_caged_4_class0.353
+11    231212_imr90_multichannel_overlay_4_class0.352
+12    20240509_hela-adhered_10x_caged_4_class0.336
+13    20250917_moc22-adhered_10x_caged_4_class0.331
+14    240213_imr90_multichannel_overlay_4_class0.299
+15    20241212_preadipocytes-adhered_10x_uncaged_4_class0.252
+16    20240924_enteric-glia-adhered_10x_uncaged_4_class0.220
+
+Tree Edges:
+Source               -> Target               | Coverage   | Status    
+-----------------------------------------------------------------
+20240625_mc38_10x_caged_4_class -> 20240905_u87-adhered_10x_caged_4_class | 0.841      | STRONG
+20240625_mc38_10x_caged_4_class -> 20240624_mc38_10x_uncaged_4_class | 0.713      | STRONG
+20240625_mc38_10x_caged_4_class -> 20240509_Hs675Tfibroblasts_10x_caged_4_class | 0.681      | STRONG
+20240625_mc38_10x_caged_4_class -> 20250820_c8d1a_astrocytes-adherent_10x_caged_4_class | 0.646      | STRONG
+20240625_mc38_10x_caged_4_class -> 20240924_enteric-glia-adhered_10x_uncaged_4_class | 0.614      | STRONG
+20240624_mc38_10x_uncaged_4_class -> 20240624_mc38_10x_caged_4_class | 0.965      | STRONG
+20240624_mc38_10x_uncaged_4_class -> 20260316_a549-tomm20-gfp-adhered_10x_caged_at_4x_4_class | 0.755      | STRONG
+20240509_Hs675Tfibroblasts_10x_caged_4_class -> 20250227_preadipocytes-adhered_10x_caged_4_class | 0.688      | STRONG
+20240509_Hs675Tfibroblasts_10x_caged_4_class -> 231212_imr90_multichannel_overlay_4_class | 0.680      | STRONG
+20250820_c8d1a_astrocytes-adherent_10x_caged_4_class -> 20240515_DC-adhered_10x_caged_4_class | 0.662      | STRONG
+20240624_mc38_10x_uncaged_4_class -> 20240509_hela-adhered_10x_caged_4_class | 0.582      | WEAK
+20240515_DC-adhered_10x_caged_4_class -> 20240516_DC-adhered_10x_caged_4_class | 0.964      | STRONG
+20250227_preadipocytes-adhered_10x_caged_4_class -> 20241212_preadipocytes-adhered_10x_uncaged_4_class | 0.745      | STRONG
+20260316_a549-tomm20-gfp-adhered_10x_caged_at_4x_4_class -> 20250917_moc22-adhered_10x_caged_4_class | 0.711      | STRONG
+231212_imr90_multichannel_overlay_4_class -> 240213_imr90_multichannel_overlay_4_class | 0.700      | STRONG
+============================================================
