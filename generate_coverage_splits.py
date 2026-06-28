@@ -171,7 +171,7 @@ def main():
                 'train_datasets': cfg['train'],
                 'test_datasets': cfg['test'],
                 'split_motif': cfg['type'],
-                'coverage': round(cfg['coverage'], 4)
+                'coverage': float(round(cfg['coverage'], 4))
             }
         }
         

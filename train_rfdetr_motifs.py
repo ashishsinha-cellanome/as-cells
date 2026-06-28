@@ -10,13 +10,13 @@ from omegaconf import DictConfig, OmegaConf
 from pathlib import Path
 import numpy as np
 
-# Patch convert_coco_poly_to_mask to fix Pycocotools + Numpy 2.0 list bug
+# Patch convert_coco_poly_to_mask to fix Pycocotools + Numpy 2.0 list bug AND lazily uncrop test RLEs
 import rfdetr.datasets.coco as rfdetr_coco
 
 _orig_convert_coco_call = rfdetr_coco.ConvertCoco.__call__
+
 def patched_convert_coco_call(self, image, target):
     w, h = image.size
-    image_id = target["image_id"]
     anno = target["annotations"]
     anno = [obj for obj in anno if "iscrowd" not in obj or obj["iscrowd"] == 0]
     
@@ -39,12 +39,18 @@ def patched_convert_coco_call(self, image, target):
                 x_end = min(x + bw, w)
                 y_end = min(y + bh, h)
                 
-                cx_start = 0 if x >= 0 else -x
-                cy_start = 0 if y >= 0 else -y
-                cx_end = cx_start + (x_end - x_start)
-                cy_end = cy_start + (y_end - y_start)
-                
-                full_mask[y_start:y_end, x_start:x_end] = cropped_mask[cy_start:cy_end, cx_start:cx_end]
+                if x_start < x_end and y_start < y_end:
+                    cx_start = 0 if x >= 0 else -x
+                    cy_start = 0 if y >= 0 else -y
+                    
+                    true_cy_end = min(cy_start + (y_end - y_start), cropped_mask.shape[0])
+                    true_cx_end = min(cx_start + (x_end - x_start), cropped_mask.shape[1])
+                    
+                    y_end = y_start + (true_cy_end - cy_start)
+                    x_end = x_start + (true_cx_end - cx_start)
+                    
+                    full_mask[y_start:y_end, x_start:x_end] = cropped_mask[cy_start:true_cy_end, cx_start:true_cx_end]
+                    
                 full_mask_f = np.asfortranarray(full_mask)
                 full_rle = mask_util.encode(full_mask_f)
                 full_rle['counts'] = full_rle['counts'].decode('utf-8')
@@ -116,6 +122,29 @@ def _get_model_class(size_name: str, is_seg: bool = True):
         if size_name == "large": return RFDETRLarge
         if size_name == "nano": return RFDETRNano
     raise ValueError(f"Unsupported RF-DETR size: {size_name}")
+
+def _build_model_to_coco_map(coco_gt, label_map):
+    name_to_model_id = {str(name): int(idx) for idx, name in label_map.items()}
+    model_to_coco = {}
+
+    if coco_gt is None or not getattr(coco_gt, "cats", None):
+        for model_id in sorted(name_to_model_id.values()):
+            model_to_coco[model_id] = model_id
+        return model_to_coco
+
+    for coco_cat_id, cat_info in coco_gt.cats.items():
+        cat_name = cat_info.get("name")
+        # In PHASE2 datasets, "soma" might be named "soma" but sometimes cell-adhered is confused. Let's map by name.
+        if cat_name in name_to_model_id:
+            model_id = name_to_model_id[cat_name]
+            if model_id not in model_to_coco:
+                model_to_coco[model_id] = int(coco_cat_id)
+
+    for model_id in sorted(name_to_model_id.values()):
+        if model_id not in model_to_coco:
+            model_to_coco[model_id] = model_id
+
+    return model_to_coco
 
 @hydra.main(config_path="configs", config_name="config.yaml", version_base=None)
 def main(config: DictConfig):
@@ -282,7 +311,7 @@ def main(config: DictConfig):
         ),
         EarlyStopping(
             monitor=monitor_metric_segm,
-            patience=20,
+            patience=10,
             mode="max",
             verbose=True
         ),
@@ -310,7 +339,8 @@ def main(config: DictConfig):
         val_dataloader_names=val_dataloader_names, 
         test_dataloader_names=test_dataloader_names,
         val_get_coco_gt_fns=val_dataset_fns,
-        test_get_coco_gt_fns=test_dataset_fns
+        test_get_coco_gt_fns=test_dataset_fns,
+        label_map=label_map
     ))
 
     # 8. Trainer

@@ -1,3 +1,4 @@
+import torch
 import pytorch_lightning as pl
 from pathlib import Path
 from torch.utils.data import DataLoader, ConcatDataset
@@ -21,14 +22,13 @@ class MotifDataModule(pl.LightningDataModule):
         
         self.val_name = getattr(config.data, "val_name", "val")
         self.test_name = getattr(config.data, "test_name", "test")
-        self.train_name = getattr(config.data, "train_name", "train")
+        self.train_name = getattr(config.data, "train_name", "train_new")
 
         self._args = None
 
     def _build_args(self):
         model_cfg = self.config.model.rfdetr
         data_cfg = self.config.data
-        trainer_cfg = self.config.trainer
 
         args = self.base_args if self.base_args else type('Args', (), {})()
 
@@ -41,6 +41,7 @@ class MotifDataModule(pl.LightningDataModule):
         args.square_resize_div_64 = bool(model_cfg.get("square_resize_div_64", False))
         args.patch_size = int(model_cfg.get("patch_size", 16))
         args.num_windows = int(model_cfg.get("num_windows", 4))
+        args.device = "cuda" if torch.cuda.is_available() else "cpu"
         return args
 
     def _build_transforms(self, image_set: str, aug_config=None):
@@ -68,32 +69,61 @@ class MotifDataModule(pl.LightningDataModule):
         return None
 
     def _make_dataset(self, ds_name: str, split_name: str):
-        image_root = self.base_path / ds_name / "images" / split_name
+        # Determine paths
+        # If 'test' or 'val', look for 'images/test', else 'images/train'
+        img_split = "test" if "test" in split_name else "train"
+        image_root = self.base_path / ds_name / "images" / img_split
+            
         ann_path = self.base_path / ds_name / f"{split_name}_annotations.json"
 
+        # Only apply augmentations on train_new
         aug_config = self._load_aug_config() if split_name == self.train_name else None
         
         # Non-square path in upstream library has no explicit "test" branch, maps test->val
-        image_set = "test" if split_name == self.test_name else ("val" if split_name == self.val_name else "train")
+        image_set = "test" if split_name == self.test_name else ("val" if "val" in split_name or "valid" in split_name else "train")
 
-        return CocoDetection(
+        dataset = CocoDetection(
             img_folder=str(image_root),
             ann_file=str(ann_path),
             transforms=self._build_transforms(image_set, aug_config=aug_config),
             include_masks=True,
             remap_category_ids=False
         )
+        
+        # Fix category names dynamically
+        is_neuron = 'neuron' in ds_name.lower()
+        for cat in dataset.coco.dataset.get('categories', []):
+            if not is_neuron and cat['name'] == 'soma':
+                cat['name'] = 'cell-adhered'
+            if is_neuron and cat['name'] == 'cell-adhered':
+                cat['name'] = 'soma'
+            if cat['name'] == 'Cell': cat['name'] = 'cell'
+            if cat['name'] == 'cytoplasm': cat['name'] = 'cell-adhered'
+            if cat['name'] == 'Bead' or cat['name'] == 'beads': cat['name'] = 'bead'
+        dataset.coco.cats = {cat['id']: cat for cat in dataset.coco.dataset.get('categories', [])}
+            
+        return dataset
 
     def setup(self, stage=None):
         self._args = self._build_args()
         
         if stage in ("fit", None):
             self.train_datasets_objs = [self._make_dataset(ds, self.train_name) for ds in self.train_dataset_names]
-            self.val_datasets_objs = [self._make_dataset(ds, self.val_name) for ds in self.test_dataset_names]
+            
+            # Validation on training datasets (using 'valid' split generated offline)
+            self.val_train_datasets_objs = [self._make_dataset(ds, self.val_name) for ds in self.train_dataset_names]
+            
+            # Validation on test datasets for zero-shot monitoring
+            self.val_test_datasets_objs = [self._make_dataset(ds, self.val_name) for ds in self.test_dataset_names]
+            
             self.concat_train = ConcatDataset(self.train_datasets_objs)
             
         if stage in ("test", None):
             self.test_datasets_objs = [self._make_dataset(ds, self.test_name) for ds in self.test_dataset_names]
+
+    @property
+    def args(self):
+        return self._args
 
     def train_dataloader(self):
         return DataLoader(
@@ -108,11 +138,10 @@ class MotifDataModule(pl.LightningDataModule):
 
     def val_dataloader(self):
         eval_batch_size = int(getattr(self.config.data, "eval_batch_size", 1))
-        limit_val_batches = getattr(self.config.trainer, "limit_val_batches", 1.0)
         
-        # If debugging, we might just return the first dataloader or slice them to avoid taking forever.
         dataloaders = []
-        for ds in self.val_datasets_objs:
+        all_val_datasets = self.val_train_datasets_objs + self.val_test_datasets_objs
+        for ds in all_val_datasets:
             dl = DataLoader(
                 ds,
                 batch_size=eval_batch_size,

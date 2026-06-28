@@ -8,20 +8,4 @@ data:
   test_datasets:
   - 20260316_a549-tomm20-gfp-adhered_10x_caged_at_4x_4_class
   split_motif: Upward Multiple
-  coverage: !!python/object/apply:numpy._core.multiarray.scalar
-  - !!python/object/apply:numpy.dtype
-    args:
-    - f8
-    - false
-    - true
-    state: !!python/tuple
-    - 3
-    - <
-    - null
-    - null
-    - null
-    - -1
-    - -1
-    - 0
-  - !!binary |
-    mG4Sg8DK5T8=
+  coverage: 0.681

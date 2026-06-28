@@ -2,18 +2,23 @@ import torch
 from utils.detailed_coco_eval import DetailedCocoEvalCallback
 
 class MotifCocoEvalCallback(DetailedCocoEvalCallback):
-    def __init__(self, dataloader_names, get_coco_gt_fns):
+    def __init__(self, val_dataloader_names, test_dataloader_names, val_get_coco_gt_fns, test_get_coco_gt_fns, label_map=None):
         super().__init__()
-        self.dataloader_names = dataloader_names
-        self.get_coco_gt_fns = get_coco_gt_fns
+        self.val_dataloader_names = val_dataloader_names
+        self.test_dataloader_names = test_dataloader_names
+        self.val_get_coco_gt_fns = val_get_coco_gt_fns
+        self.test_get_coco_gt_fns = test_get_coco_gt_fns
+        self.label_map = label_map
         self.val_outputs = {}
         self.val_outputs_ema = {}
         self.test_outputs = {}
         self.test_outputs_ema = {}
         
-        for i in range(len(dataloader_names)):
+        for i in range(len(val_dataloader_names)):
             self.val_outputs[i] = []
             self.val_outputs_ema[i] = []
+            
+        for i in range(len(test_dataloader_names)):
             self.test_outputs[i] = []
             self.test_outputs_ema[i] = []
 
@@ -42,8 +47,8 @@ class MotifCocoEvalCallback(DetailedCocoEvalCallback):
             self._evaluate_ema(ema_cb, pl_module, batch, self.test_outputs_ema[dataloader_idx])
 
     def on_validation_epoch_end(self, trainer, pl_module):
-        for dl_idx, dl_name in enumerate(self.dataloader_names):
-            coco_gt = self.get_coco_gt_fns[dl_idx]()
+        for dl_idx, dl_name in enumerate(self.val_dataloader_names):
+            coco_gt = self.val_get_coco_gt_fns[dl_idx]()
             if not coco_gt or len(self.val_outputs[dl_idx]) == 0:
                 continue
                 
@@ -56,8 +61,8 @@ class MotifCocoEvalCallback(DetailedCocoEvalCallback):
                 self._compute_and_log(trainer, pl_module, self.val_outputs_ema[dl_idx], coco_gt, prefix, "_ema")
 
     def on_test_epoch_end(self, trainer, pl_module):
-        for dl_idx, dl_name in enumerate(self.dataloader_names):
-            coco_gt = self.get_coco_gt_fns[dl_idx]()
+        for dl_idx, dl_name in enumerate(self.test_dataloader_names):
+            coco_gt = self.test_get_coco_gt_fns[dl_idx]()
             if not coco_gt or len(self.test_outputs[dl_idx]) == 0:
                 continue
                 

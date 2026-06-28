@@ -216,7 +216,7 @@ class RFDETRLightningModule(pl.LightningModule):
             )
 
     @torch.no_grad()
-    def validation_step(self, batch, batch_idx):
+    def validation_step(self, batch, batch_idx, dataloader_idx=0):
         samples, targets = batch
         batch_size = (
             int(samples.shape[0]) if isinstance(samples, torch.Tensor) else len(targets)
@@ -485,7 +485,7 @@ class RFDETRLightningModule(pl.LightningModule):
             )
 
     @torch.no_grad()
-    def test_step(self, batch, batch_idx):
+    def test_step(self, batch, batch_idx, dataloader_idx=0):
         samples, targets = batch
         samples = samples.to(self.device)
         targets = self._move_targets(targets)

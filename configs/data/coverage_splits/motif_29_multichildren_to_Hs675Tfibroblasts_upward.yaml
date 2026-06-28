@@ -8,20 +8,4 @@ data:
   test_datasets:
   - 20240509_Hs675Tfibroblasts_10x_caged_4_class
   split_motif: Upward Multiple
-  coverage: !!python/object/apply:numpy._core.multiarray.scalar
-  - !!python/object/apply:numpy.dtype
-    args:
-    - f8
-    - false
-    - true
-    state: !!python/tuple
-    - 3
-    - <
-    - null
-    - null
-    - null
-    - -1
-    - -1
-    - 0
-  - !!binary |
-    Ne84RUdy5z8=
+  coverage: 0.7327

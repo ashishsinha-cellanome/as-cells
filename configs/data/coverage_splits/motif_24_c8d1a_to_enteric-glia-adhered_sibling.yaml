@@ -7,20 +7,4 @@ data:
   test_datasets:
   - 20240924_enteric-glia-adhered_10x_uncaged_4_class
   split_motif: Sibling
-  coverage: !!python/object/apply:numpy._core.multiarray.scalar
-  - !!python/object/apply:numpy.dtype
-    args:
-    - f8
-    - false
-    - true
-    state: !!python/tuple
-    - 3
-    - <
-    - null
-    - null
-    - null
-    - -1
-    - -1
-    - 0
-  - !!binary |
-    9GxWfa62yj8=
+  coverage: 0.2087

@@ -7,20 +7,4 @@ data:
   test_datasets:
   - 240213_imr90_multichannel_overlay_4_class
   split_motif: Downward
-  coverage: !!python/object/apply:numpy._core.multiarray.scalar
-  - !!python/object/apply:numpy.dtype
-    args:
-    - f8
-    - false
-    - true
-    state: !!python/tuple
-    - 3
-    - <
-    - null
-    - null
-    - null
-    - -1
-    - -1
-    - 0
-  - !!binary |
-    mN2Th4Va5T8=
+  coverage: 0.6673
