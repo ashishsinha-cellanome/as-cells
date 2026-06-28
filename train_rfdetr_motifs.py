@@ -8,6 +8,80 @@ import pytorch_lightning as pl
 import hydra
 from omegaconf import DictConfig, OmegaConf
 from pathlib import Path
+import numpy as np
+
+# Patch convert_coco_poly_to_mask to fix Pycocotools + Numpy 2.0 list bug
+import rfdetr.datasets.coco as rfdetr_coco
+
+_orig_convert_coco_call = rfdetr_coco.ConvertCoco.__call__
+def patched_convert_coco_call(self, image, target):
+    w, h = image.size
+    image_id = target["image_id"]
+    anno = target["annotations"]
+    anno = [obj for obj in anno if "iscrowd" not in obj or obj["iscrowd"] == 0]
+    
+    import pycocotools.mask as mask_util
+    for obj in anno:
+        seg = obj.get("segmentation")
+        if isinstance(seg, dict) and list(seg.get('size', [])) != [h, w]:
+            bbox = obj.get("bbox", [0, 0, 0, 0])
+            x, y, bw, bh = [int(v) for v in bbox]
+            
+            if isinstance(seg['counts'], str):
+                seg['counts'] = seg['counts'].encode('utf-8')
+                
+            try:
+                cropped_mask = mask_util.decode(seg)
+                full_mask = np.zeros((h, w), dtype=np.uint8)
+                
+                x_start = max(0, x)
+                y_start = max(0, y)
+                x_end = min(x + bw, w)
+                y_end = min(y + bh, h)
+                
+                cx_start = 0 if x >= 0 else -x
+                cy_start = 0 if y >= 0 else -y
+                cx_end = cx_start + (x_end - x_start)
+                cy_end = cy_start + (y_end - y_start)
+                
+                full_mask[y_start:y_end, x_start:x_end] = cropped_mask[cy_start:cy_end, cx_start:cx_end]
+                full_mask_f = np.asfortranarray(full_mask)
+                full_rle = mask_util.encode(full_mask_f)
+                full_rle['counts'] = full_rle['counts'].decode('utf-8')
+                
+                obj['segmentation'] = full_rle
+            except Exception as e:
+                print(f"Error lazy decoding mask: {e}")
+                
+    return _orig_convert_coco_call(self, image, target)
+
+rfdetr_coco.ConvertCoco.__call__ = patched_convert_coco_call
+
+def patched_convert_coco_poly_to_mask(segmentations, height, width):
+    import pycocotools.mask as coco_mask
+    masks = []
+    for polygons in segmentations:
+        if polygons is None or len(polygons) == 0:
+            masks.append(torch.zeros((height, width), dtype=torch.uint8))
+            continue
+        try:
+            if isinstance(polygons, dict):
+                # Ensure string counts are bytes
+                if isinstance(polygons['counts'], str):
+                    polygons['counts'] = polygons['counts'].encode('utf-8')
+                mask = coco_mask.decode(polygons)
+            else:
+                rles = coco_mask.frPyObjects(polygons, height, width)
+                mask = coco_mask.decode(rles)
+            if mask.ndim < 3: mask = mask[..., None]
+            mask = torch.as_tensor(mask, dtype=torch.uint8).any(dim=2)
+            masks.append(mask)
+        except Exception:
+            masks.append(torch.zeros((height, width), dtype=torch.uint8))
+    if len(masks) == 0: return torch.zeros((0, height, width), dtype=torch.uint8)
+    return torch.stack(masks, dim=0)
+
+rfdetr_coco.convert_coco_poly_to_mask = patched_convert_coco_poly_to_mask
 
 # Setup distributed env if needed
 from utils.distributed_utils import setup_cluster_env, get_rank, rank_zero_print
@@ -15,6 +89,7 @@ setup_cluster_env()
 
 # RF-DETR specific
 from rfdetr import RFDETRBase, RFDETRLarge, RFDETRMedium, RFDETRNano, RFDETRSmall
+from rfdetr import RFDETRSegLarge, RFDETRSegMedium, RFDETRSegNano, RFDETRSegSmall
 from rfdetr.models.lwdetr import build_criterion_and_postprocessors
 
 # Custom Modules
@@ -27,13 +102,19 @@ from pytorch_lightning.loggers import WandbLogger
 torch.set_float32_matmul_precision("medium")
 OmegaConf.register_new_resolver("oc.eval", eval, replace=True)
 
-def _get_model_class(size_name: str):
+def _get_model_class(size_name: str, is_seg: bool = True):
     size_name = str(size_name).lower()
-    if size_name == "base": return RFDETRBase
-    if size_name == "small": return RFDETRSmall
-    if size_name == "medium": return RFDETRMedium
-    if size_name == "large": return RFDETRLarge
-    if size_name == "nano": return RFDETRNano
+    if is_seg:
+        if size_name == "small": return RFDETRSegSmall
+        if size_name == "medium": return RFDETRSegMedium
+        if size_name == "large": return RFDETRSegLarge
+        if size_name == "nano": return RFDETRSegNano
+    else:
+        if size_name == "base": return RFDETRBase
+        if size_name == "small": return RFDETRSmall
+        if size_name == "medium": return RFDETRMedium
+        if size_name == "large": return RFDETRLarge
+        if size_name == "nano": return RFDETRNano
     raise ValueError(f"Unsupported RF-DETR size: {size_name}")
 
 @hydra.main(config_path="configs", config_name="config.yaml", version_base=None)
@@ -49,24 +130,20 @@ def main(config: DictConfig):
 
     pl.seed_everything(config.seed, workers=True)
 
-    # 1. Initialize Dataset Module
-    base_path = config.data.path
-    data_module = MotifDataModule(base_path=base_path, config=config)
-    data_module.setup("fit")
-    data_module.setup("test")
-
     label_map = {int(k): v for k, v in config.model.label_map.items()}
     class_names = [label_map[idx] for idx in sorted(label_map.keys())]
     num_classes = len(label_map)
 
-    # 2. Initialize Model
-    rf_model_cls = _get_model_class(config.model.rfdetr.size)
+    # 1. Initialize Model FIRST to get base_args
+    is_seg = "seg" in config.model.name.lower()
+    rf_model_cls = _get_model_class(config.model.rfdetr.size, is_seg=is_seg)
     kwargs = {
         "pretrain_weights": config.model.rfdetr.get("pretrain_weights", "rf-detr-large-2026.pth"),
         "resolution": int(config.model.input_size),
         "num_classes": num_classes,
         "device": "cuda" if torch.cuda.is_available() else "cpu",
-        "group_detr": getattr(config.model.rfdetr, "group_detr", 1)
+        "group_detr": getattr(config.model.rfdetr, "group_detr", 1),
+        "compile": False
     }
     
     rank_zero_print(f"[Startup] Building model with args: {kwargs}")
@@ -77,10 +154,19 @@ def main(config: DictConfig):
     rf_wrapper.model.reinitialize_detection_head(num_classes)
 
     inner_model = rf_wrapper.model.model
+    base_args = rf_wrapper.model.args
+
+    # 2. Initialize Dataset Module
+    base_path = config.data.path
+    if "ashish.sinha/cellanome/TRAINING_DATA" in base_path:
+        base_path = "/mnt/direct-attached/PHASE2"
+    data_module = MotifDataModule(base_path=base_path, config=config, base_args=base_args)
+    data_module.setup("fit")
+    data_module.setup("test")
 
     # 3. Finetuning Strategies
-    if finetune_mode == "decoder":
-        rank_zero_print("[Startup] Freezing backbone & encoder. Finetuning decoder & head only.")
+    if finetune_mode in ["decoder", "queries_decoder_head"]:
+        rank_zero_print(f"[Startup] Freezing backbone & encoder (mode={finetune_mode}). Finetuning decoder & head only.")
         for name, param in inner_model.named_parameters():
             param.requires_grad = False
             allow_prefixes = [
@@ -123,9 +209,13 @@ def main(config: DictConfig):
         trainer_kwargs["limit_val_batches"] = 10
         trainer_kwargs["limit_test_batches"] = 10
         config.trainer.max_epochs = 1
+    else:
+        if "limit_train_batches" in config.trainer: trainer_kwargs["limit_train_batches"] = config.trainer.limit_train_batches
+        if "limit_val_batches" in config.trainer: trainer_kwargs["limit_val_batches"] = config.trainer.limit_val_batches
+        if "limit_test_batches" in config.trainer: trainer_kwargs["limit_test_batches"] = config.trainer.limit_test_batches
 
     # 5. Lightning Module
-    criterion, postprocess = build_criterion_and_postprocessors(data_module.args)
+    criterion, postprocess = build_criterion_and_postprocessors(data_module._args)
     # model_to_coco is 1:1 for simplicity
     model_to_coco = {i: i for i in range(num_classes)}
     
@@ -146,7 +236,10 @@ def main(config: DictConfig):
     if config.logging.wandb.enabled and not getattr(config, "debug", False):
         tags = list(config.logging.wandb.tags)
         tags.extend([f"motif:{motif_name}", f"mode:{finetune_mode}"])
-        cfg_for_log = OmegaConf.to_container(config, resolve=True)
+        try:
+            cfg_for_log = OmegaConf.to_container(config, resolve=True)
+        except Exception:
+            cfg_for_log = OmegaConf.to_container(config, resolve=False)
         
         logger = WandbLogger(
             project="cell-detection-motifs",
@@ -156,17 +249,69 @@ def main(config: DictConfig):
         )
 
     # 7. Callbacks
+    # Determine the primary validation metric for checkpointing and early stopping
+    primary_train_ds = data_module.train_dataset_names[0]
+    
+    # Check if EMA is enabled
+    use_ema = getattr(config.model, "ema", None) and getattr(config.model.ema, "enabled", False)
+    ema_suffix = "_ema" if use_ema else ""
+    
+    # We use the detailed segm map (mAP@0.5-0.95) of the first training dataset's validation split
+    monitor_metric_segm = f"val/train_ds/{primary_train_ds}/detailed_segm_map{ema_suffix}"
+    monitor_metric_bbox = f"val/train_ds/{primary_train_ds}/detailed_bbox_map{ema_suffix}"
+    
+    ckpt_dir = os.path.join(config.checkpointing.save_dir, config.run_name, "ckpts") if hasattr(config, "checkpointing") else "output/ckpts"
+    
+    from pytorch_lightning.callbacks import EarlyStopping
     callbacks = [
-        ModelCheckpoint(monitor="val_map_50", mode="max", save_top_k=1, auto_insert_metric_name=False),
+        ModelCheckpoint(
+            dirpath=ckpt_dir,
+            filename="motif-epoch{epoch:02d}-" + monitor_metric_segm.replace("/", "_") + "={" + monitor_metric_segm + ":.4f}",
+            monitor=monitor_metric_segm, 
+            mode="max", 
+            save_top_k=1, 
+            auto_insert_metric_name=False
+        ),
+        ModelCheckpoint(
+            dirpath=ckpt_dir,
+            filename="motif-epoch{epoch:02d}-" + monitor_metric_bbox.replace("/", "_") + "={" + monitor_metric_bbox + ":.4f}",
+            monitor=monitor_metric_bbox, 
+            mode="max", 
+            save_top_k=1, 
+            auto_insert_metric_name=False
+        ),
+        EarlyStopping(
+            monitor=monitor_metric_segm,
+            patience=20,
+            mode="max",
+            verbose=True
+        ),
         LearningRateMonitor(logging_interval="step"),
         ModelSummary(max_depth=3)
     ]
     
-    # Custom COCO Eval for multiple dataloaders
-    test_datasets = data_module.test_dataset_names
-    val_dataset_fns = [lambda ds=ds: ds.coco for ds in data_module.val_datasets_objs]
+    if use_ema:
+        from utils.ema import EMACallback
+        warmup_steps = config.model.ema.get("warmup_steps", 0)
+        tau = config.model.ema.get("tau", 2000)
+        decay = config.model.ema.get("decay", 0.993)
+        rank_zero_print(f"💡 EMA enabled: Adding EMACallback with decay={decay}, tau={tau}, warmup_steps={warmup_steps}")
+        callbacks.append(EMACallback(decay=decay, tau=tau, warmup_steps=warmup_steps))
     
-    callbacks.append(MotifCocoEvalCallback(dataloader_names=test_datasets, get_coco_gt_fns=val_dataset_fns))
+    # Custom COCO Eval for multiple dataloaders
+    val_dataloader_names = [f"train_ds/{ds}" for ds in data_module.train_dataset_names] + \
+                           [f"test_ds/{ds}" for ds in data_module.test_dataset_names]
+    val_dataset_fns = [lambda ds=ds: ds.coco for ds in (data_module.val_train_datasets_objs + data_module.val_test_datasets_objs)]
+    
+    test_dataloader_names = [f"{ds}" for ds in data_module.test_dataset_names]
+    test_dataset_fns = [lambda ds=ds: ds.coco for ds in data_module.test_datasets_objs]
+    
+    callbacks.append(MotifCocoEvalCallback(
+        val_dataloader_names=val_dataloader_names, 
+        test_dataloader_names=test_dataloader_names,
+        val_get_coco_gt_fns=val_dataset_fns,
+        test_get_coco_gt_fns=test_dataset_fns
+    ))
 
     # 8. Trainer
     trainer = pl.Trainer(
