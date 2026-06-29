@@ -101,8 +101,10 @@ class MotifDataModule(pl.LightningDataModule):
             # Merge all valid_annotations.json into one combined file
             import json
             import os
+            import hashlib
             
-            merged_json_path = self.base_path / "merged_val_annotations.json"
+            hash_str = hashlib.md5(str(self.train_dataset_names).encode()).hexdigest()[:8]
+            merged_json_path = self.base_path / f"merged_val_annotations_{hash_str}.json"
             merged_data = {"images": [], "annotations": [], "categories": []}
             
             # Use predefined categories based on config
@@ -137,10 +139,21 @@ class MotifDataModule(pl.LightningDataModule):
             from utils.distributed_utils import get_rank
             import time
             if get_rank() == 0:
-                tmp_json_path = str(merged_json_path) + ".tmp"
-                with open(tmp_json_path, 'w') as f:
-                    json.dump(merged_data, f)
-                os.rename(tmp_json_path, str(merged_json_path))
+                tmp_json_path = str(merged_json_path) + f".tmp_{os.getpid()}"
+                if not os.path.exists(merged_json_path):
+                    with open(tmp_json_path, 'w') as f:
+                        json.dump(merged_data, f)
+                    try:
+                        os.rename(tmp_json_path, str(merged_json_path))
+                    except FileExistsError:
+                        pass
+                    except OSError:
+                        pass
+                    if os.path.exists(tmp_json_path):
+                        try:
+                            os.remove(tmp_json_path)
+                        except OSError:
+                            pass
             else:
                 # Wait for rank 0 to finish writing atomically
                 while not os.path.exists(merged_json_path):
