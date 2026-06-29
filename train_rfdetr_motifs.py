@@ -123,29 +123,6 @@ def _get_model_class(size_name: str, is_seg: bool = True):
         if size_name == "nano": return RFDETRNano
     raise ValueError(f"Unsupported RF-DETR size: {size_name}")
 
-def _build_model_to_coco_map(coco_gt, label_map):
-    name_to_model_id = {str(name): int(idx) for idx, name in label_map.items()}
-    model_to_coco = {}
-
-    if coco_gt is None or not getattr(coco_gt, "cats", None):
-        for model_id in sorted(name_to_model_id.values()):
-            model_to_coco[model_id] = model_id
-        return model_to_coco
-
-    for coco_cat_id, cat_info in coco_gt.cats.items():
-        cat_name = cat_info.get("name")
-        # In PHASE2 datasets, "soma" might be named "soma" but sometimes cell-adhered is confused. Let's map by name.
-        if cat_name in name_to_model_id:
-            model_id = name_to_model_id[cat_name]
-            if model_id not in model_to_coco:
-                model_to_coco[model_id] = int(coco_cat_id)
-
-    for model_id in sorted(name_to_model_id.values()):
-        if model_id not in model_to_coco:
-            model_to_coco[model_id] = model_id
-
-    return model_to_coco
-
 @hydra.main(config_path="configs", config_name="config.yaml", version_base=None)
 def main(config: DictConfig):
     OmegaConf.set_struct(config, False)

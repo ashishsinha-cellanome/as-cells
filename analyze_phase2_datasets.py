@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from pathlib import Path
 
-KNOWN_CLASSES = {0: "cell", 1: "bead", 2: "soma", 3: "cell-adhered"}
+KNOWN_CLASSES = {0: "cell", 1: "bead", 2: "cell-adhered", 3: "soma"}
 
 def analyze_datasets(phase2_dir, output_dir):
     phase2_dir = Path(phase2_dir)

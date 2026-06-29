@@ -567,7 +567,7 @@ def main(cfg: DictConfig):
                 
                 print(f"   {'all':<13} {total_images:<7} {total_labels:<10} {fmt(p_all):<7} {fmt(r_all):<8} {fmt(ap50_all):<10} {fmt(ap_all):<10}")
                 
-                KNOWN_CLASSES = {0: "cell", 1: "bead", 3: "soma", 2: "cell-adhered"}
+                KNOWN_CLASSES = {0: "cell", 1: "bead", 2: "cell-adhered", 3: "soma"}
                 all_cat_ids = sorted(list(set(list(KNOWN_CLASSES.keys()) + coco_gt.getCatIds())))
                 
                 for cat_id in all_cat_ids:

@@ -74,8 +74,8 @@ def process_dataset(dataset_path: Path):
         KNOWN_CLASSES = {
             0: "cell",
             1: "bead",
-            2: "soma",
-            3: "cell-adhered",
+            2: "cell-adhered",
+            3: "soma",
         }
         categories = [{"id": cat, "name": KNOWN_CLASSES.get(cat, f"class_{cat}"), "supercategory": "biology"} for cat in seen_classes]
         
