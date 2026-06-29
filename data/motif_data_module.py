@@ -134,8 +134,17 @@ class MotifDataModule(pl.LightningDataModule):
                     ann['image_id'] += id_offset
                     merged_data['annotations'].append(ann)
                         
-            with open(merged_json_path, 'w') as f:
-                json.dump(merged_data, f)
+            from utils.distributed_utils import get_rank
+            import time
+            if get_rank() == 0:
+                tmp_json_path = str(merged_json_path) + ".tmp"
+                with open(tmp_json_path, 'w') as f:
+                    json.dump(merged_data, f)
+                os.rename(tmp_json_path, str(merged_json_path))
+            else:
+                # Wait for rank 0 to finish writing atomically
+                while not os.path.exists(merged_json_path):
+                    time.sleep(0.5)
                 
             # Create a single validation dataset obj
             from rfdetr.datasets.coco import CocoDetection

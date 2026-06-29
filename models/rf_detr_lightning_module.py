@@ -362,11 +362,7 @@ class RFDETRLightningModule(pl.LightningModule):
                     {"predictions": sliced_ema_predictions, "image_ids": ema_image_ids}
                 )
 
-        return {
-            "loss": loss,
-            "results": predictions,
-            "targets": targets,
-        }
+        return {"predictions": predictions, "image_ids": image_ids}
 
     def on_validation_epoch_end(self):
         viz_predictions = None
@@ -616,11 +612,7 @@ class RFDETRLightningModule(pl.LightningModule):
                     {"predictions": sliced_ema_predictions, "image_ids": ema_image_ids}
                 )
 
-        return {
-            "loss": loss,
-            "results": predictions,
-            "targets": targets,
-        }
+        return {"predictions": predictions, "image_ids": image_ids}
 
     def on_test_epoch_end(self):
         viz_predictions = None
