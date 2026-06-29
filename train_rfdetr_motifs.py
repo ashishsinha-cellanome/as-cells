@@ -213,7 +213,7 @@ def main(config: DictConfig):
             lora_config = LoraConfig(
                 r=16,
                 lora_alpha=32,
-                target_modules=["out_proj", "value_proj", "output_proj"], # Supported linear layers in attention
+                target_modules=["out_proj", "value_proj", "output_proj", "q_proj", "k_proj", "query", "key"], # Added q/k targets
                 lora_dropout=0.05,
                 bias="none"
             )
@@ -285,9 +285,9 @@ def main(config: DictConfig):
     use_ema = getattr(config.model, "ema", None) and getattr(config.model.ema, "enabled", False)
     ema_suffix = "_ema" if use_ema else ""
     
-    # We use the detailed segm map (mAP@0.5-0.95) of the first training dataset's validation split
-    monitor_metric_segm = f"val/train_ds/{primary_train_ds}/detailed_segm_map{ema_suffix}"
-    monitor_metric_bbox = f"val/train_ds/{primary_train_ds}/detailed_bbox_map{ema_suffix}"
+    # We use the detailed segm map (mAP@0.5-0.95) of the merged validation dataset
+    monitor_metric_segm = f"val/train_ds/merged/detailed_segm_map{ema_suffix}"
+    monitor_metric_bbox = f"val/train_ds/merged/detailed_bbox_map{ema_suffix}"
     
     ckpt_dir = os.path.join(config.checkpointing.save_dir, config.run_name, "ckpts") if hasattr(config, "checkpointing") else "output/ckpts"
     
@@ -328,7 +328,7 @@ def main(config: DictConfig):
         callbacks.append(EMACallback(decay=decay, tau=tau, warmup_steps=warmup_steps))
     
     # Custom COCO Eval for multiple dataloaders
-    val_dataloader_names = [f"train_ds/{ds}" for ds in data_module.train_dataset_names] + \
+    val_dataloader_names = ["train_ds/merged"] + \
                            [f"test_ds/{ds}" for ds in data_module.test_dataset_names]
     val_dataset_fns = [lambda ds=ds: ds.coco for ds in (data_module.val_train_datasets_objs + data_module.val_test_datasets_objs)]
     

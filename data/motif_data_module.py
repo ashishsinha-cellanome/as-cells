@@ -89,18 +89,6 @@ class MotifDataModule(pl.LightningDataModule):
             include_masks=True,
             remap_category_ids=False
         )
-        
-        # Fix category names dynamically
-        is_neuron = 'neuron' in ds_name.lower()
-        for cat in dataset.coco.dataset.get('categories', []):
-            if not is_neuron and cat['name'] == 'soma':
-                cat['name'] = 'cell-adhered'
-            if is_neuron and cat['name'] == 'cell-adhered':
-                cat['name'] = 'soma'
-            if cat['name'] == 'Cell': cat['name'] = 'cell'
-            if cat['name'] == 'cytoplasm': cat['name'] = 'cell-adhered'
-            if cat['name'] == 'Bead' or cat['name'] == 'beads': cat['name'] = 'bead'
-        dataset.coco.cats = {cat['id']: cat for cat in dataset.coco.dataset.get('categories', [])}
             
         return dataset
 
@@ -110,8 +98,55 @@ class MotifDataModule(pl.LightningDataModule):
         if stage in ("fit", None):
             self.train_datasets_objs = [self._make_dataset(ds, self.train_name) for ds in self.train_dataset_names]
             
-            # Validation on training datasets (using 'valid' split generated offline)
-            self.val_train_datasets_objs = [self._make_dataset(ds, self.val_name) for ds in self.train_dataset_names]
+            # Merge all valid_annotations.json into one combined file
+            import json
+            import os
+            
+            merged_json_path = self.base_path / "merged_val_annotations.json"
+            merged_data = {"images": [], "annotations": [], "categories": []}
+            
+            # Use predefined categories based on config
+            if hasattr(self.config.model, 'label_map'):
+                for k, v in self.config.model.label_map.items():
+                    merged_data["categories"].append({"id": int(k), "name": v, "supercategory": "biology"})
+                
+            for ds_idx, ds_name in enumerate(self.train_dataset_names):
+                val_json = self.base_path / ds_name / f"{self.val_name}_annotations.json"
+                if not val_json.exists():
+                    continue
+                    
+                with open(val_json, 'r') as f:
+                    ds_data = json.load(f)
+                        
+                id_offset = ds_idx * 1000000
+                
+                img_split = "test" if "test" in self.val_name else "train"
+                
+                for img in ds_data.get('images', []):
+                    img = img.copy()
+                    img['id'] += id_offset
+                    img['file_name'] = f"{ds_name}/images/{img_split}/{os.path.basename(img['file_name'])}"
+                    merged_data['images'].append(img)
+                    
+                for ann in ds_data.get('annotations', []):
+                    ann = ann.copy()
+                    ann['id'] += id_offset
+                    ann['image_id'] += id_offset
+                    merged_data['annotations'].append(ann)
+                        
+            with open(merged_json_path, 'w') as f:
+                json.dump(merged_data, f)
+                
+            # Create a single validation dataset obj
+            from rfdetr.datasets.coco import CocoDetection
+            aug_config = None
+            self.val_train_datasets_objs = [CocoDetection(
+                img_folder=str(self.base_path),
+                ann_file=str(merged_json_path),
+                transforms=self._build_transforms("val", aug_config=aug_config),
+                include_masks=True,
+                remap_category_ids=False
+            )]
             
             # Validation on test datasets for zero-shot monitoring
             self.val_test_datasets_objs = [self._make_dataset(ds, self.val_name) for ds in self.test_dataset_names]
@@ -140,7 +175,7 @@ class MotifDataModule(pl.LightningDataModule):
         eval_batch_size = int(getattr(self.config.data, "eval_batch_size", 1))
         
         dataloaders = []
-        all_val_datasets = self.val_train_datasets_objs + self.val_test_datasets_objs
+        all_val_datasets = self.val_train_datasets_objs
         for ds in all_val_datasets:
             dl = DataLoader(
                 ds,
