@@ -23,7 +23,8 @@
 
 ## Data & Configs
 
-- **Data paths:** `/project/aip-robsc/asinha/cellanome/DATA/TRAINING_DATA`
+- **Data paths:** `/mnt/direct-attached/PHASE2` (Currently used for motif experiments, generalization, embedding computation, coverage analysis, and zero-shot robustness instead of `TRAINING_DATA`).
+- **Old Data paths:** `/project/aip-robsc/asinha/cellanome/DATA/TRAINING_DATA` (Do not use for motifs)
 - **Splits:** COCO format. `vulcan_no300_eval` excludes images with >300 bboxes from val/test.
 - **Configs (Hydra):** Under `configs/`. Uses `@package _global_` and `${oc.eval:...}`.
 
