@@ -8,6 +8,8 @@ output/
 *.log
 *.err
 PHASE2_*/
+coverage_*/
+*arboresnce*/
 tree_*/
 topology_*/
 custom_*/
