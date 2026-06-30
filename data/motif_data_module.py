@@ -171,7 +171,7 @@ class MotifDataModule(pl.LightningDataModule):
             )]
             
             # Validation on test datasets for zero-shot monitoring
-            self.val_test_datasets_objs = [self._make_dataset(ds, self.val_name) for ds in self.test_dataset_names]
+            # self.val_test_datasets_objs = [self._make_dataset(ds, self.val_name) for ds in self.test_dataset_names]
             
             self.concat_train = ConcatDataset(self.train_datasets_objs)
             

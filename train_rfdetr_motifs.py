@@ -10,85 +10,6 @@ from omegaconf import DictConfig, OmegaConf
 from pathlib import Path
 import numpy as np
 
-# Patch convert_coco_poly_to_mask to fix Pycocotools + Numpy 2.0 list bug AND lazily uncrop test RLEs
-import rfdetr.datasets.coco as rfdetr_coco
-
-_orig_convert_coco_call = rfdetr_coco.ConvertCoco.__call__
-
-def patched_convert_coco_call(self, image, target):
-    w, h = image.size
-    anno = target["annotations"]
-    anno = [obj for obj in anno if "iscrowd" not in obj or obj["iscrowd"] == 0]
-    
-    import pycocotools.mask as mask_util
-    for obj in anno:
-        seg = obj.get("segmentation")
-        if isinstance(seg, dict) and list(seg.get('size', [])) != [h, w]:
-            bbox = obj.get("bbox", [0, 0, 0, 0])
-            x, y, bw, bh = [int(v) for v in bbox]
-            
-            if isinstance(seg['counts'], str):
-                seg['counts'] = seg['counts'].encode('utf-8')
-                
-            try:
-                cropped_mask = mask_util.decode(seg)
-                full_mask = np.zeros((h, w), dtype=np.uint8)
-                
-                x_start = max(0, x)
-                y_start = max(0, y)
-                x_end = min(x + bw, w)
-                y_end = min(y + bh, h)
-                
-                if x_start < x_end and y_start < y_end:
-                    cx_start = 0 if x >= 0 else -x
-                    cy_start = 0 if y >= 0 else -y
-                    
-                    true_cy_end = min(cy_start + (y_end - y_start), cropped_mask.shape[0])
-                    true_cx_end = min(cx_start + (x_end - x_start), cropped_mask.shape[1])
-                    
-                    y_end = y_start + (true_cy_end - cy_start)
-                    x_end = x_start + (true_cx_end - cx_start)
-                    
-                    full_mask[y_start:y_end, x_start:x_end] = cropped_mask[cy_start:true_cy_end, cx_start:true_cx_end]
-                    
-                full_mask_f = np.asfortranarray(full_mask)
-                full_rle = mask_util.encode(full_mask_f)
-                full_rle['counts'] = full_rle['counts'].decode('utf-8')
-                
-                obj['segmentation'] = full_rle
-            except Exception as e:
-                print(f"Error lazy decoding mask: {e}")
-                
-    return _orig_convert_coco_call(self, image, target)
-
-rfdetr_coco.ConvertCoco.__call__ = patched_convert_coco_call
-
-def patched_convert_coco_poly_to_mask(segmentations, height, width):
-    import pycocotools.mask as coco_mask
-    masks = []
-    for polygons in segmentations:
-        if polygons is None or len(polygons) == 0:
-            masks.append(torch.zeros((height, width), dtype=torch.uint8))
-            continue
-        try:
-            if isinstance(polygons, dict):
-                # Ensure string counts are bytes
-                if isinstance(polygons['counts'], str):
-                    polygons['counts'] = polygons['counts'].encode('utf-8')
-                mask = coco_mask.decode(polygons)
-            else:
-                rles = coco_mask.frPyObjects(polygons, height, width)
-                mask = coco_mask.decode(rles)
-            if mask.ndim < 3: mask = mask[..., None]
-            mask = torch.as_tensor(mask, dtype=torch.uint8).any(dim=2)
-            masks.append(mask)
-        except Exception:
-            masks.append(torch.zeros((height, width), dtype=torch.uint8))
-    if len(masks) == 0: return torch.zeros((0, height, width), dtype=torch.uint8)
-    return torch.stack(masks, dim=0)
-
-rfdetr_coco.convert_coco_poly_to_mask = patched_convert_coco_poly_to_mask
-
 # Setup distributed env if needed
 from utils.distributed_utils import setup_cluster_env, get_rank, rank_zero_print
 setup_cluster_env()
@@ -178,7 +99,7 @@ def main(config: DictConfig):
             allow_prefixes = [
                 "refpoint_embed.", "query_feat.", "class_embed.", "bbox_embed.",
                 "transformer.enc_out_class_embed.", "transformer.enc_out_bbox_embed.",
-                "transformer.decoder."
+                "transformer.decoder.", "segmentation_head."
             ]
             if any(name.startswith(p) for p in allow_prefixes):
                 param.requires_grad = True
@@ -305,9 +226,8 @@ def main(config: DictConfig):
         callbacks.append(EMACallback(decay=decay, tau=tau, warmup_steps=warmup_steps))
     
     # Custom COCO Eval for multiple dataloaders
-    val_dataloader_names = ["train_ds/merged"] + \
-                           [f"test_ds/{ds}" for ds in data_module.test_dataset_names]
-    val_dataset_fns = [lambda ds=ds: ds.coco for ds in (data_module.val_train_datasets_objs + data_module.val_test_datasets_objs)]
+    val_dataloader_names = ["train_ds/merged"]
+    val_dataset_fns = [lambda ds=ds: ds.coco for ds in data_module.val_train_datasets_objs]
     
     test_dataloader_names = [f"{ds}" for ds in data_module.test_dataset_names]
     test_dataset_fns = [lambda ds=ds: ds.coco for ds in data_module.test_datasets_objs]
@@ -321,10 +241,15 @@ def main(config: DictConfig):
     ))
 
     # 8. Trainer
+    try:
+        num_devices = len(config.trainer.devices)
+    except TypeError:
+        num_devices = int(config.trainer.devices)
+        
     trainer = pl.Trainer(
         accelerator=config.trainer.accelerator,
         devices=config.trainer.devices,
-        strategy="auto" if config.trainer.devices == 1 else "ddp_find_unused_parameters_true",
+        strategy="auto" if num_devices == 1 else "ddp_find_unused_parameters_true",
         max_epochs=config.trainer.max_epochs,
         logger=logger,
         callbacks=callbacks,

@@ -24,6 +24,8 @@ np.array = _patched_array
 
 PHASE2_DIR = "/mnt/direct-attached/PHASE2"
 
+suspension_keywords = ["suspension", "jurkat", "k562", "nk92", "pbmc", "mousepbmc", "tall104", "raji", "jerat", "tal104"]
+
 def uncrop_rle(ann, img_width, img_height):
     seg = ann.get('segmentation')
     if isinstance(seg, dict) and list(seg.get('size', [])) != [img_height, img_width]:
@@ -42,12 +44,18 @@ def uncrop_rle(ann, img_width, img_height):
             x_end = min(x + bw, img_width)
             y_end = min(y + bh, img_height)
             
-            cx_start = 0 if x >= 0 else -x
-            cy_start = 0 if y >= 0 else -y
-            cx_end = cx_start + (x_end - x_start)
-            cy_end = cy_start + (y_end - y_start)
-            
-            full_mask[y_start:y_end, x_start:x_end] = cropped_mask[cy_start:cy_end, cx_start:cx_end]
+            if x_start < x_end and y_start < y_end:
+                cx_start = 0 if x >= 0 else -x
+                cy_start = 0 if y >= 0 else -y
+                
+                true_cy_end = min(cy_start + (y_end - y_start), cropped_mask.shape[0])
+                true_cx_end = min(cx_start + (x_end - x_start), cropped_mask.shape[1])
+                
+                y_end = y_start + (true_cy_end - cy_start)
+                x_end = x_start + (true_cx_end - cx_start)
+                
+                full_mask[y_start:y_end, x_start:x_end] = cropped_mask[cy_start:true_cy_end, cx_start:true_cx_end]
+                
             full_mask_f = np.asfortranarray(full_mask)
             full_rle = mask_util.encode(full_mask_f)
             full_rle['counts'] = full_rle['counts'].decode('utf-8')
@@ -57,29 +65,58 @@ def uncrop_rle(ann, img_width, img_height):
             print(f"Error uncropping mask for annotation {ann['id']}: {e}")
     return ann
 
+def process_file_in_place(filepath, desc=""):
+    if not os.path.exists(filepath):
+        return 0
+    with open(filepath, 'r') as f:
+        data = json.load(f)
+    
+    img_id_to_dim = {img['id']: (img['width'], img['height']) for img in data.get('images', [])}
+    uncropped_count = 0
+    
+    for ann in tqdm(data.get('annotations', []), desc=desc):
+        img_id = ann['image_id']
+        if img_id not in img_id_to_dim: continue
+        w, h = img_id_to_dim[img_id]
+        
+        seg = ann.get('segmentation')
+        if isinstance(seg, dict) and list(seg.get('size', [])) != [h, w]:
+            uncrop_rle(ann, w, h)
+            uncropped_count += 1
+            
+    if uncropped_count > 0:
+        with open(filepath, 'w') as f:
+            json.dump(data, f)
+            
+    return uncropped_count
+
 def process_dataset(ds_name):
+    if any(kw in ds_name.lower() for kw in suspension_keywords):
+        return
+        
     ds_path = os.path.join(PHASE2_DIR, ds_name)
     train_ann_path = os.path.join(ds_path, "train_annotations.json")
-    
-    if not os.path.exists(train_ann_path):
-        return
-        
     out_train_path = os.path.join(ds_path, "train_new_annotations.json")
     out_val_path = os.path.join(ds_path, "valid_annotations.json")
+    test_ann_path = os.path.join(ds_path, "test_annotations.json")
     
-    if os.path.exists(out_train_path) and os.path.exists(out_val_path):
-        print(f"[{ds_name}] Splits already exist. Skipping.")
+    print(f"\n[{ds_name}] Processing...")
+    
+    # 1. Process test_annotations.json in place
+    test_fixed = process_file_in_place(test_ann_path, desc=f"{ds_name} Test")
+    print(f"  -> Test fixed {test_fixed} RLEs")
+    
+    # 2. Re-create train_new and valid if we need to or to ensure they are padded
+    if not os.path.exists(train_ann_path):
+        print(f"  -> No train_annotations.json found. Skipping train/valid generation.")
         return
         
-    print(f"[{ds_name}] Processing...")
-    
     with open(train_ann_path, 'r') as f:
         data = json.load(f)
         
-    # Group by base name
     base_to_imgs = defaultdict(list)
     img_id_to_dim = {}
-    for img in data['images']:
+    for img in data.get('images', []):
         img_id_to_dim[img['id']] = (img['width'], img['height'])
         fname = img['file_name']
         if "_crp_" in fname:
@@ -111,14 +148,14 @@ def process_dataset(ds_name):
     val_anns = []
     
     uncropped_count = 0
-    for ann in tqdm(data['annotations'], desc=f"{ds_name} Annotations"):
+    for ann in tqdm(data.get('annotations', []), desc=f"{ds_name} Train"):
         img_id = ann['image_id']
+        if img_id not in img_id_to_dim: continue
         w, h = img_id_to_dim[img_id]
         
-        # Check if needs uncropping
         seg = ann.get('segmentation')
         if isinstance(seg, dict) and list(seg.get('size', [])) != [h, w]:
-            ann = uncrop_rle(ann, w, h)
+            uncrop_rle(ann, w, h)
             uncropped_count += 1
             
         if img_id in train_img_ids:
@@ -136,7 +173,7 @@ def process_dataset(ds_name):
     with open(out_val_path, 'w') as f:
         json.dump(val_data, f)
         
-    print(f"[{ds_name}] Done. Uncropped {uncropped_count} RLEs. Train: {len(train_imgs)} imgs. Val: {len(val_imgs)} imgs.")
+    print(f"  -> Train uncropped {uncropped_count} RLEs. Train_new: {len(train_imgs)} imgs. Val: {len(val_imgs)} imgs.")
 
 def main():
     if not os.path.exists(PHASE2_DIR):
@@ -145,7 +182,6 @@ def main():
         
     datasets = [d for d in os.listdir(PHASE2_DIR) if os.path.isdir(os.path.join(PHASE2_DIR, d))]
     
-    # Process sequentially to avoid crazy memory spikes if datasets are huge
     for ds in datasets:
         process_dataset(ds)
         
