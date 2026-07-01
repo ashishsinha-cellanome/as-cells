@@ -25,12 +25,23 @@ def _patched_array(*args, **kwargs):
 np.array = _patched_array
 
 
+def decode_bytes(obj):
+    if isinstance(obj, bytes):
+        return obj.decode('utf-8')
+    elif isinstance(obj, dict):
+        return {k: decode_bytes(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [decode_bytes(v) for v in obj]
+    return obj
+
 def uncrop_rle_mask(seg, bbox, img_width=672, img_height=672):
     """Dynamically uncrops and pads any cropped RLE mask to the full image size [672, 672]."""
     if isinstance(seg, dict) and list(seg.get('size', [])) != [img_height, img_width]:
         x, y, bw, bh = [int(v) for v in bbox]
-        if isinstance(seg['counts'], str):
+        if isinstance(seg.get('counts'), str):
             seg['counts'] = seg['counts'].encode('utf-8')
+        elif isinstance(seg.get('counts'), bytes):
+            pass # already bytes
             
         try:
             cropped_mask = mask_util.decode(seg)
@@ -53,18 +64,12 @@ def uncrop_rle_mask(seg, bbox, img_width=672, img_height=672):
                 
             full_mask_f = np.asfortranarray(full_mask)
             full_rle = mask_util.encode(full_mask_f)
-            full_rle['counts'] = full_rle['counts'].decode('utf-8')
-            return full_rle
+            return decode_bytes(full_rle)
         except Exception as e:
             print(f"Error uncropping mask: {e}")
-            if isinstance(seg.get('counts'), bytes):
-                seg['counts'] = seg['counts'].decode('utf-8')
-            return seg
+            return decode_bytes(seg)
             
-    if isinstance(seg, dict) and isinstance(seg.get('counts'), bytes):
-        seg['counts'] = seg['counts'].decode('utf-8')
-        
-    return seg
+    return decode_bytes(seg)
 
 
 def process_dataset(dataset_path: Path):
