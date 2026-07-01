@@ -26,7 +26,13 @@ np.array = _patched_array
 
 
 def decode_bytes(obj):
-    if isinstance(obj, bytes):
+    if isinstance(obj, np.integer):
+        return int(obj)
+    elif isinstance(obj, np.floating):
+        return float(obj)
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif isinstance(obj, bytes):
         return obj.decode('utf-8')
     elif isinstance(obj, dict):
         return {k: decode_bytes(v) for k, v in obj.items()}
@@ -168,16 +174,16 @@ def process_dataset(dataset_path: Path):
             val_anns = [ann for ann in annotations if ann['image_id'] in val_img_ids]
             
             with open(dataset_path / "train_new_annotations.json", "w") as f:
-                json.dump({"images": train_imgs, "annotations": train_anns, "categories": categories}, f, indent=2)
+                json.dump(decode_bytes({"images": train_imgs, "annotations": train_anns, "categories": categories}), f, indent=2)
                 
             with open(dataset_path / "valid_annotations.json", "w") as f:
-                json.dump({"images": val_imgs, "annotations": val_anns, "categories": categories}, f, indent=2)
+                json.dump(decode_bytes({"images": val_imgs, "annotations": val_anns, "categories": categories}), f, indent=2)
         
         # Save standard non-train splits
         else:
             out_json = dataset_path / f"{split}_annotations.json"
             with open(out_json, "w") as f:
-                json.dump({"images": images, "annotations": annotations, "categories": categories}, f, indent=2)
+                json.dump(decode_bytes({"images": images, "annotations": annotations, "categories": categories}), f, indent=2)
 
 
 def process_dataset_wrapper(dataset_path_str: str):
