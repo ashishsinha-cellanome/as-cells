@@ -338,10 +338,15 @@ def main(config: DictConfig):
 
     devices = config.trainer.get("devices", 1)
     
+    if str(devices) == "auto" or str(devices) == "-1":
+        num_devices = torch.cuda.device_count()
+    else:
+        num_devices = int(devices)
+        
     trainer = build_trainer(
         train_config=train_config, 
         model_config=model_config, 
-        strategy="auto" if int(devices) <= 1 else "ddp_find_unused_parameters_true",
+        strategy="auto" if num_devices <= 1 else "ddp_find_unused_parameters_true",
         devices=devices,
         **trainer_kwargs
     )
