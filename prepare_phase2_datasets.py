@@ -57,7 +57,13 @@ def uncrop_rle_mask(seg, bbox, img_width=672, img_height=672):
             return full_rle
         except Exception as e:
             print(f"Error uncropping mask: {e}")
+            if isinstance(seg.get('counts'), bytes):
+                seg['counts'] = seg['counts'].decode('utf-8')
             return seg
+            
+    if isinstance(seg, dict) and isinstance(seg.get('counts'), bytes):
+        seg['counts'] = seg['counts'].decode('utf-8')
+        
     return seg
 
 
