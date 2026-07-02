@@ -249,3 +249,4 @@ class DetailedCocoEvalCallback(pl.Callback):
             pl_module.log(f"{split}/{key}{suffix}", value, sync_dist=True)
             
         step_outputs.clear()
+        return metrics_bbox, metrics_segm

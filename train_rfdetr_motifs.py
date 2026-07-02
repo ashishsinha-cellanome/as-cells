@@ -152,9 +152,9 @@ def main(config: DictConfig):
         postprocess=postprocess,
         config=config,
         model_to_coco=model_to_coco,
-        val_coco_gt=None, # Replaced by custom motif callback
+        val_coco_gt=data_module.val_train_datasets_objs[0].coco, # Replaced by custom motif callback
         test_coco_gt=None,
-        val_image_root="",
+        val_image_root=str(data_module.base_path),
         test_image_root=""
     )
 

@@ -267,9 +267,11 @@ def main(config: DictConfig):
         seed=config.get("seed", 42),
         accelerator=config.trainer.get("accelerator", "auto"),
         log_per_class_metrics=True,
+        train_log_sync_dist=True,
         compute_val_loss=True,
         compute_test_loss=True,
         fp16_eval=False,
+        progress_bar="tqdm",
     )
     
     if hasattr(config.optimizer.optimizer, "lr_encoder"):
@@ -368,6 +370,31 @@ def main(config: DictConfig):
         label_map=label_map
     )
     trainer.callbacks.append(motif_coco_eval)
+
+    if hasattr(config.model, "segmentation_head") and config.model.segmentation_head:
+        trainer.callbacks.append(
+            ModelCheckpoint(
+                dirpath=os.path.join(config.checkpointing.save_dir, "phase2", f"{motif_config_name}_{timestamp}"),
+                filename="best-segm-epoch{epoch:02d}",
+                monitor="val/segm_mAP_50_95",
+                mode="max",
+                save_top_k=1,
+                auto_insert_metric_name=False,
+                enable_version_counter=False,
+            )
+        )
+        if bool(config.model.rfdetr.get("use_ema", True)):
+            trainer.callbacks.append(
+                ModelCheckpoint(
+                    dirpath=os.path.join(config.checkpointing.save_dir, "phase2", f"{motif_config_name}_{timestamp}"),
+                    filename="best-ema-segm-epoch{epoch:02d}",
+                    monitor="val/ema_segm_mAP_50_95",
+                    mode="max",
+                    save_top_k=1,
+                    auto_insert_metric_name=False,
+                    enable_version_counter=False,
+                )
+            )
 
     # Port manual EMA test-eval logic directly by wrapping trainer.test
     orig_test = trainer.test

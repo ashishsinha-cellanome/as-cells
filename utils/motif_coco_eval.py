@@ -54,11 +54,29 @@ class MotifCocoEvalCallback(DetailedCocoEvalCallback):
                 
             prefix = f"val/{dl_name}"
             print(f"\n[MotifCocoEvalCallback] Computing Validation Metrics for {dl_name}...")
-            self._compute_and_log(trainer, pl_module, self.val_outputs[dl_idx], coco_gt, prefix, "")
+            metrics_bbox, metrics_segm = self._compute_and_log(trainer, pl_module, self.val_outputs[dl_idx], coco_gt, prefix, "")
+            
+            if dl_name == "train_ds/merged":
+                bbox_map = metrics_bbox.get("detailed_bbox_map", 0.0)
+                pl_module.log("val/mAP_50_95", bbox_map, sync_dist=True, prog_bar=True)
+                trainer.callback_metrics["val/mAP_50_95"] = torch.tensor(bbox_map)
+                
+                segm_map = metrics_segm.get("detailed_segm_map", 0.0)
+                pl_module.log("val/segm_mAP_50_95", segm_map, sync_dist=True)
+                trainer.callback_metrics["val/segm_mAP_50_95"] = torch.tensor(segm_map)
             
             if len(self.val_outputs_ema[dl_idx]) > 0:
                 print(f"\n[MotifCocoEvalCallback] Computing Validation EMA Metrics for {dl_name}...")
-                self._compute_and_log(trainer, pl_module, self.val_outputs_ema[dl_idx], coco_gt, prefix, "_ema")
+                metrics_bbox_ema, metrics_segm_ema = self._compute_and_log(trainer, pl_module, self.val_outputs_ema[dl_idx], coco_gt, prefix, "_ema")
+                
+                if dl_name == "train_ds/merged":
+                    ema_bbox = metrics_bbox_ema.get("detailed_bbox_map", 0.0)
+                    pl_module.log("val/ema_mAP_50_95", ema_bbox, sync_dist=True, prog_bar=True)
+                    trainer.callback_metrics["val/ema_mAP_50_95"] = torch.tensor(ema_bbox)
+                    
+                    ema_segm = metrics_segm_ema.get("detailed_segm_map", 0.0)
+                    pl_module.log("val/ema_segm_mAP_50_95", ema_segm, sync_dist=True)
+                    trainer.callback_metrics["val/ema_segm_mAP_50_95"] = torch.tensor(ema_segm)
 
     def on_test_epoch_end(self, trainer, pl_module):
         for dl_idx, dl_name in enumerate(self.test_dataloader_names):
@@ -68,8 +86,26 @@ class MotifCocoEvalCallback(DetailedCocoEvalCallback):
                 
             prefix = f"test/{dl_name}"
             print(f"\n[MotifCocoEvalCallback] Computing Test Metrics for {dl_name}...")
-            self._compute_and_log(trainer, pl_module, self.test_outputs[dl_idx], coco_gt, prefix, "")
+            metrics_bbox, metrics_segm = self._compute_and_log(trainer, pl_module, self.test_outputs[dl_idx], coco_gt, prefix, "")
+            
+            if dl_name == "train_ds/merged":
+                bbox_map = metrics_bbox.get("detailed_bbox_map", 0.0)
+                pl_module.log("test/mAP_50_95", bbox_map, sync_dist=True, prog_bar=True)
+                trainer.callback_metrics["test/mAP_50_95"] = torch.tensor(bbox_map)
+                
+                segm_map = metrics_segm.get("detailed_segm_map", 0.0)
+                pl_module.log("test/segm_mAP_50_95", segm_map, sync_dist=True)
+                trainer.callback_metrics["test/segm_mAP_50_95"] = torch.tensor(segm_map)
             
             if len(self.test_outputs_ema[dl_idx]) > 0:
                 print(f"\n[MotifCocoEvalCallback] Computing Test EMA Metrics for {dl_name}...")
-                self._compute_and_log(trainer, pl_module, self.test_outputs_ema[dl_idx], coco_gt, prefix, "_ema")
+                metrics_bbox_ema, metrics_segm_ema = self._compute_and_log(trainer, pl_module, self.test_outputs_ema[dl_idx], coco_gt, prefix, "_ema")
+                
+                if dl_name == "train_ds/merged":
+                    ema_bbox = metrics_bbox_ema.get("detailed_bbox_map", 0.0)
+                    pl_module.log("test/ema_mAP_50_95", ema_bbox, sync_dist=True, prog_bar=True)
+                    trainer.callback_metrics["test/ema_mAP_50_95"] = torch.tensor(ema_bbox)
+                    
+                    ema_segm = metrics_segm_ema.get("detailed_segm_map", 0.0)
+                    pl_module.log("test/ema_segm_mAP_50_95", ema_segm, sync_dist=True)
+                    trainer.callback_metrics["test/ema_segm_mAP_50_95"] = torch.tensor(ema_segm)
