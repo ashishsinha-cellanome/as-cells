@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 
 import os
-import sys
 import math
 import datetime
 import torch
@@ -18,13 +17,14 @@ from rfdetr._namespace import build_namespace
 from rfdetr.models.lwdetr import build_criterion_and_postprocessors
 from rfdetr.training.trainer import build_trainer
 from rfdetr.training.callbacks.coco_eval import COCOEvalCallback
+from rfdetr.training.callbacks import RFDETREMACallback
 from rfdetr.util.misc import collate_fn
 
-from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor, ModelSummary
+from pytorch_lightning.callbacks import ModelCheckpoint
 
 from data.motif_data_module import MotifDataModule
 from utils.motif_coco_eval import MotifCocoEvalCallback
-from utils.distributed_utils import setup_cluster_env, get_rank, rank_zero_print
+from utils.distributed_utils import setup_cluster_env, rank_zero_print
 
 torch.set_float32_matmul_precision("medium")
 OmegaConf.register_new_resolver("oc.eval", eval, replace=True)
@@ -175,16 +175,25 @@ class Phase2MotifDataModule(MotifDataModule):
 def _get_model_class(size_name: str, is_seg: bool = True):
     size_name = str(size_name).lower()
     if is_seg:
-        if size_name == "small": return RFDETRSegSmall
-        if size_name == "medium": return RFDETRSegMedium
-        if size_name == "large": return RFDETRSegLarge
-        if size_name == "nano": return RFDETRSegNano
+        if size_name == "small":
+            return RFDETRSegSmall
+        if size_name == "medium":
+            return RFDETRSegMedium
+        if size_name == "large":
+            return RFDETRSegLarge
+        if size_name == "nano":
+            return RFDETRSegNano
     else:
-        if size_name == "base": return RFDETRBase
-        if size_name == "small": return RFDETRSmall
-        if size_name == "medium": return RFDETRMedium
-        if size_name == "large": return RFDETRLarge
-        if size_name == "nano": return RFDETRNano
+        if size_name == "base":
+            return RFDETRBase
+        if size_name == "small":
+            return RFDETRSmall
+        if size_name == "medium":
+            return RFDETRMedium
+        if size_name == "large":
+            return RFDETRLarge
+        if size_name == "nano":
+            return RFDETRNano
     raise ValueError(f"Unsupported RF-DETR size: {size_name}")
 
 
@@ -198,7 +207,6 @@ def main(config: DictConfig):
     motif_config_name = os.path.basename(data_config_choice)
     
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    timestamp_dir = datetime.datetime.now().strftime("%y-%m-%d_%H-%M")
     finetune_mode = config.model.rfdetr.get("finetune_mode", "full")
     run_name = f"phase2_{motif_config_name}_{finetune_mode}_{timestamp}"
     config.run_name = run_name
@@ -334,9 +342,12 @@ def main(config: DictConfig):
         trainer_kwargs["limit_test_batches"] = 2
         train_config.epochs = 1
     else:
-        if "limit_train_batches" in config.trainer: trainer_kwargs["limit_train_batches"] = config.trainer.limit_train_batches
-        if "limit_val_batches" in config.trainer: trainer_kwargs["limit_val_batches"] = config.trainer.limit_val_batches
-        if "limit_test_batches" in config.trainer: trainer_kwargs["limit_test_batches"] = config.trainer.limit_test_batches
+        if "limit_train_batches" in config.trainer:
+            trainer_kwargs["limit_train_batches"] = config.trainer.limit_train_batches
+        if "limit_val_batches" in config.trainer:
+            trainer_kwargs["limit_val_batches"] = config.trainer.limit_val_batches
+        if "limit_test_batches" in config.trainer:
+            trainer_kwargs["limit_test_batches"] = config.trainer.limit_test_batches
 
     devices = config.trainer.get("devices", 1)
     
@@ -400,13 +411,19 @@ def main(config: DictConfig):
     orig_test = trainer.test
     def custom_test(*args, **kwargs):
         rank_zero_print("[Test] Injecting manual EMA evaluation wrapper...")
-        import os
-        from torch.optim.swa_utils import AveragedModel
         
         # Look for EMA callback to manually inject weights if they exist in checkpoints
-        ema_cb = next((cb for cb in trainer.callbacks if type(cb).__name__ == 'RFDETREMACallback'), None)
+        ema_cb = next((cb for cb in trainer.callbacks if isinstance(cb, RFDETREMACallback)), None)
         
-        # We let the original test run. MotifCocoEvalCallback evaluates EMA automatically if EMA callback is present.
+        if ema_cb is not None and getattr(ema_cb, "_average_model", None) is not None:
+            orig_start = ema_cb.on_test_epoch_start
+            def patched_start(trainer, pl_module):
+                if getattr(ema_cb, "_pending_average_state_dict", None) is not None:
+                    ema_cb._average_model.load_state_dict(ema_cb._pending_average_state_dict)
+                    ema_cb._pending_average_state_dict = None
+                return orig_start(trainer, pl_module)
+            ema_cb.on_test_epoch_start = patched_start
+            
         return orig_test(*args, **kwargs)
 
     trainer.test = custom_test

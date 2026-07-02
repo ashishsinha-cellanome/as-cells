@@ -43,7 +43,7 @@ class MotifCocoEvalCallback(DetailedCocoEvalCallback):
     def on_test_batch_end(self, trainer, pl_module, outputs, batch, batch_idx, dataloader_idx=0):
         self._accumulate_batch(outputs, self.test_outputs[dataloader_idx])
         ema_cb = self._get_ema_callback(trainer)
-        if ema_cb is not None:
+        if ema_cb is not None and getattr(ema_cb, "_swapped_state_dict", None) is None:
             self._evaluate_ema(ema_cb, pl_module, batch, self.test_outputs_ema[dataloader_idx])
 
     def on_validation_epoch_end(self, trainer, pl_module):
@@ -79,6 +79,7 @@ class MotifCocoEvalCallback(DetailedCocoEvalCallback):
                     trainer.callback_metrics["val/ema_segm_mAP_50_95"] = torch.tensor(ema_segm)
 
     def on_test_epoch_end(self, trainer, pl_module):
+        ema_cb = self._get_ema_callback(trainer)
         for dl_idx, dl_name in enumerate(self.test_dataloader_names):
             coco_gt = self.test_get_coco_gt_fns[dl_idx]()
             if not coco_gt or len(self.test_outputs[dl_idx]) == 0:
@@ -88,12 +89,19 @@ class MotifCocoEvalCallback(DetailedCocoEvalCallback):
             print(f"\n[MotifCocoEvalCallback] Computing Test Metrics for {dl_name}...")
             metrics_bbox, metrics_segm = self._compute_and_log(trainer, pl_module, self.test_outputs[dl_idx], coco_gt, prefix, "")
             
-            if dl_name == "train_ds/merged":
-                bbox_map = metrics_bbox.get("detailed_bbox_map", 0.0)
+            bbox_map = metrics_bbox.get("detailed_bbox_map", 0.0)
+            segm_map = metrics_segm.get("detailed_segm_map", 0.0)
+            
+            pl_module.log(f"{prefix}/mAP_50_95", bbox_map, sync_dist=True)
+            trainer.callback_metrics[f"{prefix}/mAP_50_95"] = torch.tensor(bbox_map)
+            
+            pl_module.log(f"{prefix}/segm_mAP_50_95", segm_map, sync_dist=True)
+            trainer.callback_metrics[f"{prefix}/segm_mAP_50_95"] = torch.tensor(segm_map)
+            
+            if dl_idx == 0:
                 pl_module.log("test/mAP_50_95", bbox_map, sync_dist=True, prog_bar=True)
                 trainer.callback_metrics["test/mAP_50_95"] = torch.tensor(bbox_map)
                 
-                segm_map = metrics_segm.get("detailed_segm_map", 0.0)
                 pl_module.log("test/segm_mAP_50_95", segm_map, sync_dist=True)
                 trainer.callback_metrics["test/segm_mAP_50_95"] = torch.tensor(segm_map)
             
@@ -101,11 +109,31 @@ class MotifCocoEvalCallback(DetailedCocoEvalCallback):
                 print(f"\n[MotifCocoEvalCallback] Computing Test EMA Metrics for {dl_name}...")
                 metrics_bbox_ema, metrics_segm_ema = self._compute_and_log(trainer, pl_module, self.test_outputs_ema[dl_idx], coco_gt, prefix, "_ema")
                 
-                if dl_name == "train_ds/merged":
-                    ema_bbox = metrics_bbox_ema.get("detailed_bbox_map", 0.0)
+                ema_bbox = metrics_bbox_ema.get("detailed_bbox_map", 0.0)
+                ema_segm = metrics_segm_ema.get("detailed_segm_map", 0.0)
+                
+                pl_module.log(f"{prefix}/ema_mAP_50_95", ema_bbox, sync_dist=True)
+                trainer.callback_metrics[f"{prefix}/ema_mAP_50_95"] = torch.tensor(ema_bbox)
+                
+                pl_module.log(f"{prefix}/ema_segm_mAP_50_95", ema_segm, sync_dist=True)
+                trainer.callback_metrics[f"{prefix}/ema_segm_mAP_50_95"] = torch.tensor(ema_segm)
+                
+                if dl_idx == 0:
                     pl_module.log("test/ema_mAP_50_95", ema_bbox, sync_dist=True, prog_bar=True)
                     trainer.callback_metrics["test/ema_mAP_50_95"] = torch.tensor(ema_bbox)
                     
-                    ema_segm = metrics_segm_ema.get("detailed_segm_map", 0.0)
                     pl_module.log("test/ema_segm_mAP_50_95", ema_segm, sync_dist=True)
                     trainer.callback_metrics["test/ema_segm_mAP_50_95"] = torch.tensor(ema_segm)
+            elif ema_cb is not None:
+                pl_module.log(f"{prefix}/ema_mAP_50_95", bbox_map, sync_dist=True)
+                trainer.callback_metrics[f"{prefix}/ema_mAP_50_95"] = torch.tensor(bbox_map)
+                
+                pl_module.log(f"{prefix}/ema_segm_mAP_50_95", segm_map, sync_dist=True)
+                trainer.callback_metrics[f"{prefix}/ema_segm_mAP_50_95"] = torch.tensor(segm_map)
+                
+                if dl_idx == 0:
+                    pl_module.log("test/ema_mAP_50_95", bbox_map, sync_dist=True, prog_bar=True)
+                    trainer.callback_metrics["test/ema_mAP_50_95"] = torch.tensor(bbox_map)
+                    
+                    pl_module.log("test/ema_segm_mAP_50_95", segm_map, sync_dist=True)
+                    trainer.callback_metrics["test/ema_segm_mAP_50_95"] = torch.tensor(segm_map)
