@@ -61,7 +61,7 @@ class PreBuiltRFDETRModelModule(RFDETRModelModule):
             lora_alpha=lc.get("alpha", 16),
             use_dora=lc.get("use_dora", False),
             target_modules=list(lc.get("target_modules", [
-                "q_proj", "v_proj", "k_proj", "qkv", 
+                "q_proj", "v_proj", "k_proj", "qkv", "dense",
                 "query", "key", "value", "cls_token", "register_tokens"
             ])),
             lora_dropout=lc.get("dropout", 0.05),
@@ -208,6 +208,8 @@ def main(config: DictConfig):
     
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     finetune_mode = config.model.rfdetr.get("finetune_mode", "full")
+    if finetune_mode == "decoder":
+        finetune_mode = "queries_decoder_head"
     run_name = f"phase2_{motif_config_name}_{finetune_mode}_{timestamp}"
     config.run_name = run_name
 
