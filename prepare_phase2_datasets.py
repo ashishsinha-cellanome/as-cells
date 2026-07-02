@@ -173,6 +173,9 @@ def process_dataset(dataset_path: Path):
             train_anns = [ann for ann in annotations if ann['image_id'] in train_img_ids]
             val_anns = [ann for ann in annotations if ann['image_id'] in val_img_ids]
             
+            with open(dataset_path / "train_annotations.json", "w") as f:
+                json.dump({"images": images, "annotations": annotations, "categories": categories}, f, indent=2)
+                
             with open(dataset_path / "train_new_annotations.json", "w") as f:
                 json.dump(decode_bytes({"images": train_imgs, "annotations": train_anns, "categories": categories}), f, indent=2)
                 
@@ -196,12 +199,16 @@ def process_dataset_wrapper(dataset_path_str: str):
 
 
 def main():
+    import sys
     phase2_dir = Path("/mnt/direct-attached/PHASE2")
     if not phase2_dir.exists():
         print(f"PHASE2 dir not found at: {phase2_dir}")
         return
         
-    datasets = [str(item) for item in phase2_dir.iterdir() if item.is_dir()]
+    if len(sys.argv) > 1:
+        datasets = [str(phase2_dir / d) for d in sys.argv[1:]]
+    else:
+        datasets = [str(item) for item in phase2_dir.iterdir() if item.is_dir()]
     
     # Scale workers safely (reserving 2 cores for system stability)
     num_workers = max(1, mp.cpu_count() - 2)

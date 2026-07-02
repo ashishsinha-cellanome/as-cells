@@ -7,10 +7,10 @@ defaults:
 
 # 3. OVERRIDE: Data loads from Fast Scratch
 data:
-  path: "/home/ubuntu/scratch/cellanome/TRAINING_DATA"
+  path: "/mnt/direct-attached/TRAINING_DATA/"
   val_name: 'valid'
   test_name: 'test'
-  train_name: 'train'
+  train_name: 'train_new'
 
 # 4. OVERRIDE: Checkpoints to NAS
 checkpointing:

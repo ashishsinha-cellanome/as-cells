@@ -10,7 +10,7 @@ data:
   path: "/project/aip-robsc/asinha/cellanome/DATA/TRAINING_DATA"
   val_name: 'valid'
   test_name: 'test'
-  train_name: 'train'
+  train_name: 'train_new'
 
   # override more params for debugging purpose
   limit_train_batches: 1.0

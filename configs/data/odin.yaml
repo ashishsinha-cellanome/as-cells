@@ -5,7 +5,7 @@ defaults:
 
 data:
   path: "/mnt/direct-attached/TRAINING_DATA"
-  train_name: "train"
+  train_name: "train_new"
   val_name: "valid"
   test_name: "test"
 
