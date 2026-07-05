@@ -72,6 +72,11 @@ class PreBuiltRFDETRModelModule(RFDETRModelModule):
             lora_config
         )
 
+    def validation_step(self, batch, batch_idx, dataloader_idx=0):
+        return super().validation_step(batch, batch_idx)
+
+    def test_step(self, batch, batch_idx, dataloader_idx=0):
+        return super().test_step(batch, batch_idx)
 
 # ---------------------------------------------------------------------------
 # Phase2MotifDataModule
@@ -141,6 +146,11 @@ class Phase2MotifDataModule(MotifDataModule):
                 
                 self._train_sample_weights = torch.DoubleTensor(sample_weights)
 
+        if stage in ("test", None):
+            self.train_test_datasets_objs = [
+                self._make_dataset(ds, self.test_name) for ds in self.train_dataset_names
+            ]
+
     def train_dataloader(self):
         if self._train_sample_weights is not None and len(self._train_sample_weights) > 0:
             # DDP-safe custom sampling configuration
@@ -170,6 +180,36 @@ class Phase2MotifDataModule(MotifDataModule):
             pin_memory=True,
             drop_last=True,
         )
+
+    def test_dataloader(self):
+        eval_batch_size = int(getattr(self.config.data, "eval_batch_size", 1))
+        dataloaders = []
+        
+        for ds in getattr(self, "train_test_datasets_objs", []):
+            dl = DataLoader(
+                ds,
+                batch_size=eval_batch_size,
+                shuffle=False,
+                num_workers=self._args.num_workers,
+                collate_fn=collate_fn,
+                pin_memory=True,
+                drop_last=False,
+            )
+            dataloaders.append(dl)
+            
+        for ds in self.test_datasets_objs:
+            dl = DataLoader(
+                ds,
+                batch_size=eval_batch_size,
+                shuffle=False,
+                num_workers=self._args.num_workers,
+                collate_fn=collate_fn,
+                pin_memory=True,
+                drop_last=False,
+            )
+            dataloaders.append(dl)
+            
+        return dataloaders
 
 
 def _get_model_class(size_name: str, is_seg: bool = True):
@@ -298,6 +338,7 @@ def main(config: DictConfig):
         inner_model=inner_model, 
         lora_cfg=lora_cfg
     )
+    module.config = config
 
     # 4. Finetuning Strategies (Freezing)
     if finetune_mode in ("decoder", "queries_decoder_head"):
@@ -339,9 +380,9 @@ def main(config: DictConfig):
     trainer_kwargs = {}
     if getattr(config, "debug", False):
         rank_zero_print("--- RUNNING IN DEBUG MODE ---")
-        trainer_kwargs["limit_train_batches"] = 2
-        trainer_kwargs["limit_val_batches"] = 2
-        trainer_kwargs["limit_test_batches"] = 2
+        trainer_kwargs["limit_train_batches"] = getattr(config.trainer, "limit_train_batches", 100)
+        trainer_kwargs["limit_val_batches"] = getattr(config.trainer, "limit_val_batches", 100)
+        trainer_kwargs["limit_test_batches"] = getattr(config.trainer, "limit_test_batches", 100)
         train_config.epochs = 1
     else:
         if "limit_train_batches" in config.trainer:
@@ -372,8 +413,14 @@ def main(config: DictConfig):
     val_dataloader_names = ["train_ds/merged"]
     val_dataset_fns = [lambda ds=ds: ds.coco for ds in data_module.val_train_datasets_objs]
     
-    test_dataloader_names = [f"{ds}" for ds in data_module.test_dataset_names]
-    test_dataset_fns = [lambda ds=ds: ds.coco for ds in data_module.test_datasets_objs]
+    test_dataloader_names = (
+        [f"train_ds/{ds}/test" for ds in data_module.train_dataset_names] + 
+        [f"test_ds/{ds}/test" for ds in data_module.test_dataset_names]
+    )
+    test_dataset_fns = (
+        [lambda ds=ds: ds.coco for ds in getattr(data_module, "train_test_datasets_objs", [])] + 
+        [lambda ds=ds: ds.coco for ds in data_module.test_datasets_objs]
+    )
 
     motif_coco_eval = MotifCocoEvalCallback(
         val_dataloader_names=val_dataloader_names, 
@@ -384,7 +431,7 @@ def main(config: DictConfig):
     )
     trainer.callbacks.append(motif_coco_eval)
 
-    if hasattr(config.model, "segmentation_head") and config.model.segmentation_head:
+    if is_seg:
         trainer.callbacks.append(
             ModelCheckpoint(
                 dirpath=os.path.join(config.checkpointing.save_dir, "phase2", f"{motif_config_name}_{timestamp}"),
