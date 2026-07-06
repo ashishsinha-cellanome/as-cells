@@ -120,65 +120,50 @@ class PreBuiltRFDETRModelModule(RFDETRModelModule):
 class Phase2MotifDataModule(MotifDataModule):
     """
     Subclass of MotifDataModule that computes inverse-frequency weights
-    proportional to class counts, oversampling rare classes (with multiplier support).
+    proportional to class counts to oversample rare classes.
     """
-    def __init__(self, base_path, config, base_args, class_sample_multiplier=None):
+    def __init__(self, base_path, config, base_args):
         super().__init__(base_path, config, base_args)
         # Ensure default train split maps to "train_new"
         self.train_name = getattr(config.data, "train_name", "train_new")
-        self.class_sample_multiplier = class_sample_multiplier or {}
+        self.balance_class_sampling = getattr(config.data, "balance_class_sampling", False)
         self._train_sample_weights = None
 
     def setup(self, stage=None):
         # Build datasets using parent setup logic
         super().setup(stage)
         
-        if stage in ("fit", None) and self.class_sample_multiplier:
-            # 1. Count total instances per class across all training sub-datasets
+        if stage in ("fit", None) and self.balance_class_sampling:
+            # 1. Single pass to count classes and collect image compositions
             total_per_class = {}
+            img_compositions = []
+            
             for ds_obj in self.train_datasets_objs:
                 coco = ds_obj.coco
-                anns = coco.loadAnns(coco.getAnnIds())
-                for ann in anns:
-                    cat_id = ann["category_id"]
-                    total_per_class[cat_id] = total_per_class.get(cat_id, 0) + 1
+                for img_id in coco.imgs.keys():
+                    anns = coco.imgToAnns.get(img_id, [])
+                    img_classes = {ann["category_id"] for ann in anns}
+                    
+                    for cat_id in img_classes:
+                        total_per_class[cat_id] = total_per_class.get(cat_id, 0) + 1
+                        
+                    img_compositions.append(img_classes)
             
-            total_instances = sum(total_per_class.values())
+            total_imgs_with_classes = sum(total_per_class.values())
             num_classes = len(total_per_class)
             
-            if total_instances > 0:
-                # 2. Compute base inverse frequency weights: w_c = Total / (N_c * C)
-                base_class_weight = {
-                    cat_id: total_instances / (count * num_classes)
-                    for cat_id, count in total_per_class.items() if count > 0
+            if total_imgs_with_classes > 0:
+                # 2. Compute true inverse frequency
+                class_weights = {
+                    c: total_imgs_with_classes / (count * num_classes)
+                    for c, count in total_per_class.items()
                 }
                 
-                # 3. Apply custom multipliers
-                for cat_id, multiplier in self.class_sample_multiplier.items():
-                    cat_id_int = int(cat_id)
-                    if cat_id_int in base_class_weight:
-                        base_class_weight[cat_id_int] *= float(multiplier)
-                
-                # 4. Generate per-image sampling weights using log-scale count scaling
-                sample_weights = []
-                for ds_obj in self.train_datasets_objs:
-                    coco = ds_obj.coco
-                    anns = coco.loadAnns(coco.getAnnIds())
-                    
-                    img_counts = {}
-                    for ann in anns:
-                        img_id = ann["image_id"]
-                        cat_id = ann["category_id"]
-                        if img_id not in img_counts:
-                            img_counts[img_id] = {}
-                        img_counts[img_id][cat_id] = img_counts[img_id].get(cat_id, 0) + 1
-                    
-                    for img in coco.imgs.values():
-                        img_id = img["id"]
-                        counts = img_counts.get(img_id, {})
-                        w = sum(math.log(1 + count) * base_class_weight.get(cat_id, 1.0) 
-                                for cat_id, count in counts.items())
-                        sample_weights.append(max(w, 1e-4))
+                # 3. Assign weight to each image based on its rarest class (highest weight)
+                sample_weights = [
+                    max((class_weights[c] for c in classes), default=1e-4)
+                    for classes in img_compositions
+                ]
                 
                 self._train_sample_weights = torch.DoubleTensor(sample_weights)
 
@@ -392,21 +377,10 @@ def main(config: DictConfig):
                 param.requires_grad = True
 
     # 5. Data Module
-    class_multipliers = getattr(config.data, "class_sample_multiplier", None)
-    if class_multipliers:
-        class_multipliers = OmegaConf.to_container(class_multipliers, resolve=True)
-    else:
-        # Default to 3.0 for 2 and 3 if balance_class_sampling is set, else empty
-        if getattr(config.data, "balance_class_sampling", False):
-            class_multipliers = {2: 3.0, 3: 3.0}
-        else:
-            class_multipliers = {}
-            
     data_module = Phase2MotifDataModule(
         base_path=str(config.data.path), 
         config=config, 
-        base_args=base_args,
-        class_sample_multiplier=class_multipliers
+        base_args=base_args
     )
     data_module.setup("fit")
     data_module.setup("test")
