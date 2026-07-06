@@ -1,0 +1,54 @@
+# @package _global_
+defaults:
+- default@data
+
+data:
+  train_datasets:
+  - 20240422_neuron-adhered_10x_uncaged_4_class
+  - 20240509_hela-adhered_10x_caged_4_class
+  - 20240509_Hs675Tfibroblasts_10x_caged_4_class
+  - 20240515_DC-adhered_10x_caged_4_class
+  - 20240516_DC-adhered_10x_caged_4_class
+  - 20240624_mc38_10x_caged_4_class
+  - 20240624_mc38_10x_uncaged_4_class
+  - 20240625_mc38_10x_caged_4_class
+  - 20240703_neuron-adhered_10x_caged_4_class
+  - 20240704_neuron-adhered_10x_caged_4_class
+  - 20240905_u87-adhered_10x_caged_4_class
+  - 20240924_enteric-glia-adhered_10x_uncaged_4_class
+  - 20241212_preadipocytes-adhered_10x_uncaged_4_class
+  - 20250108_neuron-adhered_10x_uncaged_4_class
+  - 20250227_preadipocytes-adhered_10x_caged_4_class
+  - 20250305_neuron-adhered_10x_uncaged_4_class
+  - 20250820_c8d1a_astrocytes-adherent_10x_caged_4_class
+  - 20250917_moc22-adhered_10x_caged_4_class
+  - 20260316_a549-tomm20-gfp-adhered_10x_caged_at_4x_4_class
+  - 231212_imr90_multichannel_overlay_4_class
+  - 240213_imr90_multichannel_overlay_4_class
+
+  test_datasets:
+  - 20240228_hela-suspension_10x_caged_4_class
+  - 20240228_hela-suspension_10x_uncaged_4_class
+  - 20240228_jurkat_10x_caged_4_class
+  - 20240228_jurkat_10x_uncaged_4_class
+  - 20240228_k562_10x_caged_4_class
+  - 20240228_k562_10x_uncaged_4_class
+  - 20240228_nk92_10x_caged_4_class
+  - 20240228_nk92_10x_uncaged_4_class
+  - 20240305_pbmc-nobeads_10x_caged_4_class
+  - 20240305_pbmc-nobeads_10x_uncaged_4_class
+  - 20240306_mousepbmc-beads_10x_caged_4_class
+  - 20240306_mousepbmc-beads_10x_uncaged_4_class
+  - 20240306_mousepbmc-nobeads_10x_caged_4_class
+  - 20240306_mousepbmc-nobeads_10x_uncaged_4_class
+  - 20240307_pbmc-beads_10x_uncaged_4_class
+  - 20240314_imr90-suspension_10x_caged_4_class
+  - 20240314_imr90-suspension_10x_uncaged_4_class
+  - 20240425_nk92_10x_caged_4_class
+  - 20240425_nk92_10x_uncaged_4_class
+  - 20240816_tall104_10x_caged_at_4x_4_class
+  - 20240905_raji_10x_caged_at_4x_4_class
+  - 20241003_Hs675Tfibroblasts-suspension-beads_10x_uncaged_4_class
+
+  split_motif: Adhered_to_Suspension
+  coverage: 1.0
