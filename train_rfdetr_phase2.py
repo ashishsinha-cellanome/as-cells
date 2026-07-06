@@ -34,37 +34,6 @@ from utils.test_only_checkpoint_restore import (
 torch.set_float32_matmul_precision("medium")
 OmegaConf.register_new_resolver("oc.eval", eval, replace=True)
 
-# --- Dynamic Patch for Malformed JSON Masks ---
-import rfdetr.datasets.coco as rfdetr_coco
-import torch.nn.functional as F
-
-def padded_convert_coco_poly_to_mask(segmentations, height, width):
-    import pycocotools.mask as coco_mask
-    masks = []
-    for polygons in segmentations:
-        if polygons is None or len(polygons) == 0:
-            masks.append(torch.zeros((height, width), dtype=torch.uint8))
-            continue
-        try:
-            rles = coco_mask.frPyObjects(polygons, height, width)
-        except:
-            rles = polygons
-        mask = coco_mask.decode(rles)
-        if mask.ndim < 3:
-            mask = mask[..., None]
-        mask = torch.as_tensor(mask, dtype=torch.uint8)
-        mask = mask.any(dim=2)
-        
-        if mask.shape[0] != height or mask.shape[1] != width:
-            mask = F.interpolate(mask.unsqueeze(0).unsqueeze(0).float(), size=(height, width), mode="nearest").squeeze(0).squeeze(0).byte()
-        masks.append(mask)
-    if len(masks) == 0:
-        return torch.zeros((0, height, width), dtype=torch.uint8)
-    return torch.stack(masks, dim=0)
-
-rfdetr_coco.convert_coco_poly_to_mask = padded_convert_coco_poly_to_mask
-# ----------------------------------------------
-
 # ---------------------------------------------------------------------------
 # PreBuiltRFDETRModelModule
 # ---------------------------------------------------------------------------
