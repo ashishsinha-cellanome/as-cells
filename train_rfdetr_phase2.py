@@ -25,9 +25,45 @@ from pytorch_lightning.callbacks import ModelCheckpoint
 from data.motif_data_module import MotifDataModule
 from utils.motif_coco_eval import MotifCocoEvalCallback
 from utils.distributed_utils import setup_cluster_env, rank_zero_print
+from utils.test_only_checkpoint_restore import (
+    _load_ckpt,
+    _select_eval_weights_source,
+    _load_selected_weights,
+)
 
 torch.set_float32_matmul_precision("medium")
 OmegaConf.register_new_resolver("oc.eval", eval, replace=True)
+
+# --- Dynamic Patch for Malformed JSON Masks ---
+import rfdetr.datasets.coco as rfdetr_coco
+import torch.nn.functional as F
+
+def padded_convert_coco_poly_to_mask(segmentations, height, width):
+    import pycocotools.mask as coco_mask
+    masks = []
+    for polygons in segmentations:
+        if polygons is None or len(polygons) == 0:
+            masks.append(torch.zeros((height, width), dtype=torch.uint8))
+            continue
+        try:
+            rles = coco_mask.frPyObjects(polygons, height, width)
+        except:
+            rles = polygons
+        mask = coco_mask.decode(rles)
+        if mask.ndim < 3:
+            mask = mask[..., None]
+        mask = torch.as_tensor(mask, dtype=torch.uint8)
+        mask = mask.any(dim=2)
+        
+        if mask.shape[0] != height or mask.shape[1] != width:
+            mask = F.interpolate(mask.unsqueeze(0).unsqueeze(0).float(), size=(height, width), mode="nearest").squeeze(0).squeeze(0).byte()
+        masks.append(mask)
+    if len(masks) == 0:
+        return torch.zeros((0, height, width), dtype=torch.uint8)
+    return torch.stack(masks, dim=0)
+
+rfdetr_coco.convert_coco_poly_to_mask = padded_convert_coco_poly_to_mask
+# ----------------------------------------------
 
 # ---------------------------------------------------------------------------
 # PreBuiltRFDETRModelModule
@@ -430,11 +466,34 @@ def main(config: DictConfig):
 
     trainer.test = custom_test
 
-    rank_zero_print(f"Starting Training for Motif: {motif_config_name}")
-    trainer.fit(module, datamodule=data_module)
-    
-    rank_zero_print("Training complete. Starting Validation/Test eval...")
-    trainer.test(module, datamodule=data_module)
+    if getattr(config, "test_only", False):
+        rank_zero_print(f"Skipping Training for Motif: {motif_config_name} (test_only mode)")
+        ckpt_path = config.get("initialization", {}).get("load_from_checkpoint", None)
+        if ckpt_path is None:
+            raise ValueError("test_only requires initialization.load_from_checkpoint")
+        
+        test_only_checkpoint = _load_ckpt(ckpt_path)
+        test_only_weight_source = _select_eval_weights_source(
+            ckpt_path, test_only_checkpoint, config=config
+        )
+        
+        rank_zero_print(f"Loading {test_only_weight_source.upper()} weights manually from {ckpt_path}")
+        missing_keys, unexpected_keys = _load_selected_weights(
+            module, test_only_checkpoint, test_only_weight_source
+        )
+        if missing_keys:
+            rank_zero_print(f"⚠️  Missing keys during test-only load: {missing_keys[:10]} ...")
+        if unexpected_keys:
+            rank_zero_print(f"⚠️  Unexpected keys during test-only load: {unexpected_keys[:10]} ...")
+            
+        rank_zero_print(f"Starting Validation/Test eval with loaded weights...")
+        trainer.test(module, datamodule=data_module)
+    else:
+        rank_zero_print(f"Starting Training for Motif: {motif_config_name}")
+        trainer.fit(module, datamodule=data_module)
+        
+        rank_zero_print("Training complete. Starting Validation/Test eval...")
+        trainer.test(module, datamodule=data_module)
     
     # Sync optimized weights back so predictive APIs work post-training
     rf_wrapper.model.model = module.model
