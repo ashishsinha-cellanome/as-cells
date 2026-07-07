@@ -380,6 +380,23 @@ def main(config: DictConfig):
         num_devices = torch.cuda.device_count()
     else:
         num_devices = int(devices)
+
+    # --- Custom WandB Logger Injection ---
+    if getattr(train_config, "wandb", False):
+        from pytorch_lightning.loggers import WandbLogger
+        try:
+            cfg_for_log = OmegaConf.to_container(config, resolve=True)
+        except Exception:
+            cfg_for_log = OmegaConf.to_container(config, resolve=False)
+            
+        custom_logger = WandbLogger(
+            project="cell-detection-motifs",
+            name=run_name,
+            save_dir=train_config.output_dir,
+            config=cfg_for_log
+        )
+        trainer_kwargs["logger"] = custom_logger
+    # ---------------------------------------
         
     trainer = build_trainer(
         train_config=train_config, 
