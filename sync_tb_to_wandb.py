@@ -1,9 +1,11 @@
 import os
 import glob
 import wandb
+import yaml
 
 PROJECT = "cell-detection-motifs"
 BASE_DIR = "/mnt/direct-attached/as-cells/checkpoints/phase2/"
+CONFIGS_BASE = "/mnt/direct-attached/as-cells/configs/data"
 
 def main():
     print(f"Scanning for TensorBoard logs in {BASE_DIR}")
@@ -36,6 +38,32 @@ def main():
             motif_name = parts[0]
             timestamp = "202" + parts[1]
 
+        # Parse config for train_datasets
+        train_datasets = []
+        split_motif = "Unknown"
+        coverage = None
+        
+        yaml_paths = [
+            os.path.join(CONFIGS_BASE, f"{motif_name}.yaml"),
+            os.path.join(CONFIGS_BASE, "coverage_splits", f"{motif_name}.yaml")
+        ]
+        
+        for y_path in yaml_paths:
+            if os.path.exists(y_path):
+                try:
+                    with open(y_path, 'r') as f:
+                        cfg = yaml.safe_load(f)
+                        if cfg and "data" in cfg:
+                            train_datasets = cfg["data"].get("train_datasets", [])
+                            split_motif = cfg["data"].get("split_motif", "Unknown")
+                            coverage = cfg["data"].get("coverage", None)
+                    break
+                except Exception as e:
+                    print(f"Failed to parse {y_path}: {e}")
+
+        # Using lora as default for phase2
+        finetune_mode = "lora"
+
         # Initialize WandB, forcing it to sync TensorBoard logs from this directory
         run = wandb.init(
             project=PROJECT,
@@ -46,7 +74,11 @@ def main():
                 "motif_config": motif_name,
                 "timestamp": timestamp,
                 "local_dir": tb_dir,
-                "note": "Retroactively synced from TensorBoard"
+                "note": "Retroactively synced from TensorBoard",
+                "model.rfdetr.finetune_mode": finetune_mode,
+                "data.train_datasets": train_datasets,
+                "data.split_motif": split_motif,
+                "data.coverage": coverage
             },
             reinit=True # Allow multiple runs in the same script
         )
