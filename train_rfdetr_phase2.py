@@ -312,6 +312,9 @@ def main(config: DictConfig):
         compute_test_loss=True,
         fp16_eval=False,
         progress_bar="tqdm",
+        wandb=True,
+        project="cell-detection-motifs",
+        run=run_name,
     )
     
     if hasattr(config.optimizer.optimizer, "lr_encoder"):
