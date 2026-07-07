@@ -2,16 +2,35 @@ import os
 import glob
 import wandb
 import yaml
+import argparse
 
 PROJECT = "cell-detection-motifs"
-BASE_DIR = "/mnt/direct-attached/as-cells/checkpoints/phase2/"
-CONFIGS_BASE = "/mnt/direct-attached/as-cells/configs/data"
+CONFIGS_BASE = "configs/data"
 
 def main():
-    print(f"Scanning for TensorBoard logs in {BASE_DIR}")
+    parser = argparse.ArgumentParser(description="Sync TensorBoard logs to WandB")
+    parser.add_argument("--checkpoints_dir", type=str, default=None, help="Path to phase2 checkpoints directory")
+    args = parser.parse_args()
+
+    # Auto-detect checkpoints dir if not provided
+    if args.checkpoints_dir is None:
+        common_ckpt_paths = [
+            "checkpoints/phase2",
+            "/mnt/direct-attached/as-cells/checkpoints/phase2",
+            "/mnt/direct-attached/checkpoints/phase2",
+            "/project/aip-robsc/asinha/cellanome/DATA/checkpoints/phase2"
+        ]
+        for p in common_ckpt_paths:
+            if os.path.isdir(p):
+                args.checkpoints_dir = p
+                break
+        if args.checkpoints_dir is None:
+            args.checkpoints_dir = "checkpoints/phase2" # fallback
+
+    print(f"Scanning for TensorBoard logs in {args.checkpoints_dir}")
     
     # Find all tfevents files recursively
-    tfevent_files = glob.glob(os.path.join(BASE_DIR, "**", "events.out.tfevents*"), recursive=True)
+    tfevent_files = glob.glob(os.path.join(args.checkpoints_dir, "**", "events.out.tfevents*"), recursive=True)
     
     # Extract unique directories containing these files
     tb_dirs = set(os.path.dirname(f) for f in tfevent_files)
