@@ -360,7 +360,7 @@ def main(config: DictConfig):
     # 6. Build Trainer
     # Handle debug overrides natively
     trainer_kwargs = {}
-    trainer_kwargs["replace_sampler_ddp"] = False
+    trainer_kwargs["use_distributed_sampler"] = False
     
     if getattr(config, "debug", False):
         rank_zero_print("--- RUNNING IN DEBUG MODE ---")
@@ -407,6 +407,10 @@ def main(config: DictConfig):
         devices=devices,
         **trainer_kwargs
     )
+
+    if hasattr(trainer, "_data_connector"):
+        if hasattr(trainer._data_connector, "_use_distributed_sampler"):
+            trainer._data_connector._use_distributed_sampler = False
 
     # 7. Callbacks Swapping
     trainer.callbacks = [cb for cb in trainer.callbacks if not isinstance(cb, COCOEvalCallback)]
