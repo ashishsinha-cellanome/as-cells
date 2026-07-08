@@ -360,6 +360,8 @@ def main(config: DictConfig):
     # 6. Build Trainer
     # Handle debug overrides natively
     trainer_kwargs = {}
+    trainer_kwargs["replace_sampler_ddp"] = False
+    
     if getattr(config, "debug", False):
         rank_zero_print("--- RUNNING IN DEBUG MODE ---")
         trainer_kwargs["limit_train_batches"] = getattr(config.trainer, "limit_train_batches", 100)
