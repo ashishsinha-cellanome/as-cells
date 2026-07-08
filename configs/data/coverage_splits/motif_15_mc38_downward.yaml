@@ -5,8 +5,26 @@ data:
   train_datasets:
   - 20240625_mc38_10x_caged_4_class
   test_datasets:
+  - 20240422_neuron-adhered_10x_uncaged_4_class
   - 20240509_Hs675Tfibroblasts_10x_caged_4_class
-  - 20250820_c8d1a_astrocytes-adherent_10x_caged_4_class
+  - 20240509_hela-adhered_10x_caged_4_class
+  - 20240515_DC-adhered_10x_caged_4_class
+  - 20240516_DC-adhered_10x_caged_4_class
+  - 20240624_mc38_10x_caged_4_class
+  - 20240624_mc38_10x_uncaged_4_class
+  - 20240625_mc38_10x_caged_4_class
+  - 20240703_neuron-adhered_10x_caged_4_class
+  - 20240704_neuron-adhered_10x_caged_4_class
+  - 20240905_u87-adhered_10x_caged_4_class
   - 20240924_enteric-glia-adhered_10x_uncaged_4_class
+  - 20241212_preadipocytes-adhered_10x_uncaged_4_class
+  - 20250108_neuron-adhered_10x_uncaged_4_class
+  - 20250227_preadipocytes-adhered_10x_caged_4_class
+  - 20250305_neuron-adhered_10x_uncaged_4_class
+  - 20250820_c8d1a_astrocytes-adherent_10x_caged_4_class
+  - 20250917_moc22-adhered_10x_caged_4_class
+  - 20260316_a549-tomm20-gfp-adhered_10x_caged_at_4x_4_class
+  - 231212_imr90_multichannel_overlay_4_class
+  - 240213_imr90_multichannel_overlay_4_class
   split_motif: Downward
   coverage: 0.4838
