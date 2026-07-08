@@ -297,7 +297,7 @@ def main(config: DictConfig):
         grad_accum_steps=grad_accum_steps,
         lr=float(config.optimizer.optimizer.lr),
         weight_decay=float(config.optimizer.optimizer.weight_decay),
-        output_dir=os.path.join(config.checkpointing.save_dir, "phase2", f"{motif_config_name}_{timestamp}"),
+        output_dir=os.path.join(config.checkpointing.save_dir, "phase2", f"{motif_config_name}_{finetune_mode}_{timestamp}"),
         use_ema=bool(config.model.rfdetr.get("use_ema", True)),
         ema_decay=float(config.model.rfdetr.get("ema_decay", 0.993)),
         ema_tau=int(config.model.rfdetr.get("ema_tau", 1000)),
@@ -433,7 +433,7 @@ def main(config: DictConfig):
     if is_seg:
         trainer.callbacks.append(
             ModelCheckpoint(
-                dirpath=os.path.join(config.checkpointing.save_dir, "phase2", f"{motif_config_name}_{timestamp}"),
+                dirpath=os.path.join(config.checkpointing.save_dir, "phase2", f"{motif_config_name}_{finetune_mode}_{timestamp}"),
                 filename="best-segm-epoch{epoch:02d}",
                 monitor="val/segm_mAP_50_95",
                 mode="max",
@@ -445,7 +445,7 @@ def main(config: DictConfig):
         if bool(config.model.rfdetr.get("use_ema", True)):
             trainer.callbacks.append(
                 ModelCheckpoint(
-                    dirpath=os.path.join(config.checkpointing.save_dir, "phase2", f"{motif_config_name}_{timestamp}"),
+                    dirpath=os.path.join(config.checkpointing.save_dir, "phase2", f"{motif_config_name}_{finetune_mode}_{timestamp}"),
                     filename="best-ema-segm-epoch{epoch:02d}",
                     monitor="val/ema_segm_mAP_50_95",
                     mode="max",

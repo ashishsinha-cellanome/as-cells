@@ -243,9 +243,13 @@ class DetailedCocoEvalCallback(pl.Callback):
             metrics_segm = obj_list[0]["segm"]
             
         for key, value in metrics_bbox.items():
+            if key == "_markdown_table":
+                continue
             pl_module.log(f"{split}/{key}{suffix}", value, sync_dist=True)
             
         for key, value in metrics_segm.items():
+            if key == "_markdown_table":
+                continue
             pl_module.log(f"{split}/{key}{suffix}", value, sync_dist=True)
             
         step_outputs.clear()

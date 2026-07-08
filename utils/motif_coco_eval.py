@@ -239,6 +239,10 @@ class MotifCocoEvalCallback(DetailedCocoEvalCallback):
             "test_ds": {"mAP": [], "segm": [], "ema_mAP": [], "ema_segm": []}
         }
         
+        # Initialize markdown report
+        ckpt_path = getattr(pl_module.config.initialization, "load_from_checkpoint", "Unknown")
+        md_report = f"# Inference Summary Report\n**Checkpoint:** `{ckpt_path}`\n\n"
+        
         for dl_idx, dl_name in enumerate(self.test_dataloader_names):
             coco_gt = self.test_get_coco_gt_fns[dl_idx]()
             if not coco_gt or len(self.test_outputs[dl_idx]) == 0:
@@ -251,6 +255,15 @@ class MotifCocoEvalCallback(DetailedCocoEvalCallback):
             
             print(f"\n[MotifCocoEvalCallback] Computing Test Metrics for {dl_name}...")
             metrics_bbox, metrics_segm = self._compute_and_log(trainer, pl_module, self.test_outputs[dl_idx], coco_gt, prefix, "")
+            
+            # Add to Markdown Report
+            md_report += f"## Dataset: `{dl_name}`\n"
+            if "_markdown_table" in metrics_bbox:
+                md_report += f"**Metric Type:** Regular Weights - Bounding Box (BBOX)\n\n"
+                md_report += metrics_bbox["_markdown_table"] + "\n\n"
+            if "_markdown_table" in metrics_segm:
+                md_report += f"**Metric Type:** Regular Weights - Segmentation (SEGM)\n\n"
+                md_report += metrics_segm["_markdown_table"] + "\n\n"
             
             bbox_map = metrics_bbox.get("detailed_bbox_map", 0.0)
             segm_map = metrics_segm.get("detailed_segm_map", 0.0)
@@ -275,6 +288,14 @@ class MotifCocoEvalCallback(DetailedCocoEvalCallback):
                 self._visualize_predictions(trainer, pl_module, self.test_outputs_ema[dl_idx], coco_gt, "test", dl_name + "_ema")
                 print(f"\n[MotifCocoEvalCallback] Computing Test EMA Metrics for {dl_name}...")
                 metrics_bbox_ema, metrics_segm_ema = self._compute_and_log(trainer, pl_module, self.test_outputs_ema[dl_idx], coco_gt, prefix, "_ema")
+                
+                # Add EMA to Markdown Report
+                if "_markdown_table" in metrics_bbox_ema:
+                    md_report += f"**Metric Type:** EMA Weights - Bounding Box (BBOX)\n\n"
+                    md_report += metrics_bbox_ema["_markdown_table"] + "\n\n"
+                if "_markdown_table" in metrics_segm_ema:
+                    md_report += f"**Metric Type:** EMA Weights - Segmentation (SEGM)\n\n"
+                    md_report += metrics_segm_ema["_markdown_table"] + "\n\n"
                 
                 ema_bbox = metrics_bbox_ema.get("detailed_bbox_map", 0.0)
                 ema_segm = metrics_segm_ema.get("detailed_segm_map", 0.0)
@@ -321,3 +342,34 @@ class MotifCocoEvalCallback(DetailedCocoEvalCallback):
             if len(scores["ema_segm"]) > 0:
                 pl_module.log(f"test/best_{group}_ema_segm_mAP_50_95", max(scores["ema_segm"]), sync_dist=True)
                 pl_module.log(f"test/avg_{group}_ema_segm_mAP_50_95", sum(scores["ema_segm"]) / len(scores["ema_segm"]), sync_dist=True)
+
+        if trainer.is_global_zero:
+            import os
+            
+            out_dir = getattr(pl_module.config.checkpointing, "save_dir", "output")
+            if hasattr(pl_module, "train_config") and hasattr(pl_module.train_config, "output_dir"):
+                out_dir = pl_module.train_config.output_dir
+            elif hasattr(pl_module, "config") and hasattr(pl_module.config, "run_name"):
+                out_dir = os.path.join(out_dir, "phase2", pl_module.config.run_name)
+            
+            os.makedirs(out_dir, exist_ok=True)
+            report_path = os.path.join(out_dir, "inference_summary_report.md")
+            
+            with open(report_path, "w") as f:
+                f.write(md_report)
+                
+            print("\n" + "="*80)
+            print(md_report)
+            print("="*80 + "\n")
+            print(f"[MotifCocoEvalCallback] Saved Markdown report to: {report_path}")
+            
+            # Log to W&B
+            if hasattr(trainer, "logger") and getattr(trainer.logger, "experiment", None):
+                try:
+                    import wandb
+                    import markdown
+                    html = markdown.markdown(md_report, extensions=["tables"])
+                    trainer.logger.experiment.log({"Inference Summary Report": wandb.Html(html)})
+                    print("[MotifCocoEvalCallback] Logged report to W&B")
+                except ImportError:
+                    print("[MotifCocoEvalCallback] Could not log report to W&B: `markdown` package not installed.")

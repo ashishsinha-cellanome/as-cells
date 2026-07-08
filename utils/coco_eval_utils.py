@@ -211,6 +211,8 @@ def compute_coco_metrics(
                         best_p = valid_p[best_idx]
                         best_r = valid_r[best_idx]
 
+                best_f1 = 2 * best_p * best_r / (best_p + best_r + 1e-16)
+
                 table_rows.append(
                     {
                         "Class": class_name,
@@ -218,6 +220,7 @@ def compute_coco_metrics(
                         "Labels": labels_per_class.get(cat_id, 0),
                         "P": best_p,
                         "R": best_r,
+                        "F1": best_f1,
                         "mAP@.5": metrics.get(f"{key_prefix}map_50_{class_name}", 0.0),
                         "mAP@.5:.95": metrics.get(f"{key_prefix}map_{class_name}", 0.0),
                     }
@@ -230,6 +233,7 @@ def compute_coco_metrics(
             # Pycocotools doesn't provide a single curve for "all". So we take average of best P and R.
             avg_p = np.mean([row["P"] for row in table_rows]) if table_rows else 0.0
             avg_r = np.mean([row["R"] for row in table_rows]) if table_rows else 0.0
+            avg_f1 = np.mean([row["F1"] for row in table_rows]) if table_rows else 0.0
 
             all_row = {
                 "Class": "all",
@@ -237,18 +241,28 @@ def compute_coco_metrics(
                 "Labels": total_labels,
                 "P": avg_p,
                 "R": avg_r,
+                "F1": avg_f1,
                 "mAP@.5": metrics.get(f"{key_prefix}map_50", 0.0),
                 "mAP@.5:.95": metrics.get(f"{key_prefix}map", 0.0),
             }
 
+            # Build markdown table output
+            md_table = f"| Class | P | R | F1 | mAP@0.5 | mAP@0.5-0.95 |\n"
+            md_table += f"|---|---|---|---|---|---|\n"
+            md_table += f"| **{all_row['Class']}** | {all_row['P']:.3f} | {all_row['R']:.3f} | {all_row['F1']:.3f} | {all_row['mAP@.5']:.3f} | {all_row['mAP@.5:.95']:.3f} |\n"
+            for r in table_rows:
+                md_table += f"| {r['Class']} | {r['P']:.3f} | {r['R']:.3f} | {r['F1']:.3f} | {r['mAP@.5']:.3f} | {r['mAP@.5:.95']:.3f} |\n"
+            
+            metrics["_markdown_table"] = md_table
+
             # Print the formatted table
             print(f"\n{prefix}")
-            header = f"{'Class':<14}{'Images':<8}{'Labels':<11}{'P':<8}{'R':<9}{'mAP@.5':<11}{'mAP@.5:.95':<11}"
+            header = f"{'Class':<14}{'Images':<8}{'Labels':<11}{'P':<8}{'R':<9}{'F1':<8}{'mAP@.5':<11}{'mAP@.5:.95':<11}"
             print(header)
 
             def print_row(r):
                 print(
-                    f"{r['Class']:<14}{r['Images']:<8}{r['Labels']:<11}{r['P']:<8.3f}{r['R']:<9.3f}{r['mAP@.5']:<11.3f}{r['mAP@.5:.95']:<11.3f}"
+                    f"{r['Class']:<14}{r['Images']:<8}{r['Labels']:<11}{r['P']:<8.3f}{r['R']:<9.3f}{r['F1']:<8.3f}{r['mAP@.5']:<11.3f}{r['mAP@.5:.95']:<11.3f}"
                 )
 
             print_row(all_row)
