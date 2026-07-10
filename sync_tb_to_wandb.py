@@ -62,7 +62,7 @@ def main():
                     print(f"Failed to parse {y_path}: {e}")
 
         # Using lora as default for phase2
-        finetune_mode = "lora"
+        finetune_mode = "full" #"lora"
 
         # Initialize WandB, forcing it to sync TensorBoard logs from this directory
         run = wandb.init(
