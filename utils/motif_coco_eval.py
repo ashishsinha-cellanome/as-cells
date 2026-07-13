@@ -114,7 +114,18 @@ class MotifCocoEvalCallback(DetailedCocoEvalCallback):
                 # train_ds/merged -> might have val_name folder
                 val_name = getattr(cfg.data, 'val_name', 'val_new') if split == 'val' else getattr(cfg.data, 'test_name', 'test')
                 img_path = data_path / "images" / val_name / img_file
+                
+            if not img_path.exists() and "/" in dl_name:
+                parts = dl_name.split("/")
+                if len(parts) >= 2:
+                    dataset_name = parts[1]
+                    sub_folder = getattr(cfg.data, 'val_name', 'val_new') if split == 'val' else getattr(cfg.data, 'test_name', 'test')
+                    img_path = data_path / dataset_name / "images" / sub_folder / img_file
+                    if not img_path.exists():
+                        img_path = data_path / dataset_name / img_file
+                        
             if not img_path.exists():
+                print(f"[Warning] Could not find image for visualization: {img_file}")
                 continue
                 
             img = cv2.imread(str(img_path))
