@@ -200,10 +200,15 @@ class MotifDataModule(pl.LightningDataModule):
         dataloaders = []
         all_val_datasets = self.val_train_datasets_objs
         for ds in all_val_datasets:
+            sampler = None
+            if torch.distributed.is_available() and torch.distributed.is_initialized():
+                sampler = torch.utils.data.distributed.DistributedSampler(ds, shuffle=False)
+                
             dl = DataLoader(
                 ds,
                 batch_size=eval_batch_size,
                 shuffle=False,
+                sampler=sampler,
                 num_workers=self._args.num_workers,
                 collate_fn=collate_fn,
                 pin_memory=True,
@@ -217,10 +222,15 @@ class MotifDataModule(pl.LightningDataModule):
         dataloaders = []
         all_test_datasets = getattr(self, "train_test_datasets_objs", []) + getattr(self, "test_datasets_objs", [])
         for ds in all_test_datasets:
+            sampler = None
+            if torch.distributed.is_available() and torch.distributed.is_initialized():
+                sampler = torch.utils.data.distributed.DistributedSampler(ds, shuffle=False)
+                
             dl = DataLoader(
                 ds,
                 batch_size=eval_batch_size,
                 shuffle=False,
+                sampler=sampler,
                 num_workers=self._args.num_workers,
                 collate_fn=collate_fn,
                 pin_memory=True,

@@ -176,10 +176,15 @@ class Phase2MotifDataModule(MotifDataModule):
         dataloaders = []
         
         for ds in getattr(self, "train_test_datasets_objs", []):
+            sampler = None
+            if torch.distributed.is_available() and torch.distributed.is_initialized():
+                sampler = torch.utils.data.distributed.DistributedSampler(ds, shuffle=False)
+                
             dl = DataLoader(
                 ds,
                 batch_size=eval_batch_size,
                 shuffle=False,
+                sampler=sampler,
                 num_workers=self._args.num_workers,
                 collate_fn=collate_fn,
                 pin_memory=True,
@@ -188,10 +193,15 @@ class Phase2MotifDataModule(MotifDataModule):
             dataloaders.append(dl)
             
         for ds in self.test_datasets_objs:
+            sampler = None
+            if torch.distributed.is_available() and torch.distributed.is_initialized():
+                sampler = torch.utils.data.distributed.DistributedSampler(ds, shuffle=False)
+                
             dl = DataLoader(
                 ds,
                 batch_size=eval_batch_size,
                 shuffle=False,
+                sampler=sampler,
                 num_workers=self._args.num_workers,
                 collate_fn=collate_fn,
                 pin_memory=True,
