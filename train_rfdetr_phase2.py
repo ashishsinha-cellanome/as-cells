@@ -324,7 +324,7 @@ def main(config: DictConfig):
         train_log_sync_dist=True,
         compute_val_loss=True,
         compute_test_loss=True,
-        fp16_eval=False,
+        fp16_eval=True,
         progress_bar="tqdm",
         wandb=True,
         project="cell-detection-motifs",
