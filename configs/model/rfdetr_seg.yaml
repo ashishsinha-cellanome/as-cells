@@ -24,8 +24,8 @@ rfdetr:
   lr_scheduler: cosine
   warmup_epochs: 1.0
   lr_min_factor: 0.0
-  patch_size: 14
-  num_windows: 4
+  # patch_size: 14
+  # num_windows: 4
   group_detr: 1
   compile: false
 

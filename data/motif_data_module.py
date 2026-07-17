@@ -196,6 +196,7 @@ class MotifDataModule(pl.LightningDataModule):
 
     def val_dataloader(self):
         eval_batch_size = int(getattr(self.config.data, "eval_batch_size", 1))
+        eval_num_workers = min(self._args.num_workers, 8)
         
         dataloaders = []
         all_val_datasets = self.val_train_datasets_objs
@@ -209,7 +210,7 @@ class MotifDataModule(pl.LightningDataModule):
                 batch_size=eval_batch_size,
                 shuffle=False,
                 sampler=sampler,
-                num_workers=self._args.num_workers,
+                num_workers=eval_num_workers,
                 collate_fn=collate_fn,
                 pin_memory=True,
                 drop_last=False,
@@ -219,6 +220,8 @@ class MotifDataModule(pl.LightningDataModule):
 
     def test_dataloader(self):
         eval_batch_size = int(getattr(self.config.data, "eval_batch_size", 1))
+        eval_num_workers = min(self._args.num_workers, 8)
+        
         dataloaders = []
         all_test_datasets = getattr(self, "train_test_datasets_objs", []) + getattr(self, "test_datasets_objs", [])
         for ds in all_test_datasets:
@@ -231,7 +234,7 @@ class MotifDataModule(pl.LightningDataModule):
                 batch_size=eval_batch_size,
                 shuffle=False,
                 sampler=sampler,
-                num_workers=self._args.num_workers,
+                num_workers=eval_num_workers,
                 collate_fn=collate_fn,
                 pin_memory=True,
                 drop_last=False,

@@ -157,8 +157,14 @@ class Phase2MotifDataModule(MotifDataModule):
             )
             shuffle = False
         else:
-            sampler = None
-            shuffle = True
+            if torch.distributed.is_initialized() and torch.distributed.is_available():
+                sampler = torch.utils.data.distributed.DistributedSampler(
+                    self.concat_train, shuffle=True, drop_last=True
+                )
+                shuffle = False
+            else:
+                sampler = None
+                shuffle = True
 
         return DataLoader(
             self.concat_train,
@@ -173,6 +179,7 @@ class Phase2MotifDataModule(MotifDataModule):
 
     def test_dataloader(self):
         eval_batch_size = int(getattr(self.config.data, "eval_batch_size", 1))
+        eval_num_workers = min(self._args.num_workers, 8)
         dataloaders = []
         
         for ds in getattr(self, "train_test_datasets_objs", []):
@@ -185,7 +192,7 @@ class Phase2MotifDataModule(MotifDataModule):
                 batch_size=eval_batch_size,
                 shuffle=False,
                 sampler=sampler,
-                num_workers=self._args.num_workers,
+                num_workers=eval_num_workers,
                 collate_fn=collate_fn,
                 pin_memory=True,
                 drop_last=False,
@@ -202,7 +209,7 @@ class Phase2MotifDataModule(MotifDataModule):
                 batch_size=eval_batch_size,
                 shuffle=False,
                 sampler=sampler,
-                num_workers=self._args.num_workers,
+                num_workers=eval_num_workers,
                 collate_fn=collate_fn,
                 pin_memory=True,
                 drop_last=False,
@@ -263,7 +270,6 @@ def main(config: DictConfig):
     is_seg = "seg" in config.model.name.lower()
     rf_model_cls = _get_model_class(config.model.rfdetr.size, is_seg=is_seg)
     kwargs = {
-        "pretrain_weights": config.model.rfdetr.get("pretrain_weights", None),
         "resolution": int(config.model.input_size),
         "num_classes": num_classes,
         "device": "cuda" if torch.cuda.is_available() else "cpu",
@@ -272,6 +278,10 @@ def main(config: DictConfig):
         "backbone_lora": False # We apply it via the model_config later
     }
     
+    pretrain_weights = config.model.rfdetr.get("pretrain_weights", None)
+    if pretrain_weights is not None:
+        kwargs["pretrain_weights"] = pretrain_weights
+        
     if hasattr(config.model.rfdetr, "patch_size"):
         kwargs["patch_size"] = int(config.model.rfdetr.patch_size)
     if hasattr(config.model.rfdetr, "num_windows"):
