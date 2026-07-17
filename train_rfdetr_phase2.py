@@ -424,10 +424,17 @@ def main(config: DictConfig):
         trainer_kwargs["logger"] = custom_logger
     # ---------------------------------------
         
+    if num_devices <= 1:
+        strategy_obj = "auto"
+    else:
+        from pytorch_lightning.strategies import DDPStrategy
+        from datetime import timedelta
+        strategy_obj = DDPStrategy(find_unused_parameters=True, timeout=timedelta(hours=2))
+        
     trainer = build_trainer(
         train_config=train_config, 
         model_config=model_config, 
-        strategy="auto" if num_devices <= 1 else "ddp_find_unused_parameters_true",
+        strategy=strategy_obj,
         devices=devices,
         **trainer_kwargs
     )

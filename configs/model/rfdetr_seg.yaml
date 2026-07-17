@@ -1,8 +1,9 @@
 name: rf_detr_seg_${model.rfdetr.size}
 size_to_input:
-  small: 384
-  medium: 432
+  small: 392
+  medium: 448
   large: 504
+  base: 672
 input_size: ${model.size_to_input[${model.rfdetr.size}]}
 
 rfdetr:
