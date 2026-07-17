@@ -1,6 +1,9 @@
 import torch
 import torch.distributed as dist
-from pycocotools.cocoeval import COCOeval
+try:
+    from faster_coco_eval import COCOeval_faster as COCOeval
+except ImportError:
+    from pycocotools.cocoeval import COCOeval
 
 
 def to_cpu_device(data):

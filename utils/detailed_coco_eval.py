@@ -1,7 +1,10 @@
 
 import torch
 import pytorch_lightning as pl
-import pycocotools.mask as mask_utils
+try:
+    import faster_coco_eval.mask as mask_utils
+except ImportError:
+    import pycocotools.mask as mask_utils
 import numpy as np
 
 from utils.coco_eval_utils import convert_preds_to_coco, compute_coco_metrics, gather_outputs_across_processes, to_cpu_device
