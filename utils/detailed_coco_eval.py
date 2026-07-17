@@ -1,7 +1,15 @@
 
 import torch
 import pytorch_lightning as pl
-import pycocotools.mask as mask_utils
+try:
+    import faster_coco_eval.mask as mask_utils
+    _MASK_BACKEND = "faster_coco_eval"
+except ImportError:
+    import pycocotools.mask as mask_utils
+    _MASK_BACKEND = "pycocotools"
+
+_MASK_BACKEND_LOGGED = False
+
 import numpy as np
 
 from utils.coco_eval_utils import convert_preds_to_coco, compute_coco_metrics, gather_outputs_across_processes, to_cpu_device
@@ -181,61 +189,71 @@ class DetailedCocoEvalCallback(pl.Callback):
 
     def _compute_and_log(self, trainer, pl_module, step_outputs, coco_gt, split, suffix):
         from tqdm import tqdm
-        all_outputs = gather_outputs_across_processes(step_outputs)
+        import torch.distributed as dist
         
-        metrics_bbox = {}
+        is_distributed = dist.is_available() and dist.is_initialized()
+        rank = dist.get_rank() if is_distributed else 0
+        
+        global _MASK_BACKEND_LOGGED
+        if not _MASK_BACKEND_LOGGED:
+            if rank == 0:
+                print(f"[COCO Eval] Using mask backend: {_MASK_BACKEND}")
+            _MASK_BACKEND_LOGGED = True
+        
+        predictions = []
+        image_ids = []
+        processed_image_ids = set()
+        
+        # Only iterate over LOCAL step_outputs
+        for batch_out in tqdm(step_outputs, desc=f"Converting {split}{suffix} preds", disable=rank!=0):
+            predictions_map = batch_out.get("predictions", {})
+            filtered_predictions_map = {}
+            for img_id, pred in predictions_map.items():
+                if img_id not in processed_image_ids:
+                    filtered_predictions_map[img_id] = pred
+                    processed_image_ids.add(img_id)
+                    image_ids.append(img_id)
+                    
+            model_to_coco = getattr(pl_module, "model_to_coco", None)
+            predictions.extend(convert_preds_to_coco(filtered_predictions_map, model_to_coco=model_to_coco))
+            
+        max_dets = 100
+        ema_label = " EMA" if suffix else ""
+        
+        metrics_bbox = compute_coco_metrics(
+            coco_gt=coco_gt,
+            predictions=predictions,
+            image_ids=sorted(set(image_ids)),
+            max_detections=max_dets,
+            label_map=self.label_map,
+            prefix=f"Detailed YOLO-Style Performance ({split.upper()}{ema_label}) - BBOX",
+            iou_type="bbox",
+            metric_prefix="detailed_bbox"
+        )
+        
+        local_has_seg = any("segmentation" in p for p in predictions)
+        if is_distributed:
+            import torch
+            has_seg_tensor = torch.tensor([local_has_seg], dtype=torch.uint8, device=pl_module.device)
+            dist.all_reduce(has_seg_tensor, op=dist.ReduceOp.MAX)
+            global_has_seg = bool(has_seg_tensor.item())
+        else:
+            global_has_seg = local_has_seg
+            
         metrics_segm = {}
-        
-        if trainer.is_global_zero:
-            predictions = []
-            image_ids = []
-            # Deduplicate image ids (important when DistributedSampler pads)
-            processed_image_ids = set()
-            for batch_out in tqdm(all_outputs, desc=f"Converting {split}{suffix} preds"):
-                predictions_map = batch_out.get("predictions", {})
-                
-                # Filter out predictions for already processed images
-                filtered_predictions_map = {}
-                for img_id, pred in predictions_map.items():
-                    if img_id not in processed_image_ids:
-                        filtered_predictions_map[img_id] = pred
-                        processed_image_ids.add(img_id)
-                        image_ids.append(img_id)
-                        
-                model_to_coco = getattr(pl_module, "model_to_coco", None)
-                predictions.extend(convert_preds_to_coco(filtered_predictions_map, model_to_coco=model_to_coco))
-                
-            if predictions and coco_gt is not None:
-                max_dets = 100
-
-                ema_label = " EMA" if suffix else ""
-                
-                metrics_bbox = compute_coco_metrics(
-                    coco_gt=coco_gt,
-                    predictions=predictions,
-                    image_ids=sorted(set(image_ids)),
-                    max_detections=max_dets,
-                    label_map=self.label_map,
-                    prefix=f"Detailed YOLO-Style Performance ({split.upper()}{ema_label}) - BBOX",
-                    iou_type="bbox",
-                    metric_prefix="detailed_bbox"
-                )
-                
-                is_seg = any("segmentation" in p for p in predictions)
-                if is_seg:
-                    metrics_segm = compute_coco_metrics(
-                        coco_gt=coco_gt,
-                        predictions=predictions,
-                        image_ids=sorted(set(image_ids)),
-                        max_detections=max_dets,
-                        label_map=self.label_map,
-                        prefix=f"Detailed YOLO-Style Performance ({split.upper()}{ema_label}) - SEGM",
-                        iou_type="segm",
-                        metric_prefix="detailed_segm"
-                    )
-                
-        if torch.distributed.is_initialized() and torch.distributed.is_available():
-            import torch.distributed as dist
+        if global_has_seg:
+            metrics_segm = compute_coco_metrics(
+                coco_gt=coco_gt,
+                predictions=predictions,
+                image_ids=sorted(set(image_ids)),
+                max_detections=max_dets,
+                label_map=self.label_map,
+                prefix=f"Detailed YOLO-Style Performance ({split.upper()}{ema_label}) - SEGM",
+                iou_type="segm",
+                metric_prefix="detailed_segm"
+            )
+            
+        if is_distributed:
             obj_list = [{"bbox": metrics_bbox, "segm": metrics_segm}]
             if dist.get_world_size() > 1:
                 dist.broadcast_object_list(obj_list, src=0)
@@ -243,9 +261,11 @@ class DetailedCocoEvalCallback(pl.Callback):
             metrics_segm = obj_list[0]["segm"]
             
         for key, value in metrics_bbox.items():
+            if key == "_markdown_table": continue
             pl_module.log(f"{split}/{key}{suffix}", value, sync_dist=True)
             
         for key, value in metrics_segm.items():
+            if key == "_markdown_table": continue
             pl_module.log(f"{split}/{key}{suffix}", value, sync_dist=True)
             
         step_outputs.clear()

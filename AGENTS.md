@@ -4,6 +4,7 @@
 
 ## 🚨 AI ASSISTANT CONSTRAINTS (CRITICAL)
 
+0. STOP being a kiss-ass, and stop praising or apologizing. Just answer to the point.
 1. **NEVER delete the branch `ashish` or force-merge it to `main`.**
 2. **ALWAYS check the hostname before running tests/training scripts to decide whether to run  `vulcan` or `denvr: odin*` server. if running on vulcan (SLURM) viaa SSH (`ask1gpu`, `sbatch`, `salloc`) or when running on odin machines, also use ssh with simply `uv run <script.py> <options>`.** NEVER run them on the local macOS machine.
 3. **DO NOT assume dataset properties (e.g., image resolutions)**. Write probing scripts. All images are **672x672** for training/validation (Full-scale 4512x4512 is for future inference only).
@@ -15,10 +16,6 @@
 ## Architecture & Models
 
 - **Tech Stack:** PyTorch, Lightning, Hydra (configs), wandb, `uv` (package management).
-- **Models:** RT-DETR v1/v2, RF-DETR, YOLOv5, **Mask2Former**.
-- **Backbones:** DINOv2, ResNets.
-- **Mask2Former FPNs:** `adapter` (Custom ViT-Adapter extracting true spatial strides 4/8/16/32), `sfp`, `fused`, `tiny`.
-  - *Note:* FPN weights need explicit Kaiming init. Pretrained decoder uses 0.1x LR to prevent catastrophic forgetting.
 - **Classes:** 0:cell, 1:bead, 2:cell-adhered (maps to cell), 3:soma (maps to cell).
 
 ## Data & Configs
@@ -34,15 +31,16 @@
 # UV & Linting
 uv sync; uv add <pkg>; uv run ruff check . --fix
 
-# Training (Mask2Former, RT-DETR, etc.)
-uv run train_mask2former.py model=mask2former model/backbone=dinov2_mask2former model.backbone.fpn_type=adapter data=vulcan
-uv run train_rt_detr_v2.py model=rtdetr_v2 data=vulcan
+# Training 
+
+1. ALways use `uv` for running python files such as:
+uv run <python script> <script args>
 
 # SLURM Execution
-sbatch run_rfdetr.sh
-# For interactive vulcan GPU: salloc --account=aip-robsc --nodes=1 --gpus-per-node=1 ...
+ALWAYS check which machine the code is running on (slurm cluster or a normal GPU or local MAC) to figure appropriate configs, and run commands.
+
+For interactive vulcan GPU: salloc --account=aip-robsc --nodes=1 --gpus-per-node=1 ...
 
 # Eval & Inference
-uv run evaluate_all_models.py
 uv run inference.py initialization.load_from_checkpoint=ckpt.pt data.path=/path/to/data
 ```

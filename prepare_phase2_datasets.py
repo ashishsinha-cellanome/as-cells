@@ -198,7 +198,62 @@ def process_dataset_wrapper(dataset_path_str: str):
         print(f"Error processing {dataset_path.name}: {e}")
 
 
+def fix_all_annotations(dry_run=False):
+    import glob
+    print(f"--- {'DRY RUN: ' if dry_run else ''}Scanning datasets for malformed masks ---")
+    bad_files = []
+    
+    suspension_keywords = ["suspension", "jurkat", "k562", "nk92", "pbmc", "mousepbmc", "tall104", "raji", "jerat", "tal104"]
+    
+    for file in sorted(glob.glob('/mnt/direct-attached/PHASE2/*/*_annotations.json')):
+        if any(kw in file.lower() for kw in suspension_keywords):
+            continue
+            
+        try:
+            with open(file, 'r') as f:
+                data = json.load(f)
+            
+            num_bad = 0
+            img_id_to_dim = {img['id']: (img['width'], img['height']) for img in data.get('images', [])}
+            
+            for ann in data.get('annotations', []):
+                seg = ann.get('segmentation')
+                if isinstance(seg, dict) and 'size' in seg:
+                    h, w = img_id_to_dim.get(ann['image_id'], (672, 672))
+                    if list(seg['size']) != [h, w]:
+                        num_bad += 1
+                        if not dry_run:
+                            # Use uncrop_rle_mask logic to pad it
+                            ann['segmentation'] = uncrop_rle_mask(seg, ann['bbox'], img_width=w, img_height=h)
+                            
+            if num_bad > 0:
+                bad_files.append((file, num_bad, len(data.get('annotations', []))))
+                if not dry_run:
+                    with open(file, 'w') as f:
+                        json.dump(decode_bytes(data), f, indent=2)
+                    print(f"[Fixed] {file} - {num_bad} masks patched")
+        except Exception as e:
+            print(f"Error checking {file}: {e}")
+
+    if dry_run:
+        for f, bad, total in bad_files:
+            print(f'[Needs Fix] {f} - {bad}/{total} masks are malformed')
+    
+    print(f'\nTotal files needing fixes: {len(bad_files)}')
+
+
 def main():
+    import argparse
+    parser = argparse.ArgumentParser(description="Phase 2 Dataset Builder & Fixer")
+    parser.add_argument("--fix-jsons", action="store_true", help="Fix malformed masks in existing JSON annotations in-place")
+    parser.add_argument("--dry-run", action="store_true", help="Perform a dry run to see which datasets need fixing")
+    parser.add_argument("datasets", nargs="*", help="Specific datasets to process (if not fixing)")
+    args = parser.parse_args()
+
+    if args.fix_jsons:
+        fix_all_annotations(dry_run=args.dry_run)
+        return
+
     import sys
     import socket
     if 'odin' in socket.gethostname():
@@ -210,8 +265,8 @@ def main():
         print(f"PHASE2 dir not found at: {phase2_dir}")
         return
         
-    if len(sys.argv) > 1:
-        datasets = [str(phase2_dir / d) for d in sys.argv[1:]]
+    if args.datasets:
+        datasets = [str(phase2_dir / d) for d in args.datasets]
     else:
         datasets = [str(item) for item in phase2_dir.iterdir() if item.is_dir()]
     

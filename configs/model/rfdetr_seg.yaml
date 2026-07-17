@@ -1,8 +1,9 @@
 name: rf_detr_seg_${model.rfdetr.size}
 size_to_input:
-  small: 384
-  medium: 432
+  small: 392
+  medium: 448
   large: 504
+  base: 672
 input_size: ${model.size_to_input[${model.rfdetr.size}]}
 
 rfdetr:
@@ -24,8 +25,8 @@ rfdetr:
   lr_scheduler: cosine
   warmup_epochs: 1.0
   lr_min_factor: 0.0
-  patch_size: 14
-  num_windows: 4
+  # patch_size: 14
+  # num_windows: 4
   group_detr: 1
   compile: false
 

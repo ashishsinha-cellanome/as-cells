@@ -25,6 +25,11 @@ from pytorch_lightning.callbacks import ModelCheckpoint
 from data.motif_data_module import MotifDataModule
 from utils.motif_coco_eval import MotifCocoEvalCallback
 from utils.distributed_utils import setup_cluster_env, rank_zero_print
+from utils.test_only_checkpoint_restore import (
+    _load_ckpt,
+    _select_eval_weights_source,
+    _load_selected_weights,
+)
 
 torch.set_float32_matmul_precision("medium")
 OmegaConf.register_new_resolver("oc.eval", eval, replace=True)
@@ -84,65 +89,50 @@ class PreBuiltRFDETRModelModule(RFDETRModelModule):
 class Phase2MotifDataModule(MotifDataModule):
     """
     Subclass of MotifDataModule that computes inverse-frequency weights
-    proportional to class counts, oversampling rare classes (with multiplier support).
+    proportional to class counts to oversample rare classes.
     """
-    def __init__(self, base_path, config, base_args, class_sample_multiplier=None):
+    def __init__(self, base_path, config, base_args):
         super().__init__(base_path, config, base_args)
         # Ensure default train split maps to "train_new"
         self.train_name = getattr(config.data, "train_name", "train_new")
-        self.class_sample_multiplier = class_sample_multiplier or {}
+        self.balance_class_sampling = getattr(config.data, "balance_class_sampling", False)
         self._train_sample_weights = None
 
     def setup(self, stage=None):
         # Build datasets using parent setup logic
         super().setup(stage)
         
-        if stage in ("fit", None) and self.class_sample_multiplier:
-            # 1. Count total instances per class across all training sub-datasets
+        if stage in ("fit", None) and self.balance_class_sampling:
+            # 1. Single pass to count classes and collect image compositions
             total_per_class = {}
+            img_compositions = []
+            
             for ds_obj in self.train_datasets_objs:
                 coco = ds_obj.coco
-                anns = coco.loadAnns(coco.getAnnIds())
-                for ann in anns:
-                    cat_id = ann["category_id"]
-                    total_per_class[cat_id] = total_per_class.get(cat_id, 0) + 1
+                for img_id in coco.imgs.keys():
+                    anns = coco.imgToAnns.get(img_id, [])
+                    img_classes = {ann["category_id"] for ann in anns}
+                    
+                    for cat_id in img_classes:
+                        total_per_class[cat_id] = total_per_class.get(cat_id, 0) + 1
+                        
+                    img_compositions.append(img_classes)
             
-            total_instances = sum(total_per_class.values())
+            total_imgs_with_classes = sum(total_per_class.values())
             num_classes = len(total_per_class)
             
-            if total_instances > 0:
-                # 2. Compute base inverse frequency weights: w_c = Total / (N_c * C)
-                base_class_weight = {
-                    cat_id: total_instances / (count * num_classes)
-                    for cat_id, count in total_per_class.items() if count > 0
+            if total_imgs_with_classes > 0:
+                # 2. Compute true inverse frequency
+                class_weights = {
+                    c: total_imgs_with_classes / (count * num_classes)
+                    for c, count in total_per_class.items()
                 }
                 
-                # 3. Apply custom multipliers
-                for cat_id, multiplier in self.class_sample_multiplier.items():
-                    cat_id_int = int(cat_id)
-                    if cat_id_int in base_class_weight:
-                        base_class_weight[cat_id_int] *= float(multiplier)
-                
-                # 4. Generate per-image sampling weights using log-scale count scaling
-                sample_weights = []
-                for ds_obj in self.train_datasets_objs:
-                    coco = ds_obj.coco
-                    anns = coco.loadAnns(coco.getAnnIds())
-                    
-                    img_counts = {}
-                    for ann in anns:
-                        img_id = ann["image_id"]
-                        cat_id = ann["category_id"]
-                        if img_id not in img_counts:
-                            img_counts[img_id] = {}
-                        img_counts[img_id][cat_id] = img_counts[img_id].get(cat_id, 0) + 1
-                    
-                    for img in coco.imgs.values():
-                        img_id = img["id"]
-                        counts = img_counts.get(img_id, {})
-                        w = sum(math.log(1 + count) * base_class_weight.get(cat_id, 1.0) 
-                                for cat_id, count in counts.items())
-                        sample_weights.append(max(w, 1e-4))
+                # 3. Assign weight to each image based on its rarest class (highest weight)
+                sample_weights = [
+                    max((class_weights[c] for c in classes), default=1e-4)
+                    for classes in img_compositions
+                ]
                 
                 self._train_sample_weights = torch.DoubleTensor(sample_weights)
 
@@ -167,8 +157,14 @@ class Phase2MotifDataModule(MotifDataModule):
             )
             shuffle = False
         else:
-            sampler = None
-            shuffle = True
+            if torch.distributed.is_initialized() and torch.distributed.is_available():
+                sampler = torch.utils.data.distributed.DistributedSampler(
+                    self.concat_train, shuffle=True, drop_last=True
+                )
+                shuffle = False
+            else:
+                sampler = None
+                shuffle = True
 
         return DataLoader(
             self.concat_train,
@@ -183,14 +179,20 @@ class Phase2MotifDataModule(MotifDataModule):
 
     def test_dataloader(self):
         eval_batch_size = int(getattr(self.config.data, "eval_batch_size", 1))
+        eval_num_workers = min(self._args.num_workers, 8)
         dataloaders = []
         
         for ds in getattr(self, "train_test_datasets_objs", []):
+            sampler = None
+            if torch.distributed.is_available() and torch.distributed.is_initialized():
+                sampler = torch.utils.data.distributed.DistributedSampler(ds, shuffle=False)
+                
             dl = DataLoader(
                 ds,
                 batch_size=eval_batch_size,
                 shuffle=False,
-                num_workers=self._args.num_workers,
+                sampler=sampler,
+                num_workers=eval_num_workers,
                 collate_fn=collate_fn,
                 pin_memory=True,
                 drop_last=False,
@@ -198,11 +200,16 @@ class Phase2MotifDataModule(MotifDataModule):
             dataloaders.append(dl)
             
         for ds in self.test_datasets_objs:
+            sampler = None
+            if torch.distributed.is_available() and torch.distributed.is_initialized():
+                sampler = torch.utils.data.distributed.DistributedSampler(ds, shuffle=False)
+                
             dl = DataLoader(
                 ds,
                 batch_size=eval_batch_size,
                 shuffle=False,
-                num_workers=self._args.num_workers,
+                sampler=sampler,
+                num_workers=eval_num_workers,
                 collate_fn=collate_fn,
                 pin_memory=True,
                 drop_last=False,
@@ -263,7 +270,6 @@ def main(config: DictConfig):
     is_seg = "seg" in config.model.name.lower()
     rf_model_cls = _get_model_class(config.model.rfdetr.size, is_seg=is_seg)
     kwargs = {
-        "pretrain_weights": config.model.rfdetr.get("pretrain_weights", None),
         "resolution": int(config.model.input_size),
         "num_classes": num_classes,
         "device": "cuda" if torch.cuda.is_available() else "cpu",
@@ -272,6 +278,10 @@ def main(config: DictConfig):
         "backbone_lora": False # We apply it via the model_config later
     }
     
+    pretrain_weights = config.model.rfdetr.get("pretrain_weights", None)
+    if pretrain_weights is not None:
+        kwargs["pretrain_weights"] = pretrain_weights
+        
     if hasattr(config.model.rfdetr, "patch_size"):
         kwargs["patch_size"] = int(config.model.rfdetr.patch_size)
     if hasattr(config.model.rfdetr, "num_windows"):
@@ -307,10 +317,14 @@ def main(config: DictConfig):
         grad_accum_steps=grad_accum_steps,
         lr=float(config.optimizer.optimizer.lr),
         weight_decay=float(config.optimizer.optimizer.weight_decay),
-        output_dir=os.path.join(config.checkpointing.save_dir, "phase2", f"{motif_config_name}_{timestamp}"),
+        output_dir=os.path.join(config.checkpointing.save_dir, "phase2", f"{motif_config_name}_{finetune_mode}_{timestamp}"),
         use_ema=bool(config.model.rfdetr.get("use_ema", True)),
         ema_decay=float(config.model.rfdetr.get("ema_decay", 0.993)),
         ema_tau=int(config.model.rfdetr.get("ema_tau", 1000)),
+        lr_scheduler=config.model.rfdetr.get("lr_scheduler", "step"),
+        warmup_epochs=float(config.model.rfdetr.get("warmup_epochs", 3.0)),
+        lr_drop=int(config.model.rfdetr.get("lr_drop", 100)),
+        lr_min_factor=float(config.model.rfdetr.get("lr_min_factor", 0.0)),
         eval_max_dets=int(config.model.get("max_detections", 100)),
         early_stopping=bool(getattr(config.trainer, "early_stopping", False)),
         num_workers=int(config.data.num_workers),
@@ -320,8 +334,11 @@ def main(config: DictConfig):
         train_log_sync_dist=True,
         compute_val_loss=True,
         compute_test_loss=True,
-        fp16_eval=False,
+        fp16_eval=True,
         progress_bar="tqdm",
+        wandb=True,
+        project="cell-detection-motifs",
+        run=run_name,
     )
     
     if hasattr(config.optimizer.optimizer, "lr_encoder"):
@@ -356,21 +373,10 @@ def main(config: DictConfig):
                 param.requires_grad = True
 
     # 5. Data Module
-    class_multipliers = getattr(config.data, "class_sample_multiplier", None)
-    if class_multipliers:
-        class_multipliers = OmegaConf.to_container(class_multipliers, resolve=True)
-    else:
-        # Default to 3.0 for 2 and 3 if balance_class_sampling is set, else empty
-        if getattr(config.data, "balance_class_sampling", False):
-            class_multipliers = {2: 3.0, 3: 3.0}
-        else:
-            class_multipliers = {}
-            
     data_module = Phase2MotifDataModule(
         base_path=str(config.data.path), 
         config=config, 
-        base_args=base_args,
-        class_sample_multiplier=class_multipliers
+        base_args=base_args
     )
     data_module.setup("fit")
     data_module.setup("test")
@@ -378,6 +384,8 @@ def main(config: DictConfig):
     # 6. Build Trainer
     # Handle debug overrides natively
     trainer_kwargs = {}
+    trainer_kwargs["use_distributed_sampler"] = False
+    
     if getattr(config, "debug", False):
         rank_zero_print("--- RUNNING IN DEBUG MODE ---")
         trainer_kwargs["limit_train_batches"] = getattr(config.trainer, "limit_train_batches", 100)
@@ -398,14 +406,42 @@ def main(config: DictConfig):
         num_devices = torch.cuda.device_count()
     else:
         num_devices = int(devices)
+
+    # --- Custom WandB Logger Injection ---
+    if getattr(train_config, "wandb", False):
+        from pytorch_lightning.loggers import WandbLogger
+        try:
+            cfg_for_log = OmegaConf.to_container(config, resolve=True)
+        except Exception:
+            cfg_for_log = OmegaConf.to_container(config, resolve=False)
+            
+        custom_logger = WandbLogger(
+            project="cell-detection-motifs",
+            name=run_name,
+            save_dir=train_config.output_dir,
+            config=cfg_for_log
+        )
+        trainer_kwargs["logger"] = custom_logger
+    # ---------------------------------------
+        
+    if num_devices <= 1:
+        strategy_obj = "auto"
+    else:
+        from pytorch_lightning.strategies import DDPStrategy
+        from datetime import timedelta
+        strategy_obj = DDPStrategy(find_unused_parameters=True, timeout=timedelta(hours=2))
         
     trainer = build_trainer(
         train_config=train_config, 
         model_config=model_config, 
-        strategy="auto" if num_devices <= 1 else "ddp_find_unused_parameters_true",
+        strategy=strategy_obj,
         devices=devices,
         **trainer_kwargs
     )
+
+    if hasattr(trainer, "_data_connector"):
+        if hasattr(trainer._data_connector, "_use_distributed_sampler"):
+            trainer._data_connector._use_distributed_sampler = False
 
     # 7. Callbacks Swapping
     trainer.callbacks = [cb for cb in trainer.callbacks if not isinstance(cb, COCOEvalCallback)]
@@ -434,7 +470,7 @@ def main(config: DictConfig):
     if is_seg:
         trainer.callbacks.append(
             ModelCheckpoint(
-                dirpath=os.path.join(config.checkpointing.save_dir, "phase2", f"{motif_config_name}_{timestamp}"),
+                dirpath=os.path.join(config.checkpointing.save_dir, "phase2", f"{motif_config_name}_{finetune_mode}_{timestamp}"),
                 filename="best-segm-epoch{epoch:02d}",
                 monitor="val/segm_mAP_50_95",
                 mode="max",
@@ -446,7 +482,7 @@ def main(config: DictConfig):
         if bool(config.model.rfdetr.get("use_ema", True)):
             trainer.callbacks.append(
                 ModelCheckpoint(
-                    dirpath=os.path.join(config.checkpointing.save_dir, "phase2", f"{motif_config_name}_{timestamp}"),
+                    dirpath=os.path.join(config.checkpointing.save_dir, "phase2", f"{motif_config_name}_{finetune_mode}_{timestamp}"),
                     filename="best-ema-segm-epoch{epoch:02d}",
                     monitor="val/ema_segm_mAP_50_95",
                     mode="max",
@@ -477,11 +513,34 @@ def main(config: DictConfig):
 
     trainer.test = custom_test
 
-    rank_zero_print(f"Starting Training for Motif: {motif_config_name}")
-    trainer.fit(module, datamodule=data_module)
-    
-    rank_zero_print("Training complete. Starting Validation/Test eval...")
-    trainer.test(module, datamodule=data_module)
+    if getattr(config, "test_only", False):
+        rank_zero_print(f"Skipping Training for Motif: {motif_config_name} (test_only mode)")
+        ckpt_path = config.get("initialization", {}).get("load_from_checkpoint", None)
+        if ckpt_path is None:
+            raise ValueError("test_only requires initialization.load_from_checkpoint")
+        
+        test_only_checkpoint = _load_ckpt(ckpt_path)
+        test_only_weight_source = _select_eval_weights_source(
+            ckpt_path, test_only_checkpoint, config=config
+        )
+        
+        rank_zero_print(f"Loading {test_only_weight_source.upper()} weights manually from {ckpt_path}")
+        missing_keys, unexpected_keys = _load_selected_weights(
+            module, test_only_checkpoint, test_only_weight_source
+        )
+        if missing_keys:
+            rank_zero_print(f"⚠️  Missing keys during test-only load: {missing_keys[:10]} ...")
+        if unexpected_keys:
+            rank_zero_print(f"⚠️  Unexpected keys during test-only load: {unexpected_keys[:10]} ...")
+            
+        rank_zero_print(f"Starting Validation/Test eval with loaded weights...")
+        trainer.test(module, datamodule=data_module)
+    else:
+        rank_zero_print(f"Starting Training for Motif: {motif_config_name}")
+        trainer.fit(module, datamodule=data_module)
+        
+        rank_zero_print("Training complete. Starting Validation/Test eval...")
+        trainer.test(module, datamodule=data_module)
     
     # Sync optimized weights back so predictive APIs work post-training
     rf_wrapper.model.model = module.model

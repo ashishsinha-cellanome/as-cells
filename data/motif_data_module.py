@@ -176,6 +176,7 @@ class MotifDataModule(pl.LightningDataModule):
             self.concat_train = ConcatDataset(self.train_datasets_objs)
             
         if stage in ("test", None):
+            self.train_test_datasets_objs = [self._make_dataset(ds, self.test_name) for ds in self.train_dataset_names]
             self.test_datasets_objs = [self._make_dataset(ds, self.test_name) for ds in self.test_dataset_names]
 
     @property
@@ -195,15 +196,21 @@ class MotifDataModule(pl.LightningDataModule):
 
     def val_dataloader(self):
         eval_batch_size = int(getattr(self.config.data, "eval_batch_size", 1))
+        eval_num_workers = min(self._args.num_workers, 8)
         
         dataloaders = []
         all_val_datasets = self.val_train_datasets_objs
         for ds in all_val_datasets:
+            sampler = None
+            if torch.distributed.is_available() and torch.distributed.is_initialized():
+                sampler = torch.utils.data.distributed.DistributedSampler(ds, shuffle=False)
+                
             dl = DataLoader(
                 ds,
                 batch_size=eval_batch_size,
                 shuffle=False,
-                num_workers=self._args.num_workers,
+                sampler=sampler,
+                num_workers=eval_num_workers,
                 collate_fn=collate_fn,
                 pin_memory=True,
                 drop_last=False,
@@ -213,13 +220,21 @@ class MotifDataModule(pl.LightningDataModule):
 
     def test_dataloader(self):
         eval_batch_size = int(getattr(self.config.data, "eval_batch_size", 1))
+        eval_num_workers = min(self._args.num_workers, 8)
+        
         dataloaders = []
-        for ds in self.test_datasets_objs:
+        all_test_datasets = getattr(self, "train_test_datasets_objs", []) + getattr(self, "test_datasets_objs", [])
+        for ds in all_test_datasets:
+            sampler = None
+            if torch.distributed.is_available() and torch.distributed.is_initialized():
+                sampler = torch.utils.data.distributed.DistributedSampler(ds, shuffle=False)
+                
             dl = DataLoader(
                 ds,
                 batch_size=eval_batch_size,
                 shuffle=False,
-                num_workers=self._args.num_workers,
+                sampler=sampler,
+                num_workers=eval_num_workers,
                 collate_fn=collate_fn,
                 pin_memory=True,
                 drop_last=False,

@@ -12,6 +12,11 @@ import numpy as np
 
 # Setup distributed env if needed
 from utils.distributed_utils import setup_cluster_env, get_rank, rank_zero_print
+from utils.test_only_checkpoint_restore import (
+    _load_ckpt,
+    _select_eval_weights_source,
+    _load_selected_weights,
+)
 setup_cluster_env()
 
 # RF-DETR specific
@@ -229,8 +234,14 @@ def main(config: DictConfig):
     val_dataloader_names = ["train_ds/merged"]
     val_dataset_fns = [lambda ds=ds: ds.coco for ds in data_module.val_train_datasets_objs]
     
-    test_dataloader_names = [f"{ds}" for ds in data_module.test_dataset_names]
-    test_dataset_fns = [lambda ds=ds: ds.coco for ds in data_module.test_datasets_objs]
+    test_dataloader_names = (
+        [f"train_ds/{ds}/test" for ds in data_module.train_dataset_names] + 
+        [f"test_ds/{ds}/test" for ds in data_module.test_dataset_names]
+    )
+    test_dataset_fns = (
+        [lambda ds=ds: ds.coco for ds in getattr(data_module, "train_test_datasets_objs", [])] + 
+        [lambda ds=ds: ds.coco for ds in data_module.test_datasets_objs]
+    )
     
     callbacks.append(MotifCocoEvalCallback(
         val_dataloader_names=val_dataloader_names, 
@@ -256,11 +267,53 @@ def main(config: DictConfig):
         **trainer_kwargs
     )
 
-    rank_zero_print(f"Starting Training for Motif: {motif_name}")
-    trainer.fit(lightning_model, datamodule=data_module)
-    
-    rank_zero_print("Training complete. Starting Validation/Test eval...")
-    trainer.test(lightning_model, datamodule=data_module)
+    if getattr(config, "test_only", False):
+        rank_zero_print(f"Skipping Training for Motif: {motif_name} (test_only mode)")
+        ckpt_path = config.get("initialization", {}).get("load_from_checkpoint", None)
+        if ckpt_path is None:
+            raise ValueError("test_only requires initialization.load_from_checkpoint")
+        
+        test_only_checkpoint = _load_ckpt(ckpt_path)
+        test_only_weight_source = _select_eval_weights_source(
+            ckpt_path, test_only_checkpoint, config=config
+        )
+        
+        rank_zero_print(f"Loading {test_only_weight_source.upper()} weights manually from {ckpt_path}")
+        missing_keys, unexpected_keys = _load_selected_weights(
+            lightning_model, test_only_checkpoint, test_only_weight_source
+        )
+        if missing_keys:
+            rank_zero_print(f"⚠️  Missing keys during test-only load: {missing_keys[:10]} ...")
+        if unexpected_keys:
+            rank_zero_print(f"⚠️  Unexpected keys during test-only load: {unexpected_keys[:10]} ...")
+            
+        rank_zero_print(f"Starting Validation/Test eval with loaded weights...")
+        
+        orig_test = trainer.test
+        def custom_test(*args, **kwargs):
+            rank_zero_print("[Test] Injecting manual EMA evaluation wrapper...")
+            from utils.ema import EMACallback
+            ema_cb = next((cb for cb in trainer.callbacks if isinstance(cb, EMACallback)), None)
+            
+            if ema_cb is not None and getattr(ema_cb, "ema_model", None) is not None:
+                orig_start = getattr(ema_cb, 'on_test_epoch_start', None)
+                def patched_start(trainer, pl_module):
+                    if hasattr(ema_cb.ema_model, "module"):
+                        pl_module.model.load_state_dict(ema_cb.ema_model.module.state_dict())
+                    if orig_start:
+                        return orig_start(trainer, pl_module)
+                ema_cb.on_test_epoch_start = patched_start
+                
+            return orig_test(*args, **kwargs)
+
+        trainer.test = custom_test
+        trainer.test(lightning_model, datamodule=data_module)
+    else:
+        rank_zero_print(f"Starting Training for Motif: {motif_name}")
+        trainer.fit(lightning_model, datamodule=data_module)
+        
+        rank_zero_print("Training complete. Starting Validation/Test eval...")
+        trainer.test(lightning_model, datamodule=data_module)
 
 if __name__ == '__main__':
     main()
