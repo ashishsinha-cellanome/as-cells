@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import os
+import socket
 import json
 import random
 from collections import defaultdict
@@ -22,7 +23,12 @@ def _patched_array(*args, **kwargs):
     return _orig_array(*args, **kwargs)
 np.array = _patched_array
 
-PHASE2_DIR = "/mnt/direct-attached/PHASE2"
+if 'odin' in socket.gethostname():
+    PHASE2_DIR = "/mnt/direct-attached/PHASE2"
+elif 'vulcan' in socket.gethostname():
+    PHASE2_DIR = "/project/aip-robsc/asinha/cellanome/DATA/PHASE2"
+else:
+    yield "PHASE2_DIR not declared or found"
 
 suspension_keywords = ["suspension", "jurkat", "k562", "nk92", "pbmc", "mousepbmc", "tall104", "raji", "jerat", "tal104"]
 

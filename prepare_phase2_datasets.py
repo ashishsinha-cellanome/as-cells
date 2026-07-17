@@ -200,7 +200,12 @@ def process_dataset_wrapper(dataset_path_str: str):
 
 def main():
     import sys
-    phase2_dir = Path("/mnt/direct-attached/PHASE2")
+    import socket
+    if 'odin' in socket.gethostname():
+        phase2_dir = Path("/mnt/direct-attached/PHASE2")
+    elif 'vulcan' in socket.gethostname():
+        phase2_dir = Path("/project/aip-robsc/asinha/cellanome/DATA/PHASE2")
+    
     if not phase2_dir.exists():
         print(f"PHASE2 dir not found at: {phase2_dir}")
         return
