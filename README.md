@@ -115,3 +115,12 @@ This section describes the order of execution for the various analysis scripts t
 - **Outputs:**
   - `coverage_arborescence_report.txt`: A text summary of the ranked nodes and tree edges.
   - `coverage_arborescence_plot.png`: A Matplotlib/NetworkX hierarchical tree visualization.
+
+### Step 4: Cross-Dataset Generalization (In-Domain vs Zero-Shot) Visualization
+**Script:** `visualize_domain_metrics.py` (an evolution of `visualize_html_metrics.py`)
+- **What it does:** Parses RF-DETR HTML evaluation reports and isolates `test_ds` records to prevent metric duplication. It categorizes datasets into an **In-domain** subset (which represents the training distribution) and **Zero-shot** (the remaining out-of-domain datasets). It extracts these into a tidy CSV and generates 6 generalization plots (ranked mAP bars, dumbbell plots, precision-recall iso-F1 contours, and heatmaps) to visualize model robustness on out-of-distribution data.
+- **How to run:**
+  ```bash
+  uv run python3 visualize_domain_metrics.py path/to/your_report.html --in-domain a549
+  ```
+  *(You can pass one or more substrings to `--in-domain` to specify the dataset(s) your model was actually trained on. For example, `--in-domain a549 hela`. It defaults to `a549` if not specified).*
