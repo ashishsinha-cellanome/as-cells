@@ -7,12 +7,12 @@ size_to_input:
 input_size: ${model.size_to_input[${model.rfdetr.size}]}
 
 rfdetr:
-  size: medium             # small|medium|large
+  size: large             # small|medium|large
   pretrain_weights: null # auto-select size-matched defaults unless explicitly overridden
   num_queries: null
   expand_query: false
   num_select: ${model.rfdetr.num_queries}
-  finetune_mode: queries_decoder_head # full|queries_head|queries_decoder_head
+  finetune_mode: full # full|queries_head|queries_decoder_head
 
   # RF-DETR data/training behavior
   multi_scale: true
@@ -23,7 +23,7 @@ rfdetr:
   ema_decay: 0.993
   ema_tau: 1000
   lr_scheduler: cosine
-  warmup_epochs: 1.0
+  warmup_epochs: 3.0
   lr_min_factor: 0.0
   # patch_size: 14
   # num_windows: 4
