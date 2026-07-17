@@ -2,8 +2,13 @@ import torch
 import torch.distributed as dist
 try:
     from faster_coco_eval import COCOeval_faster as COCOeval
+    _EVAL_BACKEND = "faster_coco_eval"
 except ImportError:
     from pycocotools.cocoeval import COCOeval
+    _EVAL_BACKEND = "pycocotools"
+
+_EVAL_BACKEND_LOGGED = False
+
 
 
 def to_cpu_device(data):
@@ -119,6 +124,14 @@ def compute_coco_metrics(
     key_prefix = f"{metric_prefix}_" if metric_prefix else ""
     metrics = {f"{key_prefix}{key}": value for key, value in base_metrics.items()}
 
+    global _EVAL_BACKEND_LOGGED
+    is_dist = dist.is_available() and dist.is_initialized()
+    rank = dist.get_rank() if is_dist else 0
+    if not _EVAL_BACKEND_LOGGED:
+        if rank == 0:
+            print(f"[COCO Eval] Using backend: {_EVAL_BACKEND}")
+        _EVAL_BACKEND_LOGGED = True
+
     if coco_gt is None:
         if dist.is_available() and dist.is_initialized() and dist.get_rank() == 0:
             print(f"\n{prefix}: No GT to evaluate.")
@@ -133,101 +146,152 @@ def compute_coco_metrics(
     rank = dist.get_rank() if is_dist else 0
 
     try:
-        # 1. Evaluate locally
-        local_eval_imgs = []
-        if len(image_ids) > 0:
-            coco_dt = coco_gt.loadRes(predictions if len(predictions) > 0 else [])
-            coco_eval_local = COCOeval(coco_gt, coco_dt, iou_type)
-            coco_eval_local.params.maxDets = [1, 10, max_detections]
-            coco_eval_local.params.imgIds = image_ids
-            # Suppress eval prints per rank
+        if _EVAL_BACKEND == "faster_coco_eval":
+            # 1. Gather all predictions to Rank 0 and evaluate natively
+            if is_dist and world_size > 1:
+                gathered_preds = [None for _ in range(world_size)]
+                dist.gather_object(predictions, gathered_preds if rank == 0 else None, dst=0)
+                
+                gathered_img_ids = [None for _ in range(world_size)]
+                dist.gather_object(image_ids, gathered_img_ids if rank == 0 else None, dst=0)
+                
+                if rank != 0:
+                    return metrics
+                    
+                all_preds = []
+                seen_img_ids = set()
+                all_img_ids = []
+                
+                for r_preds, r_img_ids in zip(gathered_preds, gathered_img_ids):
+                    if not r_preds or not r_img_ids:
+                        continue
+                    valid_img_ids = set(r_img_ids) - seen_img_ids
+                    for p in r_preds:
+                        if p["image_id"] in valid_img_ids:
+                            all_preds.append(p)
+                    seen_img_ids.update(valid_img_ids)
+                    all_img_ids.extend(list(valid_img_ids))
+                    
+                all_img_ids.sort()
+                
+                if len(all_img_ids) == 0:
+                    print(f"\n{prefix}: No images to evaluate globally.")
+                    return metrics
+                    
+                coco_dt = coco_gt.loadRes(all_preds if len(all_preds) > 0 else [])
+                coco_eval = COCOeval(coco_gt, coco_dt, iou_type)
+                coco_eval.params.maxDets = [1, 10, max_detections]
+                coco_eval.params.imgIds = all_img_ids
+            else:
+                if len(image_ids) == 0:
+                    print(f"\n{prefix}: No images to evaluate locally.")
+                    return metrics
+                coco_dt = coco_gt.loadRes(predictions if len(predictions) > 0 else [])
+                coco_eval = COCOeval(coco_gt, coco_dt, iou_type)
+                coco_eval.params.maxDets = [1, 10, max_detections]
+                coco_eval.params.imgIds = image_ids
+
             with contextlib.redirect_stdout(io.StringIO()):
-                coco_eval_local.evaluate()
-            local_eval_imgs = coco_eval_local.evalImgs
-
-        # 2. Gather correctly
-        if is_dist and world_size > 1:
-            gathered_eval_imgs = [None for _ in range(world_size)]
-            dist.gather_object(local_eval_imgs, gathered_eval_imgs if rank == 0 else None, dst=0)
+                coco_eval.evaluate()
+                coco_eval.accumulate()
+            coco_eval.summarize()
             
-            gathered_preds = [None for _ in range(world_size)]
-            dist.gather_object(predictions, gathered_preds if rank == 0 else None, dst=0)
-            
-            gathered_img_ids = [None for _ in range(world_size)]
-            dist.gather_object(image_ids, gathered_img_ids if rank == 0 else None, dst=0)
-            
-            if rank != 0:
-                return metrics
-                
-            all_eval_imgs = [img for sublist in gathered_eval_imgs if sublist for img in sublist]
-            all_preds = [p for sublist in gathered_preds if sublist for p in sublist]
-            
-            # Since DistributedSampler splits datasets, different ranks have DIFFERENT image_ids
-            # We must concatenate them, not just take the unique subset if they overlap (though they shouldn't)
-            all_img_ids = list(set([i for sublist in gathered_img_ids if sublist for i in sublist]))
-            all_img_ids.sort() # sort for deterministic ordering
-            
-            if len(all_img_ids) == 0:
-                print(f"\n{prefix}: No images to evaluate globally.")
-                return metrics
-                
-            master_coco_dt = coco_gt.loadRes(all_preds if len(all_preds) > 0 else [])
-            coco_eval = COCOeval(coco_gt, master_coco_dt, iou_type)
-            coco_eval.params.maxDets = [1, 10, max_detections]
-            coco_eval.params.imgIds = all_img_ids
-            
-            # We must call evaluate() on rank 0 just to populate `_paramsEval` exactly as pycocotools expects.
-            # But we replace the empty `evalImgs` it produces (since it evaluated nothing valid or too slow if it did)
-            # with our pre-computed distributed `evalImgs` immediately after.
-            # However, evaluating on Rank 0 again defeats the purpose.
-            # PyCOCOtools expects `_paramsEval` to have `catIds`, `areaRng`, `imgIds`.
-            # Let's populate it manually without running evaluate()!
-            import numpy as np
-            coco_eval._paramsEval = copy.deepcopy(coco_eval.params)
-            
-            # The exact logic from pycocotools COCOeval.evaluate() that sets up `_paramsEval`:
-            p = coco_eval._paramsEval
-            p.imgIds = list(np.unique(p.imgIds))
-            if p.useCats:
-                p.catIds = list(np.unique(p.catIds))
-            p.maxDets = sorted(p.maxDets)
-            coco_eval.params = p
-            
-            # Reorder evalImgs so accumulate() indexes them properly
-            lookup = {}
-            for res in all_eval_imgs:
-                if res is None: continue
-                # pycocotools structure is: res = {'image_id': ..., 'category_id': ..., 'aRng': [...], 'maxDet': ...}
-                # But notice areaRng might be a list, make it tuple for dict key
-                key = (res['category_id'], tuple(res['aRng']), res['image_id'])
-                lookup[key] = res
-                
-            ordered_eval_imgs = []
-            for catId in p.catIds:
-                for areaRng in p.areaRng:
-                    for imgId in p.imgIds:
-                        key = (catId, tuple(areaRng), imgId)
-                        # We append the eval result or None if it's missing (pycocotools handles None)
-                        ordered_eval_imgs.append(lookup.get(key, None))
-                        
-            coco_eval.evalImgs = ordered_eval_imgs
         else:
-            if len(image_ids) == 0:
-                print(f"\n{prefix}: No images to evaluate locally.")
-                return metrics
-            coco_eval = coco_eval_local
+            # 1. Evaluate locally for PyCOCOtools
+            local_eval_imgs = []
+            if len(image_ids) > 0:
+                coco_dt = coco_gt.loadRes(predictions if len(predictions) > 0 else [])
+                coco_eval_local = COCOeval(coco_gt, coco_dt, iou_type)
+                coco_eval_local.params.maxDets = [1, 10, max_detections]
+                coco_eval_local.params.imgIds = image_ids
+                # Suppress eval prints per rank
+                with contextlib.redirect_stdout(io.StringIO()):
+                    coco_eval_local.evaluate()
+                local_eval_imgs = coco_eval_local.evalImgs
 
-        # 3. Accumulate and summarize on Rank 0
-        with contextlib.redirect_stdout(io.StringIO()):
-            # By default PyCOCOtools populate self.eval internally when accumulate() runs
-            # We explicitly check that evalImgs is not fully empty or None
-            if not any(coco_eval.evalImgs):
+            # 2. Gather correctly
+            if is_dist and world_size > 1:
+                gathered_eval_imgs = [None for _ in range(world_size)]
+                dist.gather_object(local_eval_imgs, gathered_eval_imgs if rank == 0 else None, dst=0)
+                
+                gathered_preds = [None for _ in range(world_size)]
+                dist.gather_object(predictions, gathered_preds if rank == 0 else None, dst=0)
+                
+                gathered_img_ids = [None for _ in range(world_size)]
+                dist.gather_object(image_ids, gathered_img_ids if rank == 0 else None, dst=0)
+                
+                if rank != 0:
+                    return metrics
+                    
+                all_eval_imgs = [img for sublist in gathered_eval_imgs if sublist for img in sublist]
+                
+                all_preds = []
+                seen_img_ids = set()
+                all_img_ids = []
+                
+                for r_preds, r_img_ids in zip(gathered_preds, gathered_img_ids):
+                    if not r_preds or not r_img_ids:
+                        continue
+                    valid_img_ids = set(r_img_ids) - seen_img_ids
+                    for p in r_preds:
+                        if p["image_id"] in valid_img_ids:
+                            all_preds.append(p)
+                    seen_img_ids.update(valid_img_ids)
+                    all_img_ids.extend(list(valid_img_ids))
+                    
+                all_img_ids.sort()
+                
+                if len(all_img_ids) == 0:
+                    print(f"\n{prefix}: No images to evaluate globally.")
+                    return metrics
+                    
+                master_coco_dt = coco_gt.loadRes(all_preds if len(all_preds) > 0 else [])
+                coco_eval = COCOeval(coco_gt, master_coco_dt, iou_type)
+                coco_eval.params.maxDets = [1, 10, max_detections]
+                coco_eval.params.imgIds = all_img_ids
+                
+                import numpy as np
+                coco_eval._paramsEval = copy.deepcopy(coco_eval.params)
+                
+                p = coco_eval._paramsEval
+                p.imgIds = list(np.unique(p.imgIds))
+                if p.useCats:
+                    p.catIds = list(np.unique(p.catIds))
+                p.maxDets = sorted(p.maxDets)
+                coco_eval.params = p
+                
+                lookup = {}
+                for res in all_eval_imgs:
+                    if res is None: continue
+                    key = (res['category_id'], tuple(res['aRng']), res['image_id'])
+                    lookup[key] = res
+                    
+                ordered_eval_imgs = []
+                for catId in p.catIds:
+                    for areaRng in p.areaRng:
+                        for imgId in p.imgIds:
+                            key = (catId, tuple(areaRng), imgId)
+                            ordered_eval_imgs.append(lookup.get(key, None))
+                            
+                coco_eval.evalImgs = ordered_eval_imgs
+            else:
+                if len(image_ids) == 0:
+                    print(f"\n{prefix}: No images to evaluate locally.")
+                    return metrics
+                coco_eval = coco_eval_local
+
+            # 3. Accumulate and summarize on Rank 0
+            is_valid = False
+            with contextlib.redirect_stdout(io.StringIO()):
+                if any(coco_eval.evalImgs):
+                    coco_eval.accumulate()
+                    is_valid = True
+                    
+            if not is_valid:
                 print(f"\n{prefix}: Warning, no valid evalImgs gathered, returning empty metrics.")
                 return metrics
                 
-            coco_eval.accumulate()
-            
-        coco_eval.summarize()
+            coco_eval.summarize()
 
         keys = list(base_metrics.keys())
         for idx, key in enumerate(keys):

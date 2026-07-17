@@ -3,8 +3,13 @@ import torch
 import pytorch_lightning as pl
 try:
     import faster_coco_eval.mask as mask_utils
+    _MASK_BACKEND = "faster_coco_eval"
 except ImportError:
     import pycocotools.mask as mask_utils
+    _MASK_BACKEND = "pycocotools"
+
+_MASK_BACKEND_LOGGED = False
+
 import numpy as np
 
 from utils.coco_eval_utils import convert_preds_to_coco, compute_coco_metrics, gather_outputs_across_processes, to_cpu_device
@@ -188,6 +193,12 @@ class DetailedCocoEvalCallback(pl.Callback):
         
         is_distributed = dist.is_available() and dist.is_initialized()
         rank = dist.get_rank() if is_distributed else 0
+        
+        global _MASK_BACKEND_LOGGED
+        if not _MASK_BACKEND_LOGGED:
+            if rank == 0:
+                print(f"[COCO Eval] Using mask backend: {_MASK_BACKEND}")
+            _MASK_BACKEND_LOGGED = True
         
         predictions = []
         image_ids = []
