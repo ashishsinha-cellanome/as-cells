@@ -205,7 +205,13 @@ def fix_all_annotations(dry_run=False):
     
     suspension_keywords = ["suspension", "jurkat", "k562", "nk92", "pbmc", "mousepbmc", "tall104", "raji", "jerat", "tal104"]
     
-    for file in sorted(glob.glob('/mnt/direct-attached/PHASE2/*/*_annotations.json')):
+    import socket
+    if 'odin' in socket.gethostname():
+        phase2_dir = Path("/mnt/direct-attached/PHASE2")
+    elif 'vulcan' in socket.gethostname():
+        phase2_dir = Path("/project/aip-robsc/asinha/cellanome/DATA/PHASE2")
+
+    for file in sorted(glob.glob(f'{str(phase2_dir}/*/*_annotations.json')):
         if any(kw in file.lower() for kw in suspension_keywords):
             continue
             
