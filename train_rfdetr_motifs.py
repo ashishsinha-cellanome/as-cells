@@ -135,6 +135,8 @@ def main(config: DictConfig):
 
     # 4. Debug Mode overrides
     trainer_kwargs = {}
+    trainer_kwargs["num_nodes"] = int(os.environ.get("SLURM_NNODES", config.trainer.get("num_nodes", 1)))
+
     if getattr(config, "debug", False):
         rank_zero_print("--- RUNNING IN DEBUG MODE ---")
         trainer_kwargs["limit_train_batches"] = 10

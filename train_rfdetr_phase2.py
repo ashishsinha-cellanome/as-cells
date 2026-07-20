@@ -385,6 +385,8 @@ def main(config: DictConfig):
     # Handle debug overrides natively
     trainer_kwargs = {}
     trainer_kwargs["use_distributed_sampler"] = False
+    trainer_kwargs["num_nodes"] = int(os.environ.get("SLURM_NNODES", config.trainer.get("num_nodes", 1)))
+
     
     if getattr(config, "debug", False):
         rank_zero_print("--- RUNNING IN DEBUG MODE ---")
