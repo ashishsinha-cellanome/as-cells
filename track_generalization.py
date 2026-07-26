@@ -157,6 +157,7 @@ def generate_plot(master_df, baseline_name):
             
         rel_perf = valid_datasets.set_index('label')['mAP50_95'] / baseline_df['mAP50_95'] * 100
         rel_perf = rel_perf.replace([float('inf'), float('-inf')], float('nan'))
+        rel_perf = rel_perf.reindex(baseline_df.index)
         
         plt.scatter(rel_perf.index, rel_perf.values, label=exp, color=colors[i % len(colors)], s=60)
 
@@ -190,6 +191,7 @@ def generate_plot(master_df, baseline_name):
             
         rel_perf = valid_datasets.set_index('label')['mAP50_95'] / baseline_df['mAP50_95'] * 100
         rel_perf = rel_perf.replace([float('inf'), float('-inf')], float('nan'))
+        rel_perf = rel_perf.reindex(baseline_df.index)
         
         plt.plot(rel_perf.index, rel_perf.values, label=exp, color=colors[i % len(colors)], marker='o', markersize=8, linewidth=1, alpha=0.8)
 
@@ -223,6 +225,7 @@ def generate_plot(master_df, baseline_name):
                 
             rel_perf = valid_datasets.set_index('label')['mAP50_95'] / baseline_df['mAP50_95'] * 100
             rel_perf = rel_perf.replace([float('inf'), float('-inf')], float('nan'))
+            rel_perf = rel_perf.reindex(baseline_df.index)
             
             # Extract train datasets for hover
             train_ds_str = exp_df['train_datasets'].iloc[0] if 'train_datasets' in exp_df.columns and len(exp_df) > 0 else "N/A"
