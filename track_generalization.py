@@ -203,7 +203,7 @@ def generate_plot(master_df, baseline_name):
     plt.yticks(fontsize=9)
     plt.ylabel("Relative Performance (% of Baseline)", fontsize=11)
     plt.xlabel("Dataset", fontsize=11)
-    plt.title("Generalization Performance relative to Baseline (with Lines)", fontsize=14)
+    plt.title("Generalization Performance relative to Baseline", fontsize=14)
     plt.legend(bbox_to_anchor=(1.02, 1), loc='upper left', fontsize=10, title="Experiment Type")
     plt.tight_layout()
     plt.savefig("generalization_relative_performance_lines.png", dpi=180, bbox_inches="tight")
