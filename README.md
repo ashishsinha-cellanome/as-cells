@@ -124,3 +124,22 @@ This section describes the order of execution for the various analysis scripts t
   uv run python3 visualize_domain_metrics.py path/to/your_report.html --in-domain a549
   ```
   *(You can pass one or more substrings to `--in-domain` to specify the dataset(s) your model was actually trained on. For example, `--in-domain a549 hela`. It defaults to `a549` if not specified).*
+
+### Step 5: Tracking Generalization Performance Across Experiments
+**Script:** `track_generalization.py`
+- **What it does:** Tracks relative mAP performance (vs. a baseline) across multiple experiments (e.g., training on 2 datasets, 3 datasets, 7 datasets) by parsing HTML/CSV evaluation reports and appending them to a persistent master tracking CSV (`generalization_tracking.csv`). It generates static relative performance scatter plots (with optionally connected lines) and an interactive Plotly HTML visualization.
+- **Key behavior:** Experiments are tracked and deduplicated by the explicitly provided `--exp-name` string, not by the filename. If you run the script with an `--exp-name` that already exists in the tracking CSV, it cleanly overwrites the previous metrics for that experiment name. To compare a new method on 3 datasets with an old method on 3 datasets, simply use distinct names (e.g., `"3 Nodes (L3)"` vs `"3 Nodes (New Method)"`). The script also records which datasets were used for training (`split_type == 'train_ds'`) and includes this metadata in the interactive Plotly HTML hover tooltips.
+- **How to run:**
+  ```bash
+  # 1. Set the baseline (e.g., the model trained on all 21 datasets)
+  uv run python track_generalization.py --baseline path/to/baseline.html
+
+  # 2. Incrementally add new experiments
+  uv run python track_generalization.py --add-exp path/to/2_nodes.html --exp-name "2 Nodes"
+  uv run python track_generalization.py --add-exp path/to/3_nodes_v2.csv --exp-name "3 Nodes (New)"
+  ```
+- **Outputs:**
+  - `generalization_tracking.csv`: The persistent appended state of all added experiments.
+  - `generalization_relative_performance_scatter.png`: Static scatter plot with threshold lines.
+  - `generalization_relative_performance_lines.png`: Static plot with points connected by thin lines.
+  - `generalization_relative_performance.html`: Interactive Plotly chart with training dataset metadata on hover.
