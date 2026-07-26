@@ -122,6 +122,8 @@ class MotifCocoEvalCallback(DetailedCocoEvalCallback):
                     sub_folder = getattr(cfg.data, 'val_name', 'val_new') if split == 'val' else getattr(cfg.data, 'test_name', 'test')
                     img_path = data_path / dataset_name / "images" / sub_folder / img_file
                     if not img_path.exists():
+                        img_path = data_path / dataset_name / "images" / img_file
+                    if not img_path.exists():
                         img_path = data_path / dataset_name / img_file
                         
             if not img_path.exists():
