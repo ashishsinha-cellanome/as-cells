@@ -144,6 +144,9 @@ def generate_plot(master_df, baseline_name):
     # 1. Matplotlib Scatter Plot
     plt.figure(figsize=(12, 7))
     
+    # Ensure x-axis is populated with all baseline datasets in consistent order
+    plt.plot(baseline_df.index, [100]*len(baseline_df), alpha=0.0)
+    
     for i, exp in enumerate(experiments):
         if exp == baseline_name:
             continue
@@ -173,6 +176,9 @@ def generate_plot(master_df, baseline_name):
     
     # 2. Matplotlib Scatter + Lines Plot
     plt.figure(figsize=(12, 7))
+    
+    # Ensure x-axis is populated with all baseline datasets in consistent order
+    plt.plot(baseline_df.index, [100]*len(baseline_df), alpha=0.0)
     
     for i, exp in enumerate(experiments):
         if exp == baseline_name:
@@ -252,6 +258,10 @@ def generate_plot(master_df, baseline_name):
         fig.update_layout(
             title="Generalization Performance relative to Baseline",
             xaxis_title="Dataset",
+            xaxis=dict(
+                categoryorder='array',
+                categoryarray=baseline_df.index.tolist()
+            ),
             yaxis_title="Relative Performance (% of Baseline)",
             legend_title="Experiment Type",
             xaxis_tickangle=-90,
