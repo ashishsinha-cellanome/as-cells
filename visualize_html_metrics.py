@@ -412,6 +412,8 @@ label_map = df_all.drop_duplicates("dataset").set_index("dataset")["label"]
 df_cls["label"] = df_cls["dataset"].map(label_map)
 order = bbox.sort_values("mAP50_95", ascending=False)["label"].tolist()
 
+in_domain_labels = set(df_all[df_all["domain"] == "In-domain (train_ds test split)"]["label"])
+
 fig, ax = plt.subplots(figsize=(11, 7))
 width = 0.38
 x = np.arange(len(order))
@@ -425,14 +427,24 @@ for i, cls in enumerate(["cell", "cell-adhered", "soma"]):
     if all(np.isnan(vals)):
         continue
     offset = (i - 1) * width * 0.7
-    ax.bar(x + offset, vals, width * 0.65, label=cls, color=class_colors[cls])
+    bars = ax.bar(x + offset, vals, width * 0.65, label=cls, color=class_colors[cls])
+    for bar, lab in zip(bars, order):
+        if lab in in_domain_labels:
+            bar.set_hatch('//')
+            bar.set_edgecolor('white')
+            bar.set_linewidth(0) # Hide thick edge if any, keeping hatch visible
     plotted_classes.append(cls)
 
 ax.set_xticks(x)
 ax.set_xticklabels(order, rotation=60, ha="right", fontsize=8)
 ax.set_ylabel("mAP@0.5:0.95 (BBOX)")
 ax.set_title(f"Per-Class BBOX mAP@0.5:0.95 by Test Dataset{TITLE_SUFFIX}", fontsize=12, weight="bold", loc="left")
-ax.legend(frameon=False, title="Class")
+
+handles, labels = ax.get_legend_handles_labels()
+hatch_patch = mpatches.Patch(facecolor='none', hatch='//', edgecolor='#666666', label='In-domain Dataset')
+handles.append(hatch_patch)
+labels.append('In-domain Dataset')
+ax.legend(handles=handles, labels=labels, frameon=False, title="Class / Domain")
 ax.spines[["top", "right"]].set_visible(False)
 plt.tight_layout()
 plt.savefig(f"{OUT_PREFIX}6_per_class_map5095.png", dpi=180, bbox_inches="tight")
