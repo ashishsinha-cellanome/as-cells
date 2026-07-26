@@ -130,7 +130,7 @@ def generate_plot(master_df, baseline_name):
         
     master_df['label'] = master_df['dataset'].apply(short_name)
     
-    baseline_df = master_df[master_df['experiment'] == baseline_name][['label', 'mAP50_95']].set_index('label')
+    baseline_df = master_df[master_df['experiment'] == baseline_name][['label', 'mAP50_95']].set_index('label').sort_index()
     
     experiments = master_df['experiment'].unique()
     
