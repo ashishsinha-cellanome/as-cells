@@ -8,19 +8,42 @@ import colorsys
 def generate_dynamic_colors(n):
     if n <= 0:
         return []
-    colors = []
-    inv_phi = 0.618033988749895  # Golden ratio conjugate
+        
+    distinct_colors = [
+        "#0072B2",  # Deep Blue
+        "#E69F00",  # Warm Orange
+        "#009E73",  # Bluish Green
+        "#D55E00",  # Vermillion/Red-Orange
+        "#CC79A7",  # Reddish Purple/Pink
+        "#56B4E9",  # Sky Blue
+        "#332288",  # Indigo/Dark Purple
+        "#CC6677",  # Rose/Dusty Red
+        "#999933",  # Olive/Yellow-Green
+        "#117733",  # Dark Green
+        "#882255",  # Wine/Burgundy
+        "#44AA99",  # Teal
+        "#AA4499",  # Purple
+        "#DDCC77",  # Sand/Tan
+        "#661100"   # Dark Brown/Maroon
+    ]
     
-    for i in range(n):
-        h = (i * inv_phi) % 1.0
-        # Alternate lightness to ensure high luminance contrast between consecutive colors
-        lightness = 0.45 + 0.25 * (i % 2)
-        # Vary saturation slightly to provide further distinction
-        s = 0.75 + 0.1 * (i % 3)
+    if n <= len(distinct_colors):
+        return distinct_colors[:n]
+        
+    colors = list(distinct_colors)
+    remaining = n - len(distinct_colors)
+    inv_phi = 0.618033988749895
+    
+    for i in range(remaining):
+        idx = i + len(distinct_colors)
+        h = (idx * inv_phi) % 1.0
+        lightness = 0.45 + 0.25 * (idx % 2)
+        s = 0.75 + 0.1 * (idx % 3)
         
         r, g, b = colorsys.hls_to_rgb(h, lightness, s)
         hex_color = f"#{int(round(r*255)):02x}{int(round(g*255)):02x}{int(round(b*255)):02x}"
         colors.append(hex_color)
+        
     return colors
 
 class ReportHTMLParser(HTMLParser):
