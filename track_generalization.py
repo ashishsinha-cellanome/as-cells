@@ -126,7 +126,7 @@ def parse_metrics_file(file_path):
             parser.feed(f.read())
             return pd.DataFrame(parser.rows, columns=['dataset', 'split_type', 'mAP50_95'])
     elif file_path.endswith('.csv'):
-        df = pd.read_csv(file_path)
+        df = pd.read_csv(file_path, comment='#')
         required_cols = {'metric_type', 'class', 'dataset', 'split_type', 'mAP50_95'}
         if not required_cols.issubset(df.columns):
             raise ValueError(f"CSV file must contain columns: {', '.join(required_cols)}")
@@ -145,7 +145,7 @@ def update_master_csv(master_csv_path, exp_name, new_df):
     new_df['train_datasets'] = train_ds
     
     if os.path.exists(master_csv_path):
-        master_df = pd.read_csv(master_csv_path)
+        master_df = pd.read_csv(master_csv_path, comment='#')
         master_df = master_df[master_df['experiment'] != exp_name]
         updated_df = pd.concat([master_df, new_df], ignore_index=True)
     else:
@@ -341,7 +341,7 @@ def main():
     if not os.path.exists(args.master_csv):
         raise SystemExit("Error: Master CSV does not exist. Please provide a baseline or experiment.")
         
-    master_df = pd.read_csv(args.master_csv)
+    master_df = pd.read_csv(args.master_csv, comment='#')
     if baseline_name not in master_df['experiment'].values:
         raise SystemExit("Error: No baseline found in master CSV. Please provide one with --baseline.")
         
