@@ -3,6 +3,25 @@ import os
 import pandas as pd
 import matplotlib.pyplot as plt
 from html.parser import HTMLParser
+import colorsys
+
+def generate_dynamic_colors(n):
+    if n <= 0:
+        return []
+    colors = []
+    inv_phi = 0.618033988749895  # Golden ratio conjugate
+    
+    for i in range(n):
+        h = (i * inv_phi) % 1.0
+        # Alternate lightness to ensure high luminance contrast between consecutive colors
+        lightness = 0.45 + 0.25 * (i % 2)
+        # Vary saturation slightly to provide further distinction
+        s = 0.75 + 0.1 * (i % 3)
+        
+        r, g, b = colorsys.hls_to_rgb(h, lightness, s)
+        hex_color = f"#{int(round(r*255)):02x}{int(round(g*255)):02x}{int(round(b*255)):02x}"
+        colors.append(hex_color)
+    return colors
 
 class ReportHTMLParser(HTMLParser):
     def __init__(self):
@@ -132,14 +151,8 @@ def generate_plot(master_df, baseline_name):
     
     baseline_df = master_df[master_df['experiment'] == baseline_name][['label', 'mAP50_95']].set_index('label').sort_index()
     
-    experiments = master_df['experiment'].unique()
-    
-    # Okabe-Ito colorblind-friendly palette
-    OKABE_ITO = [
-        "#E69F00", "#56B4E9", "#009E73", "#F0E442", 
-        "#0072B2", "#D55E00", "#CC79A7", "#000000"
-    ]
-    colors = OKABE_ITO
+    non_baseline_exps = sorted([e for e in master_df['experiment'].unique() if e != baseline_name])
+    colors = generate_dynamic_colors(len(non_baseline_exps))
     
     # 1. Matplotlib Scatter Plot
     plt.figure(figsize=(12, 7))
@@ -147,9 +160,7 @@ def generate_plot(master_df, baseline_name):
     # Ensure x-axis is populated with all baseline datasets in consistent order
     plt.plot(baseline_df.index, [100]*len(baseline_df), alpha=0.0)
     
-    for i, exp in enumerate(experiments):
-        if exp == baseline_name:
-            continue
+    for i, exp in enumerate(non_baseline_exps):
         exp_df = master_df[master_df['experiment'] == exp]
         valid_datasets = exp_df[exp_df['label'].isin(baseline_df.index)]
         if valid_datasets.empty:
@@ -159,7 +170,7 @@ def generate_plot(master_df, baseline_name):
         rel_perf = rel_perf.replace([float('inf'), float('-inf')], float('nan'))
         rel_perf = rel_perf.reindex(baseline_df.index)
         
-        plt.scatter(rel_perf.index, rel_perf.values, label=exp, color=colors[i % len(colors)], s=60)
+        plt.scatter(rel_perf.index, rel_perf.values, label=exp, color=colors[i], s=60)
 
     plt.axhline(y=100, color='black', linestyle='-', label='Baseline (100%)')
     plt.axhline(y=90, color='gray', linestyle='--', label='90% Threshold')
@@ -181,9 +192,7 @@ def generate_plot(master_df, baseline_name):
     # Ensure x-axis is populated with all baseline datasets in consistent order
     plt.plot(baseline_df.index, [100]*len(baseline_df), alpha=0.0)
     
-    for i, exp in enumerate(experiments):
-        if exp == baseline_name:
-            continue
+    for i, exp in enumerate(non_baseline_exps):
         exp_df = master_df[master_df['experiment'] == exp]
         valid_datasets = exp_df[exp_df['label'].isin(baseline_df.index)]
         if valid_datasets.empty:
@@ -193,7 +202,7 @@ def generate_plot(master_df, baseline_name):
         rel_perf = rel_perf.replace([float('inf'), float('-inf')], float('nan'))
         rel_perf = rel_perf.reindex(baseline_df.index)
         
-        plt.plot(rel_perf.index, rel_perf.values, label=exp, color=colors[i % len(colors)], marker='o', markersize=8, linewidth=1, alpha=0.8)
+        plt.plot(rel_perf.index, rel_perf.values, label=exp, color=colors[i], marker='o', markersize=8, linewidth=1, alpha=0.8)
 
     plt.axhline(y=100, color='black', linestyle='-', label='Baseline (100%)')
     plt.axhline(y=90, color='gray', linestyle='--', label='90% Threshold')
@@ -215,9 +224,7 @@ def generate_plot(master_df, baseline_name):
         
         fig = go.Figure()
         
-        for i, exp in enumerate(experiments):
-            if exp == baseline_name:
-                continue
+        for i, exp in enumerate(non_baseline_exps):
             exp_df = master_df[master_df['experiment'] == exp]
             valid_datasets = exp_df[exp_df['label'].isin(baseline_df.index)]
             if valid_datasets.empty:
@@ -250,7 +257,7 @@ def generate_plot(master_df, baseline_name):
                 name=exp,
                 text=hover_text,
                 hoverinfo='text',
-                line=dict(color=colors[i % len(colors)], width=1),
+                line=dict(color=colors[i], width=1),
                 marker=dict(size=8)
             ))
             
