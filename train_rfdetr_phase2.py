@@ -453,11 +453,13 @@ def main(config: DictConfig):
     val_dataset_fns = [lambda ds=ds: ds.coco for ds in data_module.val_train_datasets_objs]
     
     test_dataloader_names = (
-        [f"train_ds/{ds}/test" for ds in data_module.train_dataset_names] + 
+        [f"train_ds/{ds}/test" for ds in data_module.train_dataset_names] 
+        + 
         [f"test_ds/{ds}/test" for ds in data_module.test_dataset_names]
     )
     test_dataset_fns = (
-        [lambda ds=ds: ds.coco for ds in getattr(data_module, "train_test_datasets_objs", [])] + 
+        [lambda ds=ds: ds.coco for ds in getattr(data_module, "train_test_datasets_objs", [])] 
+        + 
         [lambda ds=ds: ds.coco for ds in data_module.test_datasets_objs]
     )
 
@@ -540,7 +542,10 @@ def main(config: DictConfig):
         trainer.test(module, datamodule=data_module)
     else:
         rank_zero_print(f"Starting Training for Motif: {motif_config_name}")
-        trainer.fit(module, datamodule=data_module)
+        ckpt_path = config.get("initialization", {}).get("load_from_checkpoint", None)
+        if ckpt_path:
+            rank_zero_print(f"Resuming training from checkpoint: {ckpt_path}")
+        trainer.fit(module, datamodule=data_module, ckpt_path=ckpt_path)
         
         rank_zero_print("Training complete. Starting Validation/Test eval...")
         trainer.test(module, datamodule=data_module)
