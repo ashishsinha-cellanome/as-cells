@@ -9,33 +9,22 @@ def generate_dynamic_colors(n):
     if n <= 0:
         return []
         
-    distinct_colors = [
-        "#0072B2",  # Deep Blue
-        "#E69F00",  # Warm Orange
-        "#009E73",  # Bluish Green
-        "#D55E00",  # Vermillion/Red-Orange
-        "#CC79A7",  # Reddish Purple/Pink
-        "#56B4E9",  # Sky Blue
-        "#332288",  # Indigo/Dark Purple
-        "#CC6677",  # Rose/Dusty Red
-        "#999933",  # Olive/Yellow-Green
-        "#117733",  # Dark Green
-        "#882255",  # Wine/Burgundy
-        "#44AA99",  # Teal
-        "#AA4499",  # Purple
-        "#DDCC77",  # Sand/Tan
-        "#661100"   # Dark Brown/Maroon
-    ]
+    import matplotlib.pyplot as plt
+    import matplotlib.colors as mcolors
+    cmap = plt.get_cmap('tab20')
+    # Use even indices first (darker, more distinct colors), then odd (lighter)
+    indices = list(range(0, 20, 2)) + list(range(1, 20, 2))
+    colors = [mcolors.to_hex(cmap(i)) for i in indices]
     
-    if n <= len(distinct_colors):
-        return distinct_colors[:n]
+    if n <= len(colors):
+        return colors[:n]
         
-    colors = list(distinct_colors)
-    remaining = n - len(distinct_colors)
+    import colorsys
+    remaining = n - len(colors)
     inv_phi = 0.618033988749895
     
     for i in range(remaining):
-        idx = i + len(distinct_colors)
+        idx = i + len(colors)
         h = (idx * inv_phi) % 1.0
         lightness = 0.45 + 0.25 * (idx % 2)
         s = 0.75 + 0.1 * (idx % 3)
@@ -126,7 +115,10 @@ def parse_metrics_file(file_path):
             parser.feed(f.read())
             return pd.DataFrame(parser.rows, columns=['dataset', 'split_type', 'mAP50_95'])
     elif file_path.endswith('.csv'):
-        df = pd.read_csv(file_path, comment='#')
+        df = pd.read_csv(file_path)
+        # Filter out commented lines if present in the loaded file
+        if 'dataset' in df.columns:
+            df = df[~df['dataset'].astype(str).str.startswith('#')]
         required_cols = {'metric_type', 'class', 'dataset', 'split_type', 'mAP50_95'}
         if not required_cols.issubset(df.columns):
             raise ValueError(f"CSV file must contain columns: {', '.join(required_cols)}")
@@ -145,7 +137,7 @@ def update_master_csv(master_csv_path, exp_name, new_df):
     new_df['train_datasets'] = train_ds
     
     if os.path.exists(master_csv_path):
-        master_df = pd.read_csv(master_csv_path, comment='#')
+        master_df = pd.read_csv(master_csv_path)
         master_df = master_df[master_df['experiment'] != exp_name]
         updated_df = pd.concat([master_df, new_df], ignore_index=True)
     else:
@@ -155,6 +147,9 @@ def update_master_csv(master_csv_path, exp_name, new_df):
     return updated_df
 
 def generate_plot(master_df, baseline_name):
+    # Filter out commented out datasets
+    master_df = master_df[~master_df['dataset'].astype(str).str.startswith('#')]
+    
     master_df = master_df[master_df['split_type'] == 'test_ds'].copy()
     
     baseline_df = master_df[master_df['experiment'] == baseline_name]
@@ -341,8 +336,10 @@ def main():
     if not os.path.exists(args.master_csv):
         raise SystemExit("Error: Master CSV does not exist. Please provide a baseline or experiment.")
         
-    master_df = pd.read_csv(args.master_csv, comment='#')
-    if baseline_name not in master_df['experiment'].values:
+    master_df = pd.read_csv(args.master_csv)
+    # Check if baseline is in the un-commented portion of the data
+    valid_df = master_df[~master_df['dataset'].astype(str).str.startswith('#')]
+    if baseline_name not in valid_df['experiment'].values:
         raise SystemExit("Error: No baseline found in master CSV. Please provide one with --baseline.")
         
     generate_plot(master_df, baseline_name)
