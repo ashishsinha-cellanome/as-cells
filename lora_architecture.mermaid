@@ -1,0 +1,45 @@
+graph TD
+    %% Inputs & Backbone (Frozen)
+    Image[Input Image] --> Backbone[Frozen Backbone]
+    Backbone --> MSFeat[Multi-Scale Features]
+
+    %% Main Transformer Pathway
+    MSFeat --> |"Flattened Tokens"| Encoder[Transformer Encoder]
+    Encoder --> EncFeat[Encoder Features]
+
+    %% Query Selection (LoRA)
+    subgraph "Query Selection (LoRA Modules)"
+        EncFeat --> EncOutBbox["enc_out_bbox_embed (LoRA)"]
+        EncFeat --> EncOutClass["enc_out_class_embed (LoRA)"]
+        EncOutBbox & EncOutClass --> TopK[Top-K Selection]
+        TopK --> QueryFeat["query_feat (LoRA)"]
+        TopK --> RefPoint["refpoint_embed (LoRA)"]
+    end
+
+    %% Decoder
+    QueryFeat & RefPoint & EncFeat --> Decoder[Transformer Decoder]
+    Decoder --> DecFeat[Decoder Features]
+
+    %% Detection Head (LoRA)
+    subgraph "Detection Head (LoRA Modules)"
+        DecFeat --> ClassEmbed["class_embed (LoRA)"]
+        DecFeat --> BboxEmbed["bbox_embed (LoRA)"]
+        ClassEmbed --> ClassPred[Class Predictions]
+        BboxEmbed --> BboxPred[BBox Predictions]
+    end
+
+    %% Segmentation Head (LoRA)
+    subgraph "Segmentation Head (LoRA Modules)"
+        MSFeat --> |"High-Res Spatial Maps"| SpatialProj["spatial_features_proj (LoRA)"]
+        DecFeat --> |"Object Queries"| QueryProj["query_features_proj (LoRA)"]
+        SpatialProj & QueryProj --> PWConv["pwconv1 layers (LoRA)"]
+        PWConv --> MaskPred[Mask Predictions]
+    end
+
+    %% Styling
+    classDef lora fill:#f9f,stroke:#333,stroke-width:2px;
+    classDef frozen fill:#ddd,stroke:#333,stroke-width:1px;
+    classDef default fill:#fff,stroke:#666,stroke-width:1px;
+    
+    class EncOutBbox,EncOutClass,QueryFeat,RefPoint,ClassEmbed,BboxEmbed,SpatialProj,QueryProj,PWConv lora;
+    class Backbone,Encoder,Decoder frozen;

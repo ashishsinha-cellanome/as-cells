@@ -58,24 +58,27 @@ class PreBuiltRFDETRModelModule(RFDETRModelModule):
             self._apply_lora()
 
     def _apply_lora(self) -> None:
-        """Customizable LoRA injection that overrides the upstream hardcoded method."""
+        """Customizable LoRA injection overriding the upstream hardcoded method."""
         from peft import LoraConfig, get_peft_model
         lc = self._lora_cfg
+        
+    # Exact regex matching leaf nodes for segmentation head and decoder object queries.
+    target_modules = lc.get("target_modules", r".*(pwconv1|spatial_features_proj|query_features_proj|refpoint_embed|query_feat|enc_out_bbox_embed\.\d+\.layers\.\d+|enc_out_class_embed\.\d+|class_embed\.\d+\.layers\.\d+|bbox_embed\.\d+\.layers\.\d+|segmentation_head.*pwconv1)$")
+    exclude_modules = lc.get("exclude_modules", r".*(dwconv|norm|bn|act|relu|gelu|backbone).*")
+        
         lora_config = LoraConfig(
-            r=lc.get("r", 16),
-            lora_alpha=lc.get("alpha", 16),
+            r=lc.get("r", 32),
+            lora_alpha=lc.get("alpha", 32),
             use_dora=lc.get("use_dora", False),
-            target_modules=list(lc.get("target_modules", [
-                "q_proj", "v_proj", "k_proj", "qkv", "dense",
-                "query", "key", "value", "cls_token", "register_tokens"
-            ])),
+            target_modules=target_modules,
+            exclude_modules=exclude_modules,
             lora_dropout=lc.get("dropout", 0.05),
             bias="none"
         )
-        self.model.backbone[0].encoder = get_peft_model(
-            self.model.backbone[0].encoder, 
-            lora_config
-        )
+        
+        # We wrap the ENTIRE model so PEFT can find the decoder/segmentation modules
+        self.model = get_peft_model(self.model, lora_config)
+        self.model.print_trainable_parameters()
 
     def validation_step(self, batch, batch_idx, dataloader_idx=0):
         return super().validation_step(batch, batch_idx)
@@ -101,6 +104,60 @@ class Phase2MotifDataModule(MotifDataModule):
     def setup(self, stage=None):
         # Build datasets using parent setup logic
         super().setup(stage)
+        
+        # --- NEW: Subsample crops to prevent catastrophic forgetting ---
+        lora_frac = getattr(self.config.data, "lora_frac", None)
+        if stage in ("fit", None) and lora_frac is not None:
+            import random
+            from utils.distributed_utils import rank_zero_print
+            
+            # Subsampling must be fully deterministic without polluting global RNG
+            target_datasets = list(getattr(self.config.data, "target_datasets", []))
+            anchor_samples = int(getattr(self.config.data, "anchor_samples_per_dataset", 4))
+            
+            if not target_datasets:
+                rank_zero_print("[WARNING] No target_datasets specified! Applying lora_frac to ALL datasets.")
+            
+            for ds_name, ds_obj in zip(self.train_dataset_names, self.train_datasets_objs):
+                dataset_name = ds_name
+
+                # Sort keys to ensure absolute DDP determinism before sampling
+                img_ids = sorted(list(ds_obj.coco.imgs.keys()))
+                total_imgs = len(img_ids)
+                
+                if total_imgs == 0:
+                    continue
+                    
+                # Isolate randomness per-dataset using a deterministic string seed 
+                # (hash() is randomized across processes in Python 3.3+)
+                rng = random.Random(f"{self.config.get('seed', 42)}_{dataset_name}")
+                
+                # Use strict membership or fallback to matching if lists are identical
+                if not target_datasets or dataset_name in target_datasets:
+                    # Target dataset: apply fraction
+                    keep_count = max(1, math.floor(total_imgs * lora_frac))
+                    sampled_ids = set(rng.sample(img_ids, keep_count))
+                    rank_zero_print(f"[LoRA Subsample] Target Domain {dataset_name}: keeping {keep_count}/{total_imgs} images (frac={lora_frac})")
+                else:
+                    # Anchor dataset: apply replay buffer constraint
+                    keep_count = min(total_imgs, anchor_samples)
+                    sampled_ids = set(rng.sample(img_ids, keep_count))
+                    rank_zero_print(f"[LoRA Subsample] Anchor Domain {dataset_name}: keeping {keep_count}/{total_imgs} images (replay buffer)")
+                    
+                # Filter the internal coco dictionary inplace
+                ds_obj.coco.imgs = {k: v for k, v in ds_obj.coco.imgs.items() if k in sampled_ids}
+                if hasattr(ds_obj, 'ids'):
+                    # Retain exact original list order to prevent DDP hash randomization crashes
+                    ds_obj.ids = [i for i in ds_obj.ids if i in sampled_ids]
+                
+                # Filter annotations map
+                ds_obj.coco.imgToAnns = {k: ds_obj.coco.imgToAnns.get(k, []) for k in sampled_ids}
+                
+            # DANGER: `super().setup(stage)` created `self.concat_train` (a ConcatDataset) *before* we shrank `ds_obj.ids`.
+            # We MUST recreate the ConcatDataset here, otherwise its internal `cumulative_sizes` cache will cause IndexErrors!
+            from torch.utils.data import ConcatDataset
+            self.concat_train = ConcatDataset(self.train_datasets_objs)
+        # ---------------------------------------------------------------
         
         if stage in ("fit", None) and self.balance_class_sampling:
             # 1. Single pass to count classes and collect image compositions
@@ -357,6 +414,37 @@ def main(config: DictConfig):
         lora_cfg=lora_cfg
     )
     module.config = config
+    # Hook into the module to save the PEFT adapter alongside the main checkpoint
+    def save_adapter_hook(filepath: str):
+        if hasattr(module.model, "save_pretrained"):
+            import os
+            
+            target_datasets = getattr(config.data, "target_datasets", ["unknown_target"])
+            target = target_datasets[0] if len(target_datasets) > 0 else "unknown_target"
+            frac = getattr(config.data, "lora_frac", "unknown")
+            adapter_dir = os.path.join(config.checkpointing.save_dir, "phase2", "adapters", f"{target}_r{lora_cfg.get('r', 32)}_frac{frac}_best")
+            
+            os.makedirs(adapter_dir, exist_ok=True)
+            
+            # Load the actual best weights into the model before extracting the PEFT adapter
+            try:
+                ckpt = torch.load(filepath, map_location="cpu", weights_only=False)
+                state_dict = {k.replace("model.", "", 1): v for k, v in ckpt["state_dict"].items() if k.startswith("model.")}
+                module.model.load_state_dict(state_dict, strict=False)
+                rank_zero_print(f"Loaded BEST checkpoint weights from {filepath} for adapter extraction.")
+            except Exception as e:
+                rank_zero_print(f"Warning: Could not load best checkpoint weights for adapter save. Using current model state. Error: {e}")
+                
+            module.model.save_pretrained(adapter_dir)
+            rank_zero_print(f"Saved lightweight PEFT adapter to {adapter_dir}")
+            
+    # Subclass ModelCheckpoint so we save the adapter EXACTLY when the best checkpoint is evaluated and saved.
+    class PEFTModelCheckpoint(ModelCheckpoint):
+        def _save_checkpoint(self, trainer, filepath: str) -> None:
+            super()._save_checkpoint(trainer, filepath)
+            if not torch.distributed.is_initialized() or torch.distributed.get_rank() == 0:
+                if "best-segm" in filepath and "ema" not in filepath:
+                    save_adapter_hook(filepath)
 
     # 4. Finetuning Strategies (Freezing)
     if finetune_mode in ("decoder", "queries_decoder_head"):
@@ -391,9 +479,9 @@ def main(config: DictConfig):
     
     if getattr(config, "debug", False):
         rank_zero_print("--- RUNNING IN DEBUG MODE ---")
-        trainer_kwargs["limit_train_batches"] = getattr(config.trainer, "limit_train_batches", 100)
-        trainer_kwargs["limit_val_batches"] = getattr(config.trainer, "limit_val_batches", 100)
-        trainer_kwargs["limit_test_batches"] = getattr(config.trainer, "limit_test_batches", 100)
+        trainer_kwargs["limit_train_batches"] = getattr(config.trainer, "limit_train_batches", 10)
+        trainer_kwargs["limit_val_batches"] = getattr(config.trainer, "limit_val_batches", 10)
+        trainer_kwargs["limit_test_batches"] = getattr(config.trainer, "limit_test_batches", 10)
         train_config.epochs = 1
     else:
         if "limit_train_batches" in config.trainer:
@@ -473,8 +561,9 @@ def main(config: DictConfig):
     trainer.callbacks.append(motif_coco_eval)
 
     if is_seg:
+        CheckpointClass = PEFTModelCheckpoint if finetune_mode == "lora" else ModelCheckpoint
         trainer.callbacks.append(
-            ModelCheckpoint(
+            CheckpointClass(
                 dirpath=os.path.join(config.checkpointing.save_dir, "phase2", f"{motif_config_name}_{finetune_mode}_{timestamp}"),
                 filename="best-segm-epoch{epoch:02d}",
                 monitor="val/segm_mAP_50_95",
@@ -486,7 +575,7 @@ def main(config: DictConfig):
         )
         if bool(config.model.rfdetr.get("use_ema", True)):
             trainer.callbacks.append(
-                ModelCheckpoint(
+                CheckpointClass(
                     dirpath=os.path.join(config.checkpointing.save_dir, "phase2", f"{motif_config_name}_{finetune_mode}_{timestamp}"),
                     filename="best-ema-segm-epoch{epoch:02d}",
                     monitor="val/ema_segm_mAP_50_95",
@@ -538,7 +627,7 @@ def main(config: DictConfig):
         if unexpected_keys:
             rank_zero_print(f"⚠️  Unexpected keys during test-only load: {unexpected_keys[:10]} ...")
             
-        rank_zero_print(f"Starting Validation/Test eval with loaded weights...")
+        rank_zero_print("Starting Validation/Test eval with loaded weights...")
         trainer.test(module, datamodule=data_module)
     else:
         rank_zero_print(f"Starting Training for Motif: {motif_config_name}")
