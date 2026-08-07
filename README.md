@@ -33,6 +33,44 @@ uv run train_rf_detr.py model=rf_detr test_only=True initialization.load_from_ch
 uv run train_yolov5.py model=yolov5 test_only=True initialization.load_from_checkpoint=/path/to/checkpoint.ckpt
 ```
 
+
+## LoRA Fine-Tuning & Dynamic Data Subsampling (RF-DETR Seg)
+
+We support highly efficient Parameter-Efficient Fine-Tuning (PEFT) using LoRA on the **RF-DETR Segmentation** model. To prevent catastrophic forgetting while fine-tuning on a new target domain, the framework uses a dynamic data subsampling strategy that limits target crops and strictly maintains a tiny "replay buffer" of anchor datasets.
+
+### Data Subsampling Strategy
+The subsampling operates on **unique 4k base images**, rather than blindly dropping crops, ensuring maximum spatial diversity:
+1. **Target Datasets:** The data module identifies unique 4k base images, randomly retains `target_data_frac` (e.g., 10%) of them, and then samples exactly `target_crops_per_base` (default 4) from each.
+2. **Anchor (Replay Buffer) Datasets:** Preserves baseline mAP by retaining exactly `anchor_base_images` (default 4) base 4k images per dataset, and samples exactly `anchor_crops_per_base` (default 4) from each (yielding only 16 crops per anchor domain).
+
+Validation and Test splits are **never** subsampled, ensuring consistent and mathematically rigorous mAP tracking.
+
+### LoRA Configuration
+To maintain an extremely small parameter footprint (~2.37% trainable parameters), the PEFT adapter **completely bypasses the backbone**. It strictly targets the query selection and segmentation head modules:
+`pwconv1, spatial_features_proj, query_features_proj, refpoint_embed, query_feat, class_embed, bbox_embed`.
+
+### Running LoRA Fine-Tuning
+Use `train_rfdetr_phase2.py` with `model.rfdetr.finetune_mode=lora`:
+
+```bash
+uv run train_rfdetr_phase2.py \
+    data=coverage_splits/lora_finetune_mix \
+    model=rfdetr_seg \
+    model.rfdetr.finetune_mode=lora \
+    data.target_data_frac=0.10 \
+    data.target_datasets='[20240905_u87-adhered_10x_caged_4_class]' \
+    optimizer.optimizer.lr=1e-3
+```
+*Note: If you run with `model.rfdetr.finetune_mode=full`, the script will still apply the data subsampling fractions but will fine-tune the entire network natively (useful for baseline comparisons).*
+
+### Dual Checkpointing & Inference
+During fine-tuning, the PyTorch Lightning `ModelCheckpoint` callback tracks `val/segm_mAP_50_95`. When the best model is identified:
+1. A standard full-state `.ckpt` is saved by Lightning.
+2. A lightweight standalone PEFT adapter (`adapter_model.safetensors`) is dynamically extracted and saved to `checkpoints/phase2/adapters/<target_dataset>_r32_frac<frac>_best`.
+
+You can perform inference by restoring the Lightning `.ckpt` or by initializing the base model and applying the standalone PEFT adapter using HuggingFace's `PeftModel.from_pretrained()`.
+
+
 ## Advanced Embedding Distance Metrics for Cell Line Analysis
 
 To quantify the differences between cell line embedding distributions (e.g., 256-D for RF-DETR, 768-D for DINOv2), we use a comprehensive suite of statistical distance metrics. These metrics help in selecting representative training datasets and ensuring generalizability.
