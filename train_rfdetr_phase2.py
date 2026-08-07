@@ -62,9 +62,9 @@ class PreBuiltRFDETRModelModule(RFDETRModelModule):
         from peft import LoraConfig, get_peft_model
         lc = self._lora_cfg
         
-    # Exact regex matching leaf nodes for segmentation head and decoder object queries.
-    target_modules = lc.get("target_modules", r".*(pwconv1|spatial_features_proj|query_features_proj|refpoint_embed|query_feat|enc_out_bbox_embed\.\d+\.layers\.\d+|enc_out_class_embed\.\d+|class_embed\.\d+\.layers\.\d+|bbox_embed\.\d+\.layers\.\d+|segmentation_head.*pwconv1)$")
-    exclude_modules = lc.get("exclude_modules", r".*(dwconv|norm|bn|act|relu|gelu|backbone).*")
+        # Exact regex matching leaf nodes for segmentation head and decoder object queries.
+        target_modules = lc.get("target_modules", r".*(pwconv1|spatial_features_proj|query_features_proj|refpoint_embed|query_feat|enc_out_bbox_embed\.\d+\.layers\.\d+|enc_out_class_embed\.\d+|class_embed\.\d+\.layers\.\d+|bbox_embed\.\d+\.layers\.\d+|segmentation_head.*pwconv1)$")
+        exclude_modules = lc.get("exclude_modules", r".*(dwconv|norm|bn|act|relu|gelu|backbone).*")
         
         lora_config = LoraConfig(
             r=lc.get("r", 32),
@@ -565,7 +565,7 @@ def main(config: DictConfig):
         trainer.callbacks.append(
             CheckpointClass(
                 dirpath=os.path.join(config.checkpointing.save_dir, "phase2", f"{motif_config_name}_{finetune_mode}_{timestamp}"),
-                filename="best-segm-epoch{epoch:02d}",
+                filename="best-segm",
                 monitor="val/segm_mAP_50_95",
                 mode="max",
                 save_top_k=1,
@@ -577,7 +577,7 @@ def main(config: DictConfig):
             trainer.callbacks.append(
                 CheckpointClass(
                     dirpath=os.path.join(config.checkpointing.save_dir, "phase2", f"{motif_config_name}_{finetune_mode}_{timestamp}"),
-                    filename="best-ema-segm-epoch{epoch:02d}",
+                    filename="best-ema-segm",
                     monitor="val/ema_segm_mAP_50_95",
                     mode="max",
                     save_top_k=1,
