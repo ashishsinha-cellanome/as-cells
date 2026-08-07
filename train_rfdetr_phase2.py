@@ -146,22 +146,35 @@ class Phase2MotifDataModule(MotifDataModule):
                 
                 # Use strict membership or fallback to matching if lists are identical
                 if not target_datasets or dataset_name in target_datasets:
-                    # Target dataset: apply fraction to BASE images
-                    keep_count = max(1, math.floor(total_base_imgs * target_data_frac))
-                    sampled_bases = set(rng.sample(base_image_names, keep_count))
-                    rank_zero_print(f"[Data Subsample] Target Domain {dataset_name}: keeping {keep_count}/{total_base_imgs} full 4k images (frac={target_data_frac})")
+                    # Target dataset: apply fraction to BASE images to ensure diversity
+                    keep_base_count = max(1, math.floor(total_base_imgs * target_data_frac))
+                    sampled_bases = set(rng.sample(base_image_names, keep_base_count))
+                    
+                    # To minimize training images further while maintaining diversity, 
+                    # sample only a few crops (e.g., 4) from each selected base image.
+                    crops_per_base = getattr(self.config.data, "target_crops_per_base", 4)
+                    
+                    sampled_ids = set()
+                    for base_name in sampled_bases:
+                        available_crops = base_to_ids[base_name]
+                        keep_crops = min(len(available_crops), crops_per_base)
+                        sampled_ids.update(rng.sample(available_crops, keep_crops))
+                        
+                    rank_zero_print(f"[Data Subsample] Target Domain {dataset_name}: keeping {keep_base_count}/{total_base_imgs} diverse base images (frac={target_data_frac}), sampling {crops_per_base} crops per base -> {len(sampled_ids)} total crops.")
                 else:
                     # Anchor dataset: apply replay buffer constraint to BASE images
-                    keep_count = min(total_base_imgs, anchor_base_images)
-                    sampled_bases = set(rng.sample(base_image_names, keep_count))
-                    rank_zero_print(f"[Data Subsample] Anchor Domain {dataset_name}: keeping {keep_count}/{total_base_imgs} full 4k images (replay buffer)")
-                
-                # Flatten the selected base images back into individual crop IDs
-                sampled_ids = set()
-                for base_name in sampled_bases:
-                    sampled_ids.update(base_to_ids[base_name])
+                    keep_base_count = min(total_base_imgs, anchor_base_images)
+                    sampled_bases = set(rng.sample(base_image_names, keep_base_count))
                     
-                rank_zero_print(f"[Data Subsample] {dataset_name}: Results in {len(sampled_ids)} total crops being loaded.")
+                    crops_per_base = getattr(self.config.data, "anchor_crops_per_base", 4)
+                    
+                    sampled_ids = set()
+                    for base_name in sampled_bases:
+                        available_crops = base_to_ids[base_name]
+                        keep_crops = min(len(available_crops), crops_per_base)
+                        sampled_ids.update(rng.sample(available_crops, keep_crops))
+                        
+                    rank_zero_print(f"[Data Subsample] Anchor Domain {dataset_name}: keeping {keep_base_count}/{total_base_imgs} base images, {crops_per_base} crops per base -> {len(sampled_ids)} total crops (replay buffer).")
                     
                 # Filter the internal coco dictionary inplace
                 ds_obj.coco.imgs = {k: v for k, v in ds_obj.coco.imgs.items() if k in sampled_ids}
