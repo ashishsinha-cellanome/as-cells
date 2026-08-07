@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 
 import os
-import math
 import datetime
 import torch
 import pytorch_lightning as pl
@@ -106,43 +105,63 @@ class Phase2MotifDataModule(MotifDataModule):
         super().setup(stage)
         
         # --- NEW: Subsample crops to prevent catastrophic forgetting ---
-        lora_frac = getattr(self.config.data, "lora_frac", None)
-        if stage in ("fit", None) and lora_frac is not None:
+        target_data_frac = getattr(self.config.data, "target_data_frac", None)
+        # We also check for legacy 'lora_frac' for backward compatibility during transitions
+        if target_data_frac is None:
+            target_data_frac = getattr(self.config.data, "lora_frac", None)
+            
+        if stage in ("fit", None) and target_data_frac is not None:
             import random
+            import math
+            from collections import defaultdict
             from utils.distributed_utils import rank_zero_print
             
             # Subsampling must be fully deterministic without polluting global RNG
             target_datasets = list(getattr(self.config.data, "target_datasets", []))
-            anchor_samples = int(getattr(self.config.data, "anchor_samples_per_dataset", 4))
+            anchor_base_images = int(getattr(self.config.data, "anchor_base_images", getattr(self.config.data, "anchor_samples_per_dataset", 4)))
             
             if not target_datasets:
-                rank_zero_print("[WARNING] No target_datasets specified! Applying lora_frac to ALL datasets.")
+                rank_zero_print(f"[WARNING] No target_datasets specified! Applying target_data_frac ({target_data_frac}) to ALL datasets.")
             
             for ds_name, ds_obj in zip(self.train_dataset_names, self.train_datasets_objs):
                 dataset_name = ds_name
 
-                # Sort keys to ensure absolute DDP determinism before sampling
-                img_ids = sorted(list(ds_obj.coco.imgs.keys()))
-                total_imgs = len(img_ids)
+                # Group crops by their original base 4k image filename (e.g. splitting on '_crp_')
+                base_to_ids = defaultdict(list)
+                # Sort keys to ensure absolute DDP determinism before grouping
+                for img_id in sorted(list(ds_obj.coco.imgs.keys())):
+                    file_name = ds_obj.coco.imgs[img_id]["file_name"]
+                    # Usually formatted as `original_name_crp_N.jpg`
+                    base_name = file_name.rsplit('_crp_', 1)[0]
+                    base_to_ids[base_name].append(img_id)
                 
-                if total_imgs == 0:
+                base_image_names = sorted(list(base_to_ids.keys()))
+                total_base_imgs = len(base_image_names)
+                
+                if total_base_imgs == 0:
                     continue
                     
                 # Isolate randomness per-dataset using a deterministic string seed 
-                # (hash() is randomized across processes in Python 3.3+)
                 rng = random.Random(f"{self.config.get('seed', 42)}_{dataset_name}")
                 
                 # Use strict membership or fallback to matching if lists are identical
                 if not target_datasets or dataset_name in target_datasets:
-                    # Target dataset: apply fraction
-                    keep_count = max(1, math.floor(total_imgs * lora_frac))
-                    sampled_ids = set(rng.sample(img_ids, keep_count))
-                    rank_zero_print(f"[LoRA Subsample] Target Domain {dataset_name}: keeping {keep_count}/{total_imgs} images (frac={lora_frac})")
+                    # Target dataset: apply fraction to BASE images
+                    keep_count = max(1, math.floor(total_base_imgs * target_data_frac))
+                    sampled_bases = set(rng.sample(base_image_names, keep_count))
+                    rank_zero_print(f"[Data Subsample] Target Domain {dataset_name}: keeping {keep_count}/{total_base_imgs} full 4k images (frac={target_data_frac})")
                 else:
-                    # Anchor dataset: apply replay buffer constraint
-                    keep_count = min(total_imgs, anchor_samples)
-                    sampled_ids = set(rng.sample(img_ids, keep_count))
-                    rank_zero_print(f"[LoRA Subsample] Anchor Domain {dataset_name}: keeping {keep_count}/{total_imgs} images (replay buffer)")
+                    # Anchor dataset: apply replay buffer constraint to BASE images
+                    keep_count = min(total_base_imgs, anchor_base_images)
+                    sampled_bases = set(rng.sample(base_image_names, keep_count))
+                    rank_zero_print(f"[Data Subsample] Anchor Domain {dataset_name}: keeping {keep_count}/{total_base_imgs} full 4k images (replay buffer)")
+                
+                # Flatten the selected base images back into individual crop IDs
+                sampled_ids = set()
+                for base_name in sampled_bases:
+                    sampled_ids.update(base_to_ids[base_name])
+                    
+                rank_zero_print(f"[Data Subsample] {dataset_name}: Results in {len(sampled_ids)} total crops being loaded.")
                     
                 # Filter the internal coco dictionary inplace
                 ds_obj.coco.imgs = {k: v for k, v in ds_obj.coco.imgs.items() if k in sampled_ids}
