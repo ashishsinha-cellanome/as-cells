@@ -37,3 +37,5 @@ data:
     - 20260316_a549-tomm20-gfp-adhered_10x_caged_at_4x_4_class
     - 231212_imr90_multichannel_overlay_4_class
     - 240213_imr90_multichannel_overlay_4_class
+initialization:
+  base_checkpoint: checkpoints/train_dc_neuron_imr90_preadipo_a549_hs675_mc38_full_2026-08-04_20-46-56.ckpt
