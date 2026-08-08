@@ -475,7 +475,7 @@ def main(config: DictConfig):
         def _save_checkpoint(self, trainer, filepath: str) -> None:
             super()._save_checkpoint(trainer, filepath)
             if not torch.distributed.is_initialized() or torch.distributed.get_rank() == 0:
-                if "best-segm" in filepath and "ema" not in filepath:
+                if "best-bbox" in filepath and "ema" not in filepath:
                     save_adapter_hook(filepath)
 
     # 4. Finetuning Strategies (Freezing)
@@ -597,8 +597,8 @@ def main(config: DictConfig):
         trainer.callbacks.append(
             CheckpointClass(
                 dirpath=os.path.join(config.checkpointing.save_dir, "phase2", f"{motif_config_name}_{finetune_mode}_{timestamp}"),
-                filename="best-segm",
-                monitor="val/segm_mAP_50_95",
+                filename="best-bbox",
+                monitor="val/mAP_50_95",
                 mode="max",
                 save_top_k=1,
                 auto_insert_metric_name=False,
@@ -609,8 +609,8 @@ def main(config: DictConfig):
             trainer.callbacks.append(
                 CheckpointClass(
                     dirpath=os.path.join(config.checkpointing.save_dir, "phase2", f"{motif_config_name}_{finetune_mode}_{timestamp}"),
-                    filename="best-ema-segm",
-                    monitor="val/ema_segm_mAP_50_95",
+                    filename="best-ema-bbox",
+                    monitor="val/ema_mAP_50_95",
                     mode="max",
                     save_top_k=1,
                     auto_insert_metric_name=False,
