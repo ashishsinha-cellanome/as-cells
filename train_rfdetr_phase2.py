@@ -664,27 +664,19 @@ def main(config: DictConfig):
     else:
         rank_zero_print(f"Starting Training for Motif: {motif_config_name}")
         ckpt_path = config.get("initialization", {}).get("load_from_checkpoint", None)
-        if ckpt_path:
-            # Check if this is a LoRA checkpoint or a Full checkpoint
-            checkpoint = _load_ckpt(ckpt_path)
-            state_dict = checkpoint.get("state_dict", {})
+        base_ckpt = config.get("initialization", {}).get("base_checkpoint", None)
+        
+        # 1. Manually load base model weights if specified (used for fresh LoRA runs to skip optimizer states)
+        if base_ckpt and not ckpt_path:
+            rank_zero_print(f"Initializing base weights manually from: {base_ckpt} (skipping optimizer state)")
+            checkpoint = _load_ckpt(base_ckpt)
+            weight_source = _select_eval_weights_source(base_ckpt, checkpoint, config=config)
+            _load_selected_weights(module, checkpoint, weight_source)
             
-            # If the checkpoint contains LoRA adapter weights, it's a resume of a previous LoRA run
-            is_lora_ckpt = any("lora_A" in k or "lora_B" in k for k in state_dict.keys())
-
-            if finetune_mode == "lora" and not is_lora_ckpt:
-                # We are starting a NEW LoRA run from a Phase 1 Full Checkpoint.
-                # We MUST NOT pass ckpt_path to trainer.fit() because Lightning will try to 
-                # restore the optimizer state of the full 36M parameter model onto the 800k parameter PEFT optimizer, causing a crash.
-                rank_zero_print(f"LoRA Mode: Initializing from base weights in checkpoint: {ckpt_path} (skipping incompatible optimizer state)")
-                weight_source = _select_eval_weights_source(ckpt_path, checkpoint, config=config)
-                _load_selected_weights(module, checkpoint, weight_source)
-                trainer.fit(module, datamodule=data_module)
-            else:
-                # 1. Full finetune mode -> load full checkpoint and resume optimizer
-                # 2. LoRA mode + is_lora_ckpt -> resume previous failed LoRA run, optimizer states match perfectly
-                rank_zero_print(f"Resuming training state (including optimizer) from checkpoint: {ckpt_path}")
-                trainer.fit(module, datamodule=data_module, ckpt_path=ckpt_path)
+        # 2. Resume training state if load_from_checkpoint is provided (native Lightning behavior)
+        if ckpt_path:
+            rank_zero_print(f"Resuming full training state from checkpoint: {ckpt_path}")
+            trainer.fit(module, datamodule=data_module, ckpt_path=ckpt_path)
         else:
             trainer.fit(module, datamodule=data_module)
         
