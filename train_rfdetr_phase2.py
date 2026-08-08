@@ -492,6 +492,23 @@ def main(config: DictConfig):
                 
             if any(name.startswith(p) for p in allow_prefixes):
                 param.requires_grad = True
+                
+    elif finetune_mode == "lora":
+        # In LoRA mode, ensure that strictly frozen base modules (like the backbone) operate in eval() mode 
+        # so any native dropout or stochasticity in the frozen layers is completely disabled.
+        def freeze_and_eval(m: torch.nn.Module):
+            # If all parameters in this module are frozen, force it into eval mode.
+            if len(list(m.parameters())) > 0 and all(not p.requires_grad for p in m.parameters()):
+                m.eval()
+                
+        # This will be called by lightning every time the model is set to train(), so we hook it
+        def custom_train(mode: bool = True):
+            pl.LightningModule.train(module, mode)
+            if mode:
+                module.model.apply(freeze_and_eval)
+            return module
+            
+        module.train = custom_train
 
     # 5. Data Module
     data_module = Phase2MotifDataModule(
