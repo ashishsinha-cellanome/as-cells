@@ -668,6 +668,9 @@ def main(config: DictConfig):
         
         # 1. Manually load base model weights if specified (used for fresh LoRA runs to skip optimizer states)
         if base_ckpt and not ckpt_path:
+            if finetune_mode != "lora":
+                rank_zero_print(f"⚠️  WARNING: Using base_checkpoint in {finetune_mode} mode. Usually, full fine-tuning relies on the default rf-detr-seg.pth `pretrain_weights` behavior.")
+                
             rank_zero_print(f"Initializing base weights manually from: {base_ckpt} (skipping optimizer state)")
             checkpoint = _load_ckpt(base_ckpt)
             weight_source = _select_eval_weights_source(base_ckpt, checkpoint, config=config)
