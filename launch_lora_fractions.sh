@@ -11,6 +11,8 @@ for frac in "${fractions[@]}"; do
     uv run train_rfdetr_phase2.py \
         data=coverage_splits/lora_finetune_mix \
         model=rfdetr_seg \
+	model.rfdetr.lora.r=64 \ 
+	model.rfdetr.lora.alpha=128 \ 
         model.rfdetr.finetune_mode=lora \
         data.target_data_frac=$frac \
 	trainer.check_val_every_n_epoch=5 \
