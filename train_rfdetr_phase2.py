@@ -63,7 +63,7 @@ class PreBuiltRFDETRModelModule(RFDETRModelModule):
         
         # Exact regex matching leaf nodes for segmentation head, decoder object queries, and transformer attention/dense layers.
         # We explicitly exclude the backbone to keep the LoRA footprint low and focused on the decoder/heads.
-        target_modules = lc.get("target_modules", r".*(pwconv1|spatial_features_proj|query_features_proj|refpoint_embed|query_feat|enc_out_bbox_embed\.\d+\.layers\.\d+|enc_out_class_embed\.\d+|(?<!enc_out_)class_embed|bbox_embed\.layers\.\d+|segmentation_head.*pwconv1|qkv|query|key|value|dense|q_proj|k_proj|v_proj|out_proj|output_proj|value_proj|linear1|linear2|sampling_offsets|attention_weights)$")
+        target_modules = lc.get("target_modules", r".*(pwconv1|spatial_features_proj|query_features_proj|refpoint_embed|query_feat|enc_out_bbox_embed\.\d+\.layers\.\d+|enc_out_class_embed\.\d+|(?<!enc_out_)class_embed|bbox_embed\.layers\.\d+|segmentation_head.*pwconv1|qkv|query|key|value|dense|q_proj|k_proj|v_proj|out_proj|output_proj|value_proj|sampling_offsets|attention_weights)$")
         exclude_modules = lc.get("exclude_modules", r".*(dwconv|norm|bn|act|relu|gelu|backbone).*")
         
         r_val = lc.get("r", 32)
