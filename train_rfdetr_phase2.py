@@ -17,7 +17,7 @@ from rfdetr.models.lwdetr import build_criterion_and_postprocessors
 from rfdetr.training.trainer import build_trainer
 from rfdetr.training.callbacks.coco_eval import COCOEvalCallback
 from rfdetr.training.callbacks import RFDETREMACallback
-from rfdetr.util.misc import collate_fn
+from rfdetr.utilities import collate_fn
 
 from pytorch_lightning.callbacks import ModelCheckpoint
 
