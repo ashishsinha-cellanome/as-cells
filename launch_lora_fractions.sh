@@ -16,7 +16,7 @@ for frac in "${fractions[@]}"; do
         data.target_crops_per_base=32 \
         data.anchor_crops_per_base=32 \
         data.target_datasets='[20250108_neuron-adhered_10x_uncaged_4_class]' \
-        optimizer.optimizer.lr=3e-4 \
+        optimizer.optimizer.lr=5e-4 \
         model.rfdetr.lr_scheduler=cosine
         
     echo "✅ Finished run for target_data_frac = $frac"

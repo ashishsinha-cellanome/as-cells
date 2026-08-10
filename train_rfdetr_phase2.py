@@ -417,6 +417,7 @@ def main(config: DictConfig):
         eval_max_dets=int(config.model.get("max_detections", 100)),
         early_stopping=bool(getattr(config.trainer, "early_stopping", True)),
         early_stopping_patience=int(getattr(config.trainer, "early_stopping_patience", 5)),
+        eval_interval=int(getattr(config.trainer, "check_val_every_n_epoch", 1)),
         num_workers=int(config.data.num_workers),
         seed=config.get("seed", 42),
         accelerator=config.trainer.get("accelerator", "auto"),
@@ -522,6 +523,8 @@ def main(config: DictConfig):
             trainer_kwargs["limit_val_batches"] = config.trainer.limit_val_batches
         if "limit_test_batches" in config.trainer:
             trainer_kwargs["limit_test_batches"] = config.trainer.limit_test_batches
+        if "check_val_every_n_epoch" in config.trainer:
+            trainer_kwargs["check_val_every_n_epoch"] = int(config.trainer.check_val_every_n_epoch)
 
     devices = config.trainer.get("devices", 1)
     
