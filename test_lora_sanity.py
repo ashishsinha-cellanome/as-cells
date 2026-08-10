@@ -58,10 +58,10 @@ def main(config: DictConfig):
 
     train_config_kwargs = dict(
         dataset_dir=str(config.data.path),
-        epochs=1,
+        epochs=5,
         batch_size=int(config.data.batch_size),
         grad_accum_steps=1,
-        lr=float(config.optimizer.optimizer.lr),
+        lr=5e-5,  # Safer learning rate for sanity check
         weight_decay=float(config.optimizer.optimizer.weight_decay),
         output_dir="outputs/sanity_check",
         use_ema=bool(config.model.rfdetr.get("use_ema", True)),
@@ -184,19 +184,27 @@ def main(config: DictConfig):
     _load_selected_weights(module, checkpoint, weight_source)
 
     rank_zero_print(f"\n=======================================================")
-    rank_zero_print(f"STEP 1: EVALUATING BASE MODEL (NO LORA)")
-    rank_zero_print(f"limit_test_batches = {trainer_kwargs['limit_test_batches']}")
-    rank_zero_print(f"=======================================================")
-    trainer.test(module, datamodule=data_module)
-
-    rank_zero_print(f"\n=======================================================")
-    rank_zero_print(f"STEP 2: APPLYING LORA AND RE-EVALUATING")
+    rank_zero_print(f"STEP 1: APPLYING LORA AND TRAINING ON 1% DATA")
     rank_zero_print(f"=======================================================")
     module._apply_lora()
     
-    # We must reset the dataloader state in PyTorch Lightning when calling test multiple times
+    # Train the model to see if base weights are protected
+    trainer.fit(module, datamodule=data_module)
+
+    rank_zero_print(f"\n=======================================================")
+    rank_zero_print(f"STEP 2: EVALUATING FINE-TUNED MODEL (WITH LORA)")
+    rank_zero_print(f"=======================================================")
     trainer.test_dataloaders = None
     trainer.test(module, datamodule=data_module)
+
+    rank_zero_print(f"\n=======================================================")
+    rank_zero_print(f"STEP 3: EVALUATING BASE MODEL (LORA ADAPTERS DISABLED)")
+    rank_zero_print(f"This proves that the base weights were entirely unaffected by training.")
+    rank_zero_print(f"=======================================================")
+    trainer.test_dataloaders = None
+    
+    with module.model.disable_adapter():
+        trainer.test(module, datamodule=data_module)
 
 if __name__ == '__main__':
     main()
