@@ -41,7 +41,7 @@ class PreBuiltRFDETRModelModule(RFDETRModelModule):
     Subclass of RFDETRModelModule that bypasses internal model building,
     allowing a pre-constructed model with custom checkpoints to be injected.
     """
-    def __init__(self, model_config, train_config, inner_model, lora_cfg=None):
+    def __init__(self, model_config, train_config, inner_model, lora_cfg=None, delay_lora=False):
         pl.LightningModule.__init__(self)  # Bypass parent __init__
         self.model_config = model_config
         self.train_config = train_config
@@ -53,7 +53,7 @@ class PreBuiltRFDETRModelModule(RFDETRModelModule):
         self.criterion, self.postprocess = build_criterion_and_postprocessors(ns)
         
         self._lora_cfg = lora_cfg or {}
-        if model_config.backbone_lora:
+        if model_config.backbone_lora and not delay_lora:
             self._apply_lora()
 
     def _apply_lora(self) -> None:
@@ -61,13 +61,15 @@ class PreBuiltRFDETRModelModule(RFDETRModelModule):
         from peft import LoraConfig, get_peft_model
         lc = self._lora_cfg
         
-        # Exact regex matching leaf nodes for segmentation head and decoder object queries.
-        target_modules = lc.get("target_modules", r".*(pwconv1|spatial_features_proj|query_features_proj|refpoint_embed|query_feat|enc_out_bbox_embed\.\d+\.layers\.\d+|enc_out_class_embed\.\d+|class_embed\.\d+\.layers\.\d+|bbox_embed\.\d+\.layers\.\d+|segmentation_head.*pwconv1)$")
+        # Exact regex matching leaf nodes for segmentation head, decoder object queries, and transformer attention/dense layers.
+        # We explicitly exclude the backbone to keep the LoRA footprint low and focused on the decoder/heads.
+        target_modules = lc.get("target_modules", r".*(pwconv1|spatial_features_proj|query_features_proj|refpoint_embed|query_feat|enc_out_bbox_embed\.\d+\.layers\.\d+|enc_out_class_embed\.\d+|(?<!enc_out_)class_embed|bbox_embed\.layers\.\d+|segmentation_head.*pwconv1|qkv|query|key|value|dense|q_proj|k_proj|v_proj|out_proj|output_proj|value_proj|in_proj_weight)$")
         exclude_modules = lc.get("exclude_modules", r".*(dwconv|norm|bn|act|relu|gelu|backbone).*")
         
+        r_val = lc.get("r", 32)
         lora_config = LoraConfig(
-            r=lc.get("r", 32),
-            lora_alpha=lc.get("alpha", 32),
+            r=r_val,
+            lora_alpha=lc.get("alpha", r_val * 2),
             use_dora=lc.get("use_dora", False),
             target_modules=target_modules,
             exclude_modules=exclude_modules,
@@ -444,7 +446,8 @@ def main(config: DictConfig):
         model_config=model_config, 
         train_config=train_config, 
         inner_model=inner_model, 
-        lora_cfg=lora_cfg
+        lora_cfg=lora_cfg,
+        delay_lora=True
     )
     module.config = config
     # Hook into the module to save the PEFT adapter alongside the main checkpoint
@@ -648,6 +651,9 @@ def main(config: DictConfig):
         if ckpt_path is None:
             raise ValueError("test_only requires initialization.load_from_checkpoint")
         
+        if getattr(module.model_config, "backbone_lora", False):
+            module._apply_lora()
+            
         test_only_checkpoint = _load_ckpt(ckpt_path)
         test_only_weight_source = _select_eval_weights_source(
             ckpt_path, test_only_checkpoint, config=config
@@ -678,6 +684,9 @@ def main(config: DictConfig):
             checkpoint = _load_ckpt(base_ckpt)
             weight_source = _select_eval_weights_source(base_ckpt, checkpoint, config=config)
             _load_selected_weights(module, checkpoint, weight_source)
+            
+        if getattr(module.model_config, "backbone_lora", False):
+            module._apply_lora()
             
         # 2. Resume training state if load_from_checkpoint is provided (native Lightning behavior)
         if ckpt_path:

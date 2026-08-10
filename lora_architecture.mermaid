@@ -1,10 +1,10 @@
 graph TD
     %% Inputs & Backbone (Frozen)
-    Image[Input Image] --> Backbone[Frozen Backbone]
+    Image[Input Image] --> Backbone[Frozen Backbone / DINOv2 / Swin]
     Backbone --> MSFeat[Multi-Scale Features]
 
     %% Main Transformer Pathway
-    MSFeat --> |"Flattened Tokens"| Encoder[Transformer Encoder]
+    MSFeat --> |"Flattened Tokens"| Encoder[Transformer Encoder - Frozen]
     Encoder --> EncFeat[Encoder Features]
 
     %% Query Selection (LoRA)
@@ -16,9 +16,11 @@ graph TD
         TopK --> RefPoint["refpoint_embed (LoRA)"]
     end
 
-    %% Decoder
-    QueryFeat & RefPoint & EncFeat --> Decoder[Transformer Decoder]
-    Decoder --> DecFeat[Decoder Features]
+    %% Decoder (LoRA inside Attention)
+    subgraph "Transformer Decoder (Attention LoRA)"
+        QueryFeat & RefPoint & EncFeat --> DecAttn["Cross/Self Attention Projections (out_proj, value_proj, output_proj) (LoRA)"]
+        DecAttn --> DecFeat[Decoder Features]
+    end
 
     %% Detection Head (LoRA)
     subgraph "Detection Head (LoRA Modules)"
@@ -41,5 +43,5 @@ graph TD
     classDef frozen fill:#ddd,stroke:#333,stroke-width:1px;
     classDef default fill:#fff,stroke:#666,stroke-width:1px;
     
-    class EncOutBbox,EncOutClass,QueryFeat,RefPoint,ClassEmbed,BboxEmbed,SpatialProj,QueryProj,PWConv lora;
-    class Backbone,Encoder,Decoder frozen;
+    class EncOutBbox,EncOutClass,QueryFeat,RefPoint,DecAttn,ClassEmbed,BboxEmbed,SpatialProj,QueryProj,PWConv lora;
+    class Backbone,Encoder frozen;
