@@ -10,7 +10,7 @@ defaults:
   - logging: default
   - initialization: default
   - data: default
-  - _self_  # Allows this file to add its own keys
+  - _self_ # Allows this file to add its own keys
 
 # --- Top-Level Global Settings ---
 seed: 42
@@ -22,7 +22,7 @@ debug: false
 remap_labels: false
 test_only: false
 
-# file/folder names to use 
+# file/folder names to use
 val_name: ${data.val_name}
 test_name: ${data.test_name}
 train_name: ${data.train_name}
@@ -36,15 +36,15 @@ train_name: ${data.train_name}
 
 data:
   class_remapping:
-    'cell-adhered': 'cell'
-    'soma': 'cell'
+    "cell-adhered": "cell"
+    "soma": "cell"
 
 training:
   profiler:
-    type: 'simple'
+    type: "simple"
 
 eval_inference:
-  mode: whole   # whole | sliced | both
+  mode: whole # whole | sliced | both
   sahi:
     slice_height: 256
     slice_width: 256
@@ -62,14 +62,14 @@ eval_inference:
     verbose: 0
 
 inference:
-  mode: dataset        # dataset | folder | single
-  image_path: null     # for mode=single
-  folder_path: null    # for mode=folder
+  mode: dataset # dataset | folder | single
+  image_path: null # for mode=single
+  folder_path: null # for mode=folder
   gt_json: _annotations.coco.json
   output_dir: predictions
-  max_viz: -1          # -1 = save all, otherwise cap at this number
+  max_viz: -1 # -1 = save all, otherwise cap at this number
   sliding_window:
     overlap_x: 80
     overlap_y: 80
     nms_threshold: 0.15
-  use_ema: false       # if true, try to load 'ema_state_dict' from checkpoint
+  use_ema: false # if true, try to load 'ema_state_dict' from checkpoint
