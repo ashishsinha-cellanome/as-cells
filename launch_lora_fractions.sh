@@ -13,6 +13,7 @@ for frac in "${fractions[@]}"; do
         model=rfdetr_seg \
         model.rfdetr.finetune_mode=lora \
         data.target_data_frac=$frac \
+	trainer.check_val_every_n_epoch=5 \
         data.target_crops_per_base=32 \
         data.anchor_crops_per_base=32 \
         data.target_datasets='[20250108_neuron-adhered_10x_uncaged_4_class]' \
