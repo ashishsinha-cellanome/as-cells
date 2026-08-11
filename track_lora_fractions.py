@@ -57,7 +57,12 @@ def main():
         train_datasets = str(train_ds_str).split(',') if pd.notna(train_ds_str) and train_ds_str != "" else []
         
     additional_anchors = [a.strip() for a in args.anchors.split(',')]
-    anchors = list(set(train_datasets + additional_anchors))
+    expanded_anchors = set(train_datasets)
+    for ds in df['dataset'].unique():
+        for anchor_sub in additional_anchors:
+            if anchor_sub.lower() in str(ds).lower():
+                expanded_anchors.add(str(ds))
+    anchors = list(expanded_anchors)
 
     lora_exps = df[df['experiment'].str.contains('lora', case=False, na=False)]
     
@@ -122,6 +127,11 @@ def main():
         a_row = base_df[base_df['dataset'].isin(anchors)]
         if not a_row.empty:
             base_anchor_mAP = a_row['mAP50_95'].mean()
+            
+        if base_target_mAP is None:
+            print(f"Warning: Target dataset {target_name} not found in Baseline. Delta plots vs baseline will be skipped.")
+        if base_anchor_mAP is None:
+            print(f"Warning: Anchors not found in Baseline. Delta plots vs baseline will be skipped.")
 
     eight_node_target_mAP, eight_node_anchor_mAP = None, None
     eight_node_exps = df[df['experiment'].apply(is_8_node)]
@@ -134,6 +144,11 @@ def main():
         a_row = e_df[e_df['dataset'].isin(anchors)]
         if not a_row.empty:
             eight_node_anchor_mAP = a_row['mAP50_95'].mean()
+            
+        if eight_node_target_mAP is None:
+            print(f"Warning: Target dataset {target_name} not found in 8-node baseline. Delta plots vs 8-node will be skipped.")
+        if eight_node_anchor_mAP is None:
+            print(f"Warning: Anchors not found in 8-node baseline. Delta plots vs 8-node will be skipped.")
     else:
         print("Warning: 8-node baseline not found in CSV. Relative plots vs 8-node will be skipped.")
 
