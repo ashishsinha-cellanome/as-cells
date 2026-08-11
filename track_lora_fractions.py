@@ -75,9 +75,10 @@ def main():
         fraction = extract_fraction(exp)
         if fraction is None:
             continue
-        valid_exps.append((exp, fraction))
-        if args.target is None:
-            inferred_targets.add(get_target_name(exp, None))
+            
+        inferred = get_target_name(exp, None)
+        inferred_targets.add(inferred)
+        valid_exps.append((exp, fraction, inferred))
 
     target_name = args.target
     if target_name is None:
@@ -97,6 +98,19 @@ def main():
             if target_name.lower() in str(ds).lower():
                 target_name = str(ds)
                 break
+                
+    # Now filter valid_exps to only include those matching the target dataset
+    filtered_exps = []
+    for exp, fraction, inferred in valid_exps:
+        # Match inferred target to the resolved target_name (ignoring hyphens/underscores)
+        inferred_clean = inferred.replace('_', '').replace('-', '').lower()
+        target_clean = target_name.replace('_', '').replace('-', '').lower()
+        if inferred_clean in target_clean:
+            filtered_exps.append((exp, fraction))
+            
+    if not filtered_exps:
+        print(f"No LoRA experiments found for target: {target_name}")
+        return
 
     anchors = [a for a in anchors if a != target_name]
 
@@ -120,7 +134,7 @@ def main():
             
     heatmap_df = pd.DataFrame(data_rows)
     
-    valid_exps = sorted(valid_exps, key=lambda x: x[1])
+    valid_exps = sorted(filtered_exps, key=lambda x: x[1])
     
     orig_map = {short_name(x): x for x in anchors + [target_name]}
     
