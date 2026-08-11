@@ -61,6 +61,15 @@ def main():
         for anchor_sub in additional_anchors:
             if anchor_sub.lower() in str(ds).lower():
                 expanded_anchors.add(str(ds))
+                
+    # Re-introduce the Baseline 5-node train datasets
+    base_df = df[df['experiment'] == args.base_exp]
+    if not base_df.empty:
+        train_ds_str = base_df['train_datasets'].iloc[0]
+        train_datasets = str(train_ds_str).split(',') if pd.notna(train_ds_str) and train_ds_str != "" else []
+        for ds in train_datasets:
+            expanded_anchors.add(ds.strip())
+            
     anchors = list(expanded_anchors)
 
     lora_exps = df[df['experiment'].str.contains('lora', case=False, na=False)]
@@ -173,7 +182,86 @@ def main():
     plt.savefig("lora_fraction_heatmap.png", dpi=180)
     plt.close()
 
-    print("Plots generated successfully: lora_fraction_heatmap.png")
+    # Create Line Plots
+    # We will use plot_df which has the datasets as rows and experiments as columns.
+    # The columns are like "8-Node Base", "LoRA 1%", "LoRA 5%", etc.
+    # We want to plot mAP vs Fraction.
+    
+    frac_cols = [c for c in plot_df.columns if c.startswith("LoRA")]
+    frac_vals = []
+    for c in frac_cols:
+        val = int(c.replace("LoRA ", "").replace("%", ""))
+        frac_vals.append(val)
+        
+    if frac_vals:
+        # Colors and styles
+        plt.style.use('seaborn-v0_8-colorblind')
+        colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
+        
+        # 1. Absolute Plot
+        plt.figure(figsize=(10, 6))
+        
+        target_short = short_name(target_name)
+        color_idx = 0
+        
+        for ds_name in plot_df.index:
+            is_target = (ds_name == target_short)
+            c = colors[color_idx % len(colors)]
+            color_idx += 1
+            
+            y_vals = plot_df.loc[ds_name, frac_cols].values
+            marker = '*' if is_target else 'o'
+            linewidth = 2.5 if is_target else 1.5
+            linestyle = '-' if is_target else '--'
+            
+            plt.plot(frac_vals, y_vals, label=f"{ds_name}", color=c, marker=marker, linestyle=linestyle, linewidth=linewidth, markersize=8)
+            
+            # 8-Node Baseline
+            if "8-Node Base" in plot_df.columns and not pd.isna(plot_df.loc[ds_name, "8-Node Base"]):
+                base_val = plot_df.loc[ds_name, "8-Node Base"]
+                plt.axhline(y=base_val, color=c, linestyle=':', alpha=0.6, label=f"{ds_name} (Base)")
+                
+        plt.xlabel("Data Fraction (%)")
+        plt.ylabel("mAP@0.5-0.95")
+        plt.title(f"LoRA Fine-tuning: Absolute Performance vs Data Fraction\nTarget: {target_short}")
+        plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plt.savefig("lora_fraction_absolute_lines.png", dpi=180)
+        plt.close()
+        
+        # 2. Relative Plot (vs 8-Node Base)
+        if "8-Node Base" in plot_df.columns:
+            plt.figure(figsize=(10, 6))
+            color_idx = 0
+            
+            for ds_name in plot_df.index:
+                if pd.isna(plot_df.loc[ds_name, "8-Node Base"]):
+                    continue
+                    
+                base_val = plot_df.loc[ds_name, "8-Node Base"]
+                is_target = (ds_name == target_short)
+                c = colors[color_idx % len(colors)]
+                color_idx += 1
+                
+                y_vals = plot_df.loc[ds_name, frac_cols].values - base_val
+                marker = '*' if is_target else 'o'
+                linewidth = 2.5 if is_target else 1.5
+                linestyle = '-' if is_target else '--'
+                
+                plt.plot(frac_vals, y_vals, label=f"{ds_name}", color=c, marker=marker, linestyle=linestyle, linewidth=linewidth, markersize=8)
+                
+            plt.axhline(y=0, color='black', linestyle='-', alpha=0.3, label='8-Node Base (0 Delta)')
+            plt.xlabel("Data Fraction (%)")
+            plt.ylabel("Delta mAP@0.5-0.95")
+            plt.title(f"LoRA Fine-tuning: Relative to 8-Node Baseline\nTarget: {target_short}")
+            plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+            plt.grid(True, alpha=0.3)
+            plt.tight_layout()
+            plt.savefig("lora_fraction_relative_lines.png", dpi=180)
+            plt.close()
+
+    print("Plots generated successfully: lora_fraction_heatmap.png, lora_fraction_absolute_lines.png, lora_fraction_relative_lines.png")
 
 if __name__ == "__main__":
     main()

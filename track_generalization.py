@@ -19,7 +19,6 @@ def generate_dynamic_colors(n):
     if n <= len(colors):
         return colors[:n]
         
-    import colorsys
     remaining = n - len(colors)
     inv_phi = 0.618033988749895
     
@@ -172,13 +171,16 @@ def generate_plot(master_df, baseline_name):
     non_baseline_exps = sorted([e for e in master_df['experiment'].unique() if e != baseline_name])
     colors = generate_dynamic_colors(len(non_baseline_exps))
     
-    # 1. Matplotlib Scatter + Lines Plot (All Experiments)
+    # 1. Matplotlib Scatter + Lines Plot (All Experiments - NO LORA)
     plt.figure(figsize=(12, 7))
     
     # Ensure x-axis is populated with all baseline datasets in consistent order
     plt.plot(baseline_df.index, [100]*len(baseline_df), alpha=0.0)
     
     for i, exp in enumerate(non_baseline_exps):
+        if 'lora' in exp.lower():
+            continue
+            
         exp_df = master_df[master_df['experiment'] == exp]
         valid_datasets = exp_df[exp_df['label'].isin(baseline_df.index)]
         if valid_datasets.empty:
@@ -188,12 +190,7 @@ def generate_plot(master_df, baseline_name):
         rel_perf = rel_perf.replace([float('inf'), float('-inf')], float('nan'))
         rel_perf = rel_perf.reindex(baseline_df.index)
         
-        is_lora = 'lora' in exp.lower()
-        marker = '*' if is_lora else 'o'
-        linestyle = '--' if is_lora else '-'
-        markersize = 12 if is_lora else 8
-        
-        plt.plot(rel_perf.index, rel_perf.values, label=exp, color=colors[i], marker=marker, linestyle=linestyle, markersize=markersize, linewidth=1, alpha=0.8)
+        plt.plot(rel_perf.index, rel_perf.values, label=exp, color=colors[i], marker='o', linestyle='-', markersize=8, linewidth=1, alpha=0.8)
 
     plt.axhline(y=100, color='black', linestyle='-', label='Baseline (100%)')
     plt.axhline(y=90, color='gray', linestyle='--', label='90% Threshold')
@@ -222,6 +219,12 @@ def generate_plot(master_df, baseline_name):
         
     filtered_exps = [e for e in non_baseline_exps if 'lora' in e.lower() or is_8_node(e)]
     
+    # Bright colors for LoRA
+    bright_colors = ['#e6194b', '#3cb44b', '#ffe119', '#4363d8', '#f58231', '#911eb4', '#46f0f0', '#f032e6', '#bcf60c', '#fabebe', '#008080', '#e6beff', '#9a6324', '#fffac8']
+    color_idx = 0
+    
+    inferred_target = "unknown_target"
+    
     for i, exp in enumerate(non_baseline_exps):
         if exp not in filtered_exps:
             continue
@@ -236,11 +239,37 @@ def generate_plot(master_df, baseline_name):
         rel_perf = rel_perf.reindex(baseline_df.index)
         
         is_lora = 'lora' in exp.lower()
-        marker = '*' if is_lora else 'o'
-        linestyle = '-' if is_lora else '--'
-        markersize = 12 if is_lora else 8
         
-        plt.plot(rel_perf.index, rel_perf.values, label=exp, color=colors[i], marker=marker, linestyle=linestyle, markersize=markersize, linewidth=1.5, alpha=0.8)
+        if is_lora:
+            # Extract fraction for cleaner legend
+            match = re.search(r'(?:_|-|^)([0-1]?\.[0-9]+|[0-9]+(?:pct|%))(?:_|-|$)', exp.lower())
+            if match:
+                val_str = match.group(1)
+                frac_val = float(val_str.replace('pct', '').replace('%', '')) / 100.0 if 'pct' in val_str or '%' in val_str else float(val_str)
+                legend_label = f"LoRA {int(round(frac_val * 100))}%"
+                
+                # Try to extract target name from the experiment
+                t_name = re.sub(r'lora', '', exp, flags=re.IGNORECASE)
+                t_name = re.sub(r'(?:_|-|^)([0-1]?\.[0-9]+|[0-9]+(?:pct|%))(?:_|-|$)', '_', t_name, count=1, flags=re.IGNORECASE)
+                t_name = re.sub(r'[_\-]+', '_', t_name).strip('_-')
+                if t_name:
+                    inferred_target = t_name
+            else:
+                legend_label = exp
+                
+            color = bright_colors[color_idx % len(bright_colors)]
+            color_idx += 1
+            marker = '*'
+            linestyle = '-'
+            markersize = 12
+        else:
+            legend_label = "Base Ckpt" if is_8_node(exp) else exp
+            color = colors[i]
+            marker = 'o'
+            linestyle = '--'
+            markersize = 8
+        
+        plt.plot(rel_perf.index, rel_perf.values, label=legend_label, color=color, marker=marker, linestyle=linestyle, markersize=markersize, linewidth=1.5, alpha=0.8)
 
     plt.axhline(y=100, color='black', linestyle='-', label='Baseline (100%)')
     plt.axhline(y=90, color='gray', linestyle='--', label='90% Threshold')
@@ -253,7 +282,7 @@ def generate_plot(master_df, baseline_name):
     plt.title("Generalization Performance: Base Ckpt & LoRA vs Baseline", fontsize=14)
     plt.legend(bbox_to_anchor=(1.02, 1), loc='upper left', fontsize=10, title="Experiment Type")
     plt.tight_layout()
-    plt.savefig("generalization_lora_and_8node.png", dpi=180, bbox_inches="tight")
+    plt.savefig(f"generalization_lora_and_8node_{inferred_target}.png", dpi=180, bbox_inches="tight")
     plt.close()
     
     # 3. Plotly Interactive Plot
@@ -368,7 +397,7 @@ def main():
         raise SystemExit("Error: No baseline found in master CSV. Please provide one with --baseline.")
         
     generate_plot(master_df, baseline_name)
-    print("Plots saved to generalization_relative_performance_lines.png and generalization_lora_and_8node.png")
+    print("Plots saved to generalization_relative_performance_lines.png and generalization_lora_and_8node_<target>.png")
 
 if __name__ == "__main__":
     main()
