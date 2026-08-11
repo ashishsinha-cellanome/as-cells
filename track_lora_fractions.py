@@ -181,8 +181,8 @@ def main():
         
     if frac_vals:
         # Colors and styles
-        plt.style.use('seaborn-v0_8-colorblind')
-        colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
+        cmap = plt.get_cmap('tab20')
+        colors = [cmap(i) for i in range(20)]
         
         # 1. Absolute Plot
         plt.figure(figsize=(10, 6))
