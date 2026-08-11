@@ -54,23 +54,17 @@ def main():
     df = df[~df['dataset'].astype(str).str.startswith('#')]
     df = df[df['split_type'] == 'test_ds']
 
-    # Anchor resolution: Find any dataset that matches the --anchors substrings
-    additional_anchors = [a.strip() for a in args.anchors.split(',')]
-    expanded_anchors = set()
-    for ds in df['dataset'].unique():
-        for anchor_sub in additional_anchors:
-            if anchor_sub.lower() in str(ds).lower():
-                expanded_anchors.add(str(ds))
-                
-    # Re-introduce the Baseline 5-node train datasets
-    base_df = df[df['experiment'] == args.base_exp]
-    if not base_df.empty:
-        train_ds_str = base_df['train_datasets'].iloc[0]
-        train_datasets = str(train_ds_str).split(',') if pd.notna(train_ds_str) and train_ds_str != "" else []
-        for ds in train_datasets:
-            expanded_anchors.add(ds.strip())
-            
-    anchors = list(expanded_anchors)
+    eight_node_exps = df[df['experiment'].apply(is_8_node)]
+    e_df = pd.DataFrame()
+    anchors = []
+    if not eight_node_exps.empty:
+        e_exp = eight_node_exps['experiment'].iloc[0]
+        e_df = df[df['experiment'] == e_exp]
+        train_ds_str = e_df['train_datasets'].iloc[0]
+        if pd.notna(train_ds_str) and train_ds_str != "":
+            anchors = [x.strip() for x in str(train_ds_str).split(',')]
+    else:
+        print("Warning: 8-node baseline not found in CSV.")
 
     lora_exps = df[df['experiment'].str.contains('lora', case=False, na=False)]
     
@@ -105,14 +99,6 @@ def main():
                 break
 
     anchors = [a for a in anchors if a != target_name]
-
-    eight_node_exps = df[df['experiment'].apply(is_8_node)]
-    e_df = pd.DataFrame()
-    if not eight_node_exps.empty:
-        e_exp = eight_node_exps['experiment'].iloc[0]
-        e_df = df[df['experiment'] == e_exp]
-    else:
-        print("Warning: 8-node baseline not found in CSV.")
 
     data_rows = []
     
@@ -179,7 +165,7 @@ def main():
     plt.ylabel("Evaluation Dataset")
     plt.xticks(rotation=45, ha='right')
     plt.tight_layout()
-    plt.savefig("lora_fraction_heatmap.png", dpi=180)
+    plt.savefig(f"lora_fraction_heatmap_{target_name}.png", dpi=180)
     plt.close()
 
     # Create Line Plots
@@ -227,7 +213,7 @@ def main():
         plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
         plt.grid(True, alpha=0.3)
         plt.tight_layout()
-        plt.savefig("lora_fraction_absolute_lines.png", dpi=180)
+        plt.savefig(f"lora_fraction_absolute_lines_{target_name}.png", dpi=180)
         plt.close()
         
         # 2. Relative Plot (vs 8-Node Base)
@@ -258,10 +244,10 @@ def main():
             plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
             plt.grid(True, alpha=0.3)
             plt.tight_layout()
-            plt.savefig("lora_fraction_relative_lines.png", dpi=180)
+            plt.savefig(f"lora_fraction_relative_lines_{target_name}.png", dpi=180)
             plt.close()
 
-    print("Plots generated successfully: lora_fraction_heatmap.png, lora_fraction_absolute_lines.png, lora_fraction_relative_lines.png")
+    print(f"Plots generated successfully: lora_fraction_heatmap_{target_name}.png, lora_fraction_absolute_lines_{target_name}.png, lora_fraction_relative_lines_{target_name}.png")
 
 if __name__ == "__main__":
     main()
