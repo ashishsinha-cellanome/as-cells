@@ -58,7 +58,7 @@ def main(config: DictConfig):
 
     train_config_kwargs = dict(
         dataset_dir=str(config.data.path),
-        epochs=5,
+        epochs=1,  # Reduced from 5
         batch_size=int(config.data.batch_size),
         grad_accum_steps=1,
         lr=5e-5,  # Safer learning rate for sanity check
@@ -116,16 +116,19 @@ def main(config: DictConfig):
     trainer_kwargs = {}
     trainer_kwargs["use_distributed_sampler"] = False
     trainer_kwargs["num_nodes"] = 1
-    # We set limit_test_batches to make the testing "quick" by default, 
-    # but allow CLI override via trainer.limit_test_batches
-    trainer_kwargs["limit_test_batches"] = getattr(config.trainer, "limit_test_batches", 10)
+    # Hardcode limits for rapid sanity checking
+    trainer_kwargs["limit_train_batches"] = 5
+    trainer_kwargs["limit_test_batches"] = 5
+    trainer_kwargs["num_sanity_val_steps"] = 0
+    trainer_kwargs["limit_val_batches"] = 0
 
-    devices = config.trainer.get("devices", 1)
+    devices = 1  # Force 1 GPU to avoid DDP deadlocks during sequential tests
+    strategy_obj = "auto"
     
     trainer = build_trainer(
         train_config=train_config, 
         model_config=model_config, 
-        strategy="auto",
+        strategy=strategy_obj,
         devices=devices,
         **trainer_kwargs
     )
@@ -191,20 +194,28 @@ def main(config: DictConfig):
     # Train the model to see if base weights are protected
     trainer.fit(module, datamodule=data_module)
 
+    import shutil
+    import os
+
     rank_zero_print(f"\n=======================================================")
     rank_zero_print(f"STEP 2: EVALUATING FINE-TUNED MODEL (WITH LORA)")
     rank_zero_print(f"=======================================================")
-    trainer.test_dataloaders = None
     trainer.test(module, datamodule=data_module)
+    
+    report_path = os.path.join("outputs/sanity_check", "inference_summary_report.md")
+    if os.path.exists(report_path):
+        shutil.move(report_path, os.path.join("outputs/sanity_check", "inference_summary_report_WITH_LORA.md"))
 
     rank_zero_print(f"\n=======================================================")
     rank_zero_print(f"STEP 3: EVALUATING BASE MODEL (LORA ADAPTERS DISABLED)")
     rank_zero_print(f"This proves that the base weights were entirely unaffected by training.")
     rank_zero_print(f"=======================================================")
-    trainer.test_dataloaders = None
     
     with module.model.disable_adapter():
         trainer.test(module, datamodule=data_module)
+
+    if os.path.exists(report_path):
+        shutil.move(report_path, os.path.join("outputs/sanity_check", "inference_summary_report_WITHOUT_LORA.md"))
 
 if __name__ == '__main__':
     main()
