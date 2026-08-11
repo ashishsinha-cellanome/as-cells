@@ -172,7 +172,7 @@ def generate_plot(master_df, baseline_name):
     non_baseline_exps = sorted([e for e in master_df['experiment'].unique() if e != baseline_name])
     colors = generate_dynamic_colors(len(non_baseline_exps))
     
-    # 1. Matplotlib Scatter Plot
+    # 1. Matplotlib Scatter + Lines Plot (All Experiments)
     plt.figure(figsize=(12, 7))
     
     # Ensure x-axis is populated with all baseline datasets in consistent order
@@ -188,39 +188,12 @@ def generate_plot(master_df, baseline_name):
         rel_perf = rel_perf.replace([float('inf'), float('-inf')], float('nan'))
         rel_perf = rel_perf.reindex(baseline_df.index)
         
-        plt.scatter(rel_perf.index, rel_perf.values, label=exp, color=colors[i], s=60)
-
-    plt.axhline(y=100, color='black', linestyle='-', label='Baseline (100%)')
-    plt.axhline(y=90, color='gray', linestyle='--', label='90% Threshold')
-    plt.axhline(y=50, color='red', linestyle='--', label='50% Threshold')
-    
-    plt.xticks(rotation=90, ha='center', fontsize=9)
-    plt.yticks(fontsize=9)
-    plt.ylabel("Relative Performance (% of Baseline)", fontsize=11)
-    plt.xlabel("Dataset", fontsize=11)
-    plt.title("Generalization Performance relative to Baseline", fontsize=14)
-    plt.legend(bbox_to_anchor=(1.02, 1), loc='upper left', fontsize=10, title="Experiment Type")
-    plt.tight_layout()
-    plt.savefig("generalization_relative_performance_scatter.png", dpi=180, bbox_inches="tight")
-    plt.close()
-    
-    # 2. Matplotlib Scatter + Lines Plot
-    plt.figure(figsize=(12, 7))
-    
-    # Ensure x-axis is populated with all baseline datasets in consistent order
-    plt.plot(baseline_df.index, [100]*len(baseline_df), alpha=0.0)
-    
-    for i, exp in enumerate(non_baseline_exps):
-        exp_df = master_df[master_df['experiment'] == exp]
-        valid_datasets = exp_df[exp_df['label'].isin(baseline_df.index)]
-        if valid_datasets.empty:
-            continue
-            
-        rel_perf = valid_datasets.set_index('label')['mAP50_95'] / baseline_df['mAP50_95'] * 100
-        rel_perf = rel_perf.replace([float('inf'), float('-inf')], float('nan'))
-        rel_perf = rel_perf.reindex(baseline_df.index)
+        is_lora = 'lora' in exp.lower()
+        marker = '*' if is_lora else 'o'
+        linestyle = '--' if is_lora else '-'
+        markersize = 12 if is_lora else 8
         
-        plt.plot(rel_perf.index, rel_perf.values, label=exp, color=colors[i], marker='o', markersize=8, linewidth=1, alpha=0.8)
+        plt.plot(rel_perf.index, rel_perf.values, label=exp, color=colors[i], marker=marker, linestyle=linestyle, markersize=markersize, linewidth=1, alpha=0.8)
 
     plt.axhline(y=100, color='black', linestyle='-', label='Baseline (100%)')
     plt.axhline(y=90, color='gray', linestyle='--', label='90% Threshold')
@@ -234,6 +207,53 @@ def generate_plot(master_df, baseline_name):
     plt.legend(bbox_to_anchor=(1.02, 1), loc='upper left', fontsize=10, title="Experiment Type")
     plt.tight_layout()
     plt.savefig("generalization_relative_performance_lines.png", dpi=180, bbox_inches="tight")
+    plt.close()
+    
+    # 2. Separate Plot for 8-Node & LoRA
+    plt.figure(figsize=(12, 7))
+    
+    plt.plot(baseline_df.index, [100]*len(baseline_df), alpha=0.0)
+    
+    def is_8_node(e):
+        e_low = e.lower()
+        has_all_3 = 'a549' in e_low and 'mc38' in e_low and 'hs675' in e_low
+        has_8node = '8 node' in e_low or '8node' in e_low or '8_node' in e_low
+        return has_all_3 or has_8node
+        
+    filtered_exps = [e for e in non_baseline_exps if 'lora' in e.lower() or is_8_node(e)]
+    
+    for i, exp in enumerate(non_baseline_exps):
+        if exp not in filtered_exps:
+            continue
+            
+        exp_df = master_df[master_df['experiment'] == exp]
+        valid_datasets = exp_df[exp_df['label'].isin(baseline_df.index)]
+        if valid_datasets.empty:
+            continue
+            
+        rel_perf = valid_datasets.set_index('label')['mAP50_95'] / baseline_df['mAP50_95'] * 100
+        rel_perf = rel_perf.replace([float('inf'), float('-inf')], float('nan'))
+        rel_perf = rel_perf.reindex(baseline_df.index)
+        
+        is_lora = 'lora' in exp.lower()
+        marker = '*' if is_lora else 'o'
+        linestyle = '-' if is_lora else '--'
+        markersize = 12 if is_lora else 8
+        
+        plt.plot(rel_perf.index, rel_perf.values, label=exp, color=colors[i], marker=marker, linestyle=linestyle, markersize=markersize, linewidth=1.5, alpha=0.8)
+
+    plt.axhline(y=100, color='black', linestyle='-', label='Baseline (100%)')
+    plt.axhline(y=90, color='gray', linestyle='--', label='90% Threshold')
+    plt.axhline(y=50, color='red', linestyle='--', label='50% Threshold')
+    
+    plt.xticks(rotation=90, ha='center', fontsize=9)
+    plt.yticks(fontsize=9)
+    plt.ylabel("Relative Performance (% of Baseline)", fontsize=11)
+    plt.xlabel("Dataset", fontsize=11)
+    plt.title("Generalization Performance: Base Ckpt & LoRA vs Baseline", fontsize=14)
+    plt.legend(bbox_to_anchor=(1.02, 1), loc='upper left', fontsize=10, title="Experiment Type")
+    plt.tight_layout()
+    plt.savefig("generalization_lora_and_8node.png", dpi=180, bbox_inches="tight")
     plt.close()
     
     # 3. Plotly Interactive Plot
@@ -268,6 +288,11 @@ def generate_plot(master_df, baseline_name):
                 for ds, val in zip(rel_perf.index, rel_perf.values)
             ]
             
+            is_lora = 'lora' in exp.lower()
+            marker_symbol = 'star' if is_lora else 'circle'
+            line_dash = 'dash' if is_lora else 'solid'
+            marker_size = 12 if is_lora else 8
+            
             fig.add_trace(go.Scatter(
                 x=rel_perf.index,
                 y=rel_perf.values,
@@ -275,8 +300,8 @@ def generate_plot(master_df, baseline_name):
                 name=exp,
                 text=hover_text,
                 hoverinfo='text',
-                line=dict(color=colors[i], width=1),
-                marker=dict(size=8)
+                line=dict(color=colors[i], width=1, dash=line_dash),
+                marker=dict(size=marker_size, symbol=marker_symbol)
             ))
             
         fig.add_hline(y=100, line_dash="solid", line_color="black", annotation_text="Baseline (100%)", annotation_position="top right")
@@ -343,7 +368,7 @@ def main():
         raise SystemExit("Error: No baseline found in master CSV. Please provide one with --baseline.")
         
     generate_plot(master_df, baseline_name)
-    print("Plot saved to generalization_relative_performance.png")
+    print("Plots saved to generalization_relative_performance_lines.png and generalization_lora_and_8node.png")
 
 if __name__ == "__main__":
     main()
