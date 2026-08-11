@@ -13,21 +13,24 @@ def parse_args():
     return parser.parse_args()
 
 def extract_fraction(exp_name):
-    match = re.search(r'([0-9]*\.?[0-9]+)\s*(?:pct|%)?', exp_name.lower())
+    match = re.search(r'(?:_|-|^)(0\.[0-9]+|[1-9][0-9]*(?:pct|%))(?:_|-|$)', exp_name.lower())
     if match:
-        val = match.group(1)
-        if 'pct' in exp_name.lower() or '%' in exp_name:
+        val_str = match.group(1)
+        if 'pct' in val_str or '%' in val_str:
+            val = val_str.replace('pct', '').replace('%', '')
             return float(val) / 100.0
-        return float(val)
+        return float(val_str)
     return None
 
 def get_target_name(exp_name, target_arg):
     if target_arg:
         return target_arg
     name = re.sub(r'lora', '', exp_name, flags=re.IGNORECASE)
-    name = re.sub(r'[0-9]*\.?[0-9]+\s*(?:pct|%)?', '', name, flags=re.IGNORECASE)
-    name = re.sub(r'^_+|_+$', '', name)
-    name = name.replace('__', '_')
+    match = re.search(r'(?:_|-|^)(0\.[0-9]+|[1-9][0-9]*(?:pct|%))(?:_|-|$)', exp_name.lower())
+    if match:
+        name = re.sub(re.escape(match.group(1)), '', name, flags=re.IGNORECASE)
+    name = re.sub(r'_+', '_', name)
+    name = name.strip('_')
     return name if name else "Target"
 
 def is_8_node(e):
@@ -59,18 +62,34 @@ def main():
 
     lora_exps = df[df['experiment'].str.contains('lora', case=False, na=False)]
     
-    results = []
-    target_name = args.target
-
+    valid_exps = []
+    inferred_targets = set()
+    
     for exp in lora_exps['experiment'].unique():
         fraction = extract_fraction(exp)
         if fraction is None:
             print(f"Warning: Skipping {exp}, no parseable fraction found.")
             continue
+        valid_exps.append((exp, fraction))
         
-        if target_name is None:
-            target_name = get_target_name(exp, None)
-            
+        if args.target is None:
+            inferred_targets.add(get_target_name(exp, None))
+
+    target_name = args.target
+    if target_name is None:
+        if len(inferred_targets) > 1:
+            import sys
+            print(f"Error: Multiple target datasets inferred {inferred_targets}. Please provide --target explicitly.")
+            sys.exit(1)
+        elif len(inferred_targets) == 1:
+            target_name = inferred_targets.pop()
+        else:
+            print("No valid LoRA fractions found to plot.")
+            return
+
+    results = []
+
+    for exp, fraction in valid_exps:
         exp_df = df[df['experiment'] == exp]
         
         target_mAP = None
