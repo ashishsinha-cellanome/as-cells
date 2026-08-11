@@ -88,10 +88,12 @@ def main():
             print("No valid LoRA fractions found to plot.")
             return
 
-    for ds in df['dataset'].unique():
-        if target_name.lower() in str(ds).lower():
-            target_name = str(ds)
-            break
+    unique_ds = df['dataset'].unique()
+    if target_name not in unique_ds:
+        for ds in unique_ds:
+            if target_name.lower() in str(ds).lower():
+                target_name = str(ds)
+                break
 
     anchors = [a for a in anchors if a != target_name]
 
@@ -125,7 +127,7 @@ def main():
     
     valid_exps = sorted(valid_exps, key=lambda x: x[1])
     
-    orig_map = {short_name(x): x for x in [target_name] + list(anchors)}
+    orig_map = {short_name(x): x for x in anchors + [target_name]}
     
     for exp, fraction in valid_exps:
         fraction_pct = int(round(fraction * 100))
