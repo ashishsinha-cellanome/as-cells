@@ -13,7 +13,7 @@ def parse_args():
     return parser.parse_args()
 
 def extract_fraction(exp_name):
-    match = re.search(r'(?:_|-|^)(0\.[0-9]+|[1-9][0-9]*(?:pct|%))(?:_|-|$)', exp_name.lower())
+    match = re.search(r'(?:_|-|^)([0-1]?\.[0-9]+|[0-9]+(?:pct|%))(?:_|-|$)', exp_name.lower())
     if match:
         val_str = match.group(1)
         if 'pct' in val_str or '%' in val_str:
@@ -26,11 +26,10 @@ def get_target_name(exp_name, target_arg):
     if target_arg:
         return target_arg
     name = re.sub(r'lora', '', exp_name, flags=re.IGNORECASE)
-    match = re.search(r'(?:_|-|^)(0\.[0-9]+|[1-9][0-9]*(?:pct|%))(?:_|-|$)', exp_name.lower())
-    if match:
-        name = re.sub(re.escape(match.group(1)), '', name, flags=re.IGNORECASE)
-    name = re.sub(r'_+', '_', name)
-    name = name.strip('_')
+    # Replace only the first matched fraction and its boundaries with an underscore
+    name = re.sub(r'(?:_|-|^)([0-1]?\.[0-9]+|[0-9]+(?:pct|%))(?:_|-|$)', '_', name, count=1, flags=re.IGNORECASE)
+    name = re.sub(r'[_\-]+', '_', name)
+    name = name.strip('_-')
     return name if name else "Target"
 
 def is_8_node(e):
