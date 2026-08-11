@@ -88,6 +88,13 @@ def main():
             print("No valid LoRA fractions found to plot.")
             return
 
+    for ds in df['dataset'].unique():
+        if target_name.lower() in str(ds).lower():
+            target_name = str(ds)
+            break
+
+    anchors = [a for a in anchors if a != target_name]
+
     eight_node_exps = df[df['experiment'].apply(is_8_node)]
     e_df = pd.DataFrame()
     if not eight_node_exps.empty:
@@ -107,8 +114,7 @@ def main():
         for anchor in sorted(anchors):
             a_row = e_df[e_df['dataset'] == anchor]
             a_val = a_row['mAP50_95'].values[0] if not a_row.empty else None
-            if a_val is not None:
-                data_rows.append({'Dataset': short_name(anchor), col_name: a_val, 'Type': 'Anchor'})
+            data_rows.append({'Dataset': short_name(anchor), col_name: a_val, 'Type': 'Anchor'})
                 
     if not data_rows:
         data_rows.append({'Dataset': short_name(target_name), 'Type': 'Target'})
@@ -119,6 +125,8 @@ def main():
     
     valid_exps = sorted(valid_exps, key=lambda x: x[1])
     
+    orig_map = {short_name(x): x for x in [target_name] + list(anchors)}
+    
     for exp, fraction in valid_exps:
         fraction_pct = int(round(fraction * 100))
         col_name = f"LoRA {fraction_pct}%"
@@ -126,12 +134,7 @@ def main():
         
         for idx, row in heatmap_df.iterrows():
             ds_short = row['Dataset']
-            ds_original = target_name if ds_short == short_name(target_name) else None
-            if ds_original is None:
-                for anchor in anchors:
-                    if short_name(anchor) == ds_short:
-                        ds_original = anchor
-                        break
+            ds_original = orig_map.get(ds_short)
             
             val = None
             if ds_original is not None:

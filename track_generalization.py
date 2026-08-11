@@ -217,8 +217,8 @@ def generate_plot(master_df, baseline_name):
     def is_8_node(e):
         e_low = e.lower()
         has_all_3 = 'a549' in e_low and 'mc38' in e_low and 'hs675' in e_low
-        has_8node = '8 node' in e_low or '8node' in e_low or '8_node' in e_low
-        return has_all_3 or has_8node
+        has_other = 'moc22' in e_low or 'astro' in e_low
+        return has_all_3 and not has_other
         
     filtered_exps = [e for e in non_baseline_exps if 'lora' in e.lower() or is_8_node(e)]
     
