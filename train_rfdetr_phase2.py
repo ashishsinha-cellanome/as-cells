@@ -456,7 +456,7 @@ def main(config: DictConfig):
             import os
             
             target_datasets = getattr(config.data, "target_datasets", ["unknown_target"])
-            target = target_datasets[0] if len(target_datasets) > 0 else "unknown_target"
+            target = "+".join(target_datasets) if len(target_datasets) > 0 else "unknown_target"
             frac = getattr(config.data, "target_data_frac", getattr(config.data, "lora_frac", "unknown"))
             adapter_dir = os.path.join(config.checkpointing.save_dir, "phase2", "adapters", f"{target}_r{lora_cfg.get('r', 32)}_frac{frac}_best")
             
