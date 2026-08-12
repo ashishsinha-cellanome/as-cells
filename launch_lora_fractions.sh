@@ -24,9 +24,9 @@ for frac in "${fractions[@]}"; do
         +model.rfdetr.lora.alpha=128 \
         model.rfdetr.finetune_mode=lora \
         data.target_data_frac=$frac \
-        trainer.check_val_every_n_epoch=20 \
-        data.target_crops_per_base=64 \
-        data.anchor_crops_per_base=64 \
+        trainer.check_val_every_n_epoch=10 \
+        data.target_crops_per_base=32 \
+        data.anchor_crops_per_base=32 \
         data.target_datasets='[20250108_neuron-adhered_10x_uncaged_4_class]' \
         optimizer.optimizer.lr=1e-3 \
         model.rfdetr.lr_scheduler=cosine
