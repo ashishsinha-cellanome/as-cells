@@ -82,17 +82,23 @@ class ReportHTMLParser(HTMLParser):
             self.in_p = False
             text = "".join(self.temp_text).strip()
             if text.startswith("Metric Type:"):
-                self.cur_metric_type = "BBOX" if "BBOX" in text.upper() else None
+                if "BBOX" in text.upper():
+                    self.cur_metric_type = "BBOX"
+                elif "SEGM" in text.upper():
+                    self.cur_metric_type = "SEGM"
+                else:
+                    self.cur_metric_type = None
         elif tag == 'tbody':
             self.in_tbody = False
         elif tag == 'tr':
             self.in_tr = False
             if self.in_tbody and self.current_row and len(self.current_row) >= 6:
-                if self.cur_metric_type == "BBOX" and self.current_row[0] == "all":
+                if self.cur_metric_type is not None and self.current_row[0] == "all":
                     try:
                         self.rows.append({
                             "dataset": self.cur_dataset,
                             "split_type": self.cur_split_type,
+                            "metric_type": self.cur_metric_type,
                             "mAP50_95": float(self.current_row[5])
                         })
                     except ValueError:
@@ -105,14 +111,15 @@ class ReportHTMLParser(HTMLParser):
         if self.in_h2 or self.in_p or self.in_td:
             self.temp_text.append(data)
 
-def parse_metrics_file(file_path):
+def parse_metrics_file(file_path, metric_type="BBOX"):
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"File not found: {file_path}")
     if file_path.endswith('.html'):
         with open(file_path, "r", encoding="utf-8") as f:
             parser = ReportHTMLParser()
             parser.feed(f.read())
-            return pd.DataFrame(parser.rows, columns=['dataset', 'split_type', 'mAP50_95'])
+            df = pd.DataFrame(parser.rows, columns=['dataset', 'split_type', 'metric_type', 'mAP50_95'])
+            return df[df['metric_type'] == metric_type][['dataset', 'split_type', 'mAP50_95']]
     elif file_path.endswith('.csv'):
         df = pd.read_csv(file_path)
         # Filter out commented lines if present in the loaded file
@@ -121,7 +128,7 @@ def parse_metrics_file(file_path):
         required_cols = {'metric_type', 'class', 'dataset', 'split_type', 'mAP50_95'}
         if not required_cols.issubset(df.columns):
             raise ValueError(f"CSV file must contain columns: {', '.join(required_cols)}")
-        return df[(df['metric_type'] == 'BBOX') & (df['class'] == 'all')][['dataset', 'split_type', 'mAP50_95']]
+        return df[(df['metric_type'] == metric_type) & (df['class'] == 'all')][['dataset', 'split_type', 'mAP50_95']]
     else:
         raise ValueError("Unsupported file format. Use .html or .csv")
 
@@ -145,7 +152,7 @@ def update_master_csv(master_csv_path, exp_name, new_df):
     updated_df.to_csv(master_csv_path, index=False)
     return updated_df
 
-def generate_plot(master_df, baseline_name):
+def generate_plot(master_df, baseline_name, metric_type="BBOX"):
     # Filter out commented out datasets
     master_df = master_df[~master_df['dataset'].astype(str).str.startswith('#')]
     
@@ -203,7 +210,8 @@ def generate_plot(master_df, baseline_name):
     plt.title("Generalization Performance relative to Baseline", fontsize=14)
     plt.legend(bbox_to_anchor=(1.02, 1), loc='upper left', fontsize=10, title="Experiment Type")
     plt.tight_layout()
-    plt.savefig("generalization_relative_performance_lines.png", dpi=180, bbox_inches="tight")
+    suffix = "_segm" if metric_type == "SEGM" else ""
+    plt.savefig(f"generalization_relative_performance_lines{suffix}.png", dpi=180, bbox_inches="tight")
     plt.close()
     
     # 2. Separate Plot for 8-Node & LoRA
@@ -282,7 +290,7 @@ def generate_plot(master_df, baseline_name):
     plt.title("Generalization Performance: Base Ckpt & LoRA vs Baseline", fontsize=14)
     plt.legend(bbox_to_anchor=(1.02, 1), loc='upper left', fontsize=10, title="Experiment Type")
     plt.tight_layout()
-    plt.savefig(f"generalization_lora_and_8node_{inferred_target}.png", dpi=180, bbox_inches="tight")
+    plt.savefig(f"generalization_lora_and_8node_{inferred_target}{suffix}.png", dpi=180, bbox_inches="tight")
     plt.close()
     
     # 3. Plotly Interactive Plot
@@ -352,7 +360,7 @@ def generate_plot(master_df, baseline_name):
             margin=dict(b=150)
         )
         
-        fig.write_html("generalization_relative_performance.html")
+        fig.write_html(f"generalization_relative_performance{suffix}.html")
     except ImportError:
         print("Plotly is not installed. Skipping interactive HTML plot. Run `uv add plotly` to enable.")
 
@@ -362,6 +370,7 @@ def parse_args():
     parser.add_argument("--add-exp", help="Path to new experiment HTML or CSV report")
     parser.add_argument("--exp-name", help="Name of the new experiment")
     parser.add_argument("--master-csv", default="generalization_tracking.csv", help="Path to master tracking CSV")
+    parser.add_argument("--metric", default="BBOX", help="Metric to track (BBOX or SEGM)")
     return parser.parse_args()
 
 def main():
@@ -373,17 +382,17 @@ def main():
     
     if args.baseline:
         try:
-            base_df = parse_metrics_file(args.baseline)
+            base_df = parse_metrics_file(args.baseline, args.metric)
             update_master_csv(args.master_csv, baseline_name, base_df)
-            print(f"Updated baseline using {args.baseline}")
+            print(f"Updated baseline using {args.baseline} for metric {args.metric}")
         except Exception as e:
             raise SystemExit(f"Error parsing baseline file: {e}")
         
     if args.add_exp and args.exp_name:
         try:
-            exp_df = parse_metrics_file(args.add_exp)
+            exp_df = parse_metrics_file(args.add_exp, args.metric)
             update_master_csv(args.master_csv, args.exp_name, exp_df)
-            print(f"Added experiment {args.exp_name} from {args.add_exp}")
+            print(f"Added experiment {args.exp_name} from {args.add_exp} for metric {args.metric}")
         except Exception as e:
             raise SystemExit(f"Error parsing experiment file: {e}")
         
@@ -396,8 +405,9 @@ def main():
     if baseline_name not in valid_df['experiment'].values:
         raise SystemExit("Error: No baseline found in master CSV. Please provide one with --baseline.")
         
-    generate_plot(master_df, baseline_name)
-    print("Plots saved to generalization_relative_performance_lines.png and generalization_lora_and_8node_<target>.png")
+    generate_plot(master_df, baseline_name, args.metric)
+    suffix = "_segm" if args.metric == "SEGM" else ""
+    print(f"Plots saved to generalization_relative_performance_lines{suffix}.png and generalization_lora_and_8node_<target>{suffix}.png")
 
 if __name__ == "__main__":
     main()

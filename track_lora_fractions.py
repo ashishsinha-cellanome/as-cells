@@ -11,6 +11,7 @@ def parse_args():
     parser.add_argument("--target", help="Explicit target dataset name (optional)")
     parser.add_argument("--anchors", default="A549,MC38,HS675", help="Comma-separated additional anchor datasets")
     parser.add_argument("--base-exp", default="Baseline", help="Baseline experiment name (unused in heatmap)")
+    parser.add_argument("--suffix", default="", help="Suffix for output filenames (e.g., _segm)")
     return parser.parse_args()
 
 def extract_fraction(exp_name):
@@ -179,7 +180,7 @@ def main():
     plt.ylabel("Evaluation Dataset")
     plt.xticks(rotation=45, ha='right')
     plt.tight_layout()
-    plt.savefig(f"lora_fraction_heatmap_{target_name}.png", dpi=180)
+    plt.savefig(f"lora_fraction_heatmap_{target_name}{args.suffix}.png", dpi=180)
     plt.close()
 
     # Create Line Plots
@@ -227,7 +228,7 @@ def main():
         plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
         plt.grid(True, alpha=0.3)
         plt.tight_layout()
-        plt.savefig(f"lora_fraction_absolute_lines_{target_name}.png", dpi=180)
+        plt.savefig(f"lora_fraction_absolute_lines_{target_name}{args.suffix}.png", dpi=180)
         plt.close()
         
         # 2. Relative Plot (vs 8-Node Base)
@@ -258,10 +259,10 @@ def main():
             plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
             plt.grid(True, alpha=0.3)
             plt.tight_layout()
-            plt.savefig(f"lora_fraction_relative_lines_{target_name}.png", dpi=180)
+            plt.savefig(f"lora_fraction_relative_lines_{target_name}{args.suffix}.png", dpi=180)
             plt.close()
 
-    print(f"Plots generated successfully: lora_fraction_heatmap_{target_name}.png, lora_fraction_absolute_lines_{target_name}.png, lora_fraction_relative_lines_{target_name}.png")
+    print(f"Plots generated successfully: lora_fraction_heatmap_{target_name}{args.suffix}.png, lora_fraction_absolute_lines_{target_name}{args.suffix}.png, lora_fraction_relative_lines_{target_name}{args.suffix}.png")
 
 if __name__ == "__main__":
     main()
