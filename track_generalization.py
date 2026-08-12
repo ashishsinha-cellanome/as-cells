@@ -370,7 +370,7 @@ def parse_args():
     parser.add_argument("--add-exp", help="Path to new experiment HTML or CSV report")
     parser.add_argument("--exp-name", help="Name of the new experiment")
     parser.add_argument("--master-csv", default="generalization_tracking.csv", help="Path to master tracking CSV")
-    parser.add_argument("--metric", default="BBOX", help="Metric to track (BBOX or SEGM)")
+    parser.add_argument("--metric", default="both", help="Metric to track (BBOX, SEGM, or both)")
     return parser.parse_args()
 
 def main():
@@ -379,35 +379,48 @@ def main():
     
     if bool(args.add_exp) != bool(args.exp_name):
         raise SystemExit("Error: Both --add-exp and --exp-name must be provided together.")
+        
+    metrics_to_process = ["BBOX", "SEGM"] if args.metric.lower() == "both" else [args.metric.upper()]
     
-    if args.baseline:
-        try:
-            base_df = parse_metrics_file(args.baseline, args.metric)
-            update_master_csv(args.master_csv, baseline_name, base_df)
-            print(f"Updated baseline using {args.baseline} for metric {args.metric}")
-        except Exception as e:
-            raise SystemExit(f"Error parsing baseline file: {e}")
+    for metric in metrics_to_process:
+        suffix = "_segm" if metric == "SEGM" else ""
+        current_csv = args.master_csv.replace(".csv", f"{suffix}.csv") if metric == "SEGM" else args.master_csv
         
-    if args.add_exp and args.exp_name:
-        try:
-            exp_df = parse_metrics_file(args.add_exp, args.metric)
-            update_master_csv(args.master_csv, args.exp_name, exp_df)
-            print(f"Added experiment {args.exp_name} from {args.add_exp} for metric {args.metric}")
-        except Exception as e:
-            raise SystemExit(f"Error parsing experiment file: {e}")
-        
-    if not os.path.exists(args.master_csv):
-        raise SystemExit("Error: Master CSV does not exist. Please provide a baseline or experiment.")
-        
-    master_df = pd.read_csv(args.master_csv)
-    # Check if baseline is in the un-commented portion of the data
-    valid_df = master_df[~master_df['dataset'].astype(str).str.startswith('#')]
-    if baseline_name not in valid_df['experiment'].values:
-        raise SystemExit("Error: No baseline found in master CSV. Please provide one with --baseline.")
-        
-    generate_plot(master_df, baseline_name, args.metric)
-    suffix = "_segm" if args.metric == "SEGM" else ""
-    print(f"Plots saved to generalization_relative_performance_lines{suffix}.png and generalization_lora_and_8node_<target>{suffix}.png")
+        if args.baseline:
+            try:
+                base_df = parse_metrics_file(args.baseline, metric)
+                if not base_df.empty:
+                    update_master_csv(current_csv, baseline_name, base_df)
+                    print(f"Updated baseline using {args.baseline} for metric {metric}")
+                else:
+                    print(f"Warning: No {metric} data found in {args.baseline}")
+            except Exception as e:
+                print(f"Error parsing baseline file for metric {metric}: {e}")
+            
+        if args.add_exp and args.exp_name:
+            try:
+                exp_df = parse_metrics_file(args.add_exp, metric)
+                if not exp_df.empty:
+                    update_master_csv(current_csv, args.exp_name, exp_df)
+                    print(f"Added experiment {args.exp_name} from {args.add_exp} for metric {metric}")
+                else:
+                    print(f"Warning: No {metric} data found in {args.add_exp}")
+            except Exception as e:
+                print(f"Error parsing experiment file for metric {metric}: {e}")
+            
+        if not os.path.exists(current_csv):
+            print(f"Error: Master CSV {current_csv} does not exist. Skipping plots for metric {metric}.")
+            continue
+            
+        master_df = pd.read_csv(current_csv)
+        # Check if baseline is in the un-commented portion of the data
+        valid_df = master_df[~master_df['dataset'].astype(str).str.startswith('#')]
+        if baseline_name not in valid_df['experiment'].values:
+            print(f"Error: No baseline found in master CSV {current_csv}. Skipping plots for metric {metric}.")
+            continue
+            
+        generate_plot(master_df, baseline_name, metric)
+        print(f"Plots saved to generalization_relative_performance_lines{suffix}.png and generalization_lora_and_8node_<target>{suffix}.png")
 
 if __name__ == "__main__":
     main()

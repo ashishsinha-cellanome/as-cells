@@ -11,7 +11,7 @@ def parse_args():
     parser.add_argument("--target", help="Explicit target dataset name (optional)")
     parser.add_argument("--anchors", default="A549,MC38,HS675", help="Comma-separated additional anchor datasets")
     parser.add_argument("--base-exp", default="Baseline", help="Baseline experiment name (unused in heatmap)")
-    parser.add_argument("--suffix", default="", help="Suffix for output filenames (e.g., _segm)")
+    parser.add_argument("--metric", default="both", help="Metric to track (BBOX, SEGM, or both)")
     return parser.parse_args()
 
 def extract_fraction(exp_name):
@@ -45,13 +45,15 @@ def short_name(d):
     date_short = date_part[2:] if len(date_part) == 8 else date_part
     return f"{rest} ({date_short})" if date_short else rest
 
-def main():
-    args = parse_args()
-    if not os.path.exists(args.master_csv):
-        print(f"Error: {args.master_csv} not found.")
+def generate_plots_for_metric(args, metric):
+    suffix = "_segm" if metric == "SEGM" else ""
+    current_csv = args.master_csv.replace(".csv", f"{suffix}.csv") if metric == "SEGM" else args.master_csv
+
+    if not os.path.exists(current_csv):
+        print(f"Error: {current_csv} not found. Skipping {metric}.")
         return
 
-    df = pd.read_csv(args.master_csv)
+    df = pd.read_csv(current_csv)
     df = df[~df['dataset'].astype(str).str.startswith('#')]
     df = df[df['split_type'] == 'test_ds']
 
@@ -180,7 +182,7 @@ def main():
     plt.ylabel("Evaluation Dataset")
     plt.xticks(rotation=45, ha='right')
     plt.tight_layout()
-    plt.savefig(f"lora_fraction_heatmap_{target_name}{args.suffix}.png", dpi=180)
+    plt.savefig(f"lora_fraction_heatmap_{target_name}{suffix}.png", dpi=180)
     plt.close()
 
     # Create Line Plots
@@ -228,7 +230,7 @@ def main():
         plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
         plt.grid(True, alpha=0.3)
         plt.tight_layout()
-        plt.savefig(f"lora_fraction_absolute_lines_{target_name}{args.suffix}.png", dpi=180)
+        plt.savefig(f"lora_fraction_absolute_lines_{target_name}{suffix}.png", dpi=180)
         plt.close()
         
         # 2. Relative Plot (vs 8-Node Base)
@@ -259,10 +261,18 @@ def main():
             plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
             plt.grid(True, alpha=0.3)
             plt.tight_layout()
-            plt.savefig(f"lora_fraction_relative_lines_{target_name}{args.suffix}.png", dpi=180)
+            plt.savefig(f"lora_fraction_relative_lines_{target_name}{suffix}.png", dpi=180)
             plt.close()
 
-    print(f"Plots generated successfully: lora_fraction_heatmap_{target_name}{args.suffix}.png, lora_fraction_absolute_lines_{target_name}{args.suffix}.png, lora_fraction_relative_lines_{target_name}{args.suffix}.png")
+    print(f"Plots generated successfully: lora_fraction_heatmap_{target_name}{suffix}.png, lora_fraction_absolute_lines_{target_name}{suffix}.png, lora_fraction_relative_lines_{target_name}{suffix}.png")
+
+def main():
+    args = parse_args()
+    metrics_to_process = ["BBOX", "SEGM"] if args.metric.lower() == "both" else [args.metric.upper()]
+    
+    for metric in metrics_to_process:
+        print(f"\n--- Generating LoRA plots for {metric} ---")
+        generate_plots_for_metric(args, metric)
 
 if __name__ == "__main__":
     main()
