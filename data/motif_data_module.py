@@ -195,7 +195,7 @@ class MotifDataModule(pl.LightningDataModule):
         )
 
     def val_dataloader(self):
-        eval_batch_size = int(getattr(self.config.data, "eval_batch_size", 1))
+        eval_batch_size = int(getattr(self.config.data, "eval_batch_size", 64))
         eval_num_workers = min(self._args.num_workers, 8)
         
         dataloaders = []
@@ -219,7 +219,7 @@ class MotifDataModule(pl.LightningDataModule):
         return dataloaders
 
     def test_dataloader(self):
-        eval_batch_size = int(getattr(self.config.data, "eval_batch_size", 1))
+        eval_batch_size = int(getattr(self.config.data, "eval_batch_size", 64))
         eval_num_workers = min(self._args.num_workers, 8)
         
         dataloaders = []
