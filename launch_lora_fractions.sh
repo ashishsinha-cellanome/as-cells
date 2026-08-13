@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Target data fractions to sweep
-fractions=(0.01 0.1)
+fractions=(0.01 0.05 0.1 0.25 0.5)
 
 for frac in "${fractions[@]}"; do
     echo "====================================================================="
@@ -27,8 +27,8 @@ for frac in "${fractions[@]}"; do
         trainer.check_val_every_n_epoch=10 \
         data.target_crops_per_base=32 \
         data.anchor_crops_per_base=32 \
-        data.target_datasets='[20250108_neuron-adhered_10x_uncaged_4_class]' \
-        optimizer.optimizer.lr=1e-3 \
+        data.target_datasets='[20240905_u87-adhered_10x_caged_4_class]' \
+        optimizer.optimizer.lr=$lr \
         model.rfdetr.lr_scheduler=cosine
         
     echo "✅ Finished run for target_data_frac = $frac"
