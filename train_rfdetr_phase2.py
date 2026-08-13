@@ -269,7 +269,7 @@ class Phase2MotifDataModule(MotifDataModule):
         )
 
     def test_dataloader(self):
-        eval_batch_size = int(getattr(self.config.data, "eval_batch_size", 1))
+        eval_batch_size = int(getattr(self.config.data, "eval_batch_size", 64))
         eval_num_workers = min(self._args.num_workers, 8)
         dataloaders = []
         
@@ -544,6 +544,20 @@ def main(config: DictConfig):
         except Exception:
             cfg_for_log = OmegaConf.to_container(config, resolve=False)
             
+        # Ensure LoRA configs (like rank and alpha) are explicitly logged, including defaults
+        if finetune_mode == "lora" or config.model.rfdetr.get("backbone_lora", False):
+            r_val = lora_cfg.get("r", 32)
+            lora_log_info = {
+                "r": r_val,
+                "alpha": lora_cfg.get("alpha", r_val * 2),
+                "use_dora": lora_cfg.get("use_dora", False),
+                "dropout": lora_cfg.get("dropout", 0.05),
+            }
+            if "model" in cfg_for_log and "rfdetr" in cfg_for_log["model"]:
+                if "lora" not in cfg_for_log["model"]["rfdetr"] or not cfg_for_log["model"]["rfdetr"]["lora"]:
+                    cfg_for_log["model"]["rfdetr"]["lora"] = {}
+                cfg_for_log["model"]["rfdetr"]["lora"].update(lora_log_info)
+
         custom_logger = WandbLogger(
             project="cell-detection-motifs",
             name=run_name,
