@@ -205,19 +205,16 @@ def generate_plots_for_metric(args, metric):
         colors = [cmap(i) for i in range(20)]
         target_short = short_name(target_name)
         
-        # 1 & 2. Absolute and Relative Plots PER RANK
-        for rank in ranks:
-            rank_cols = [col for col in plot_df.columns if col.startswith(f"LoRA r{rank}")]
-            if not rank_cols:
-                continue
-                
+        # 1 & 2. Absolute and Relative Plots for DEFAULT RANK (r64) ONLY
+        default_rank = 64
+        rank_cols = [col for col in plot_df.columns if col.startswith(f"LoRA r{default_rank}")]
+        if rank_cols:
             def get_frac(col):
                 m = re.search(r'(\d+)%', col)
                 return int(m.group(1)) if m else 0
                 
             rank_cols = sorted(rank_cols, key=get_frac)
             x_vals = [get_frac(col) for col in rank_cols]
-            rank_prefix = "" if rank == 64 else f"_r{rank}"
             
             # Absolute Plot
             plt.figure(figsize=(10, 6))
@@ -247,11 +244,11 @@ def generate_plots_for_metric(args, metric):
             
             plt.xlabel("Data Fraction (%)")
             plt.ylabel("mAP@0.5-0.95")
-            plt.title(f"LoRA Fine-tuning (r{rank}): Absolute Performance vs Data Fraction\nTarget: {target_short}")
+            plt.title(f"LoRA Fine-tuning: Absolute Performance vs Data Fraction\nTarget: {target_short}")
             plt.legend(by_label.values(), by_label.keys(), bbox_to_anchor=(1.05, 1), loc='upper left')
             plt.grid(True, alpha=0.3)
             plt.tight_layout()
-            plt.savefig(f"lora_fraction_absolute_lines{rank_prefix}_{target_name}{suffix}.png", dpi=180)
+            plt.savefig(f"lora_fraction_absolute_lines_{target_name}{suffix}.png", dpi=180)
             plt.close()
             
             # Relative Plot
@@ -277,11 +274,11 @@ def generate_plots_for_metric(args, metric):
                 plt.axhline(y=0, color='black', linestyle='-', alpha=0.3, label='8-Node Base (0 Delta)')
                 plt.xlabel("Data Fraction (%)")
                 plt.ylabel("Delta mAP@0.5-0.95")
-                plt.title(f"LoRA Fine-tuning (r{rank}): Relative to 8-Node Baseline\nTarget: {target_short}")
+                plt.title(f"LoRA Fine-tuning: Relative to 8-Node Baseline\nTarget: {target_short}")
                 plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
                 plt.grid(True, alpha=0.3)
                 plt.tight_layout()
-                plt.savefig(f"lora_fraction_relative_lines{rank_prefix}_{target_name}{suffix}.png", dpi=180)
+                plt.savefig(f"lora_fraction_relative_lines_{target_name}{suffix}.png", dpi=180)
                 plt.close()
 
         # 3. Rank Comparison Plot
