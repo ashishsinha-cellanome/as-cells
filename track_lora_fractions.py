@@ -178,20 +178,28 @@ def generate_plots_for_metric(args, metric):
         print("No valid metrics found to populate the heatmap.")
         return
 
-    plt.figure(figsize=(10, len(plot_df) * 0.6 + 2))
-    ax = sns.heatmap(plot_df.astype(float), annot=True, fmt=".3f", cmap="YlGnBu", cbar_kws={'label': 'mAP@0.5-0.95'}, linewidths=.5)
-    
-    for tick_label in ax.get_yticklabels():
-        if tick_label.get_text() == short_name(target_name):
-            tick_label.set_weight("bold")
-            
-    plt.title(f"LoRA Fine-tuning Performance Heatmap\nTarget: {short_name(target_name)}", pad=20)
-    plt.xlabel("Experiment")
-    plt.ylabel("Evaluation Dataset")
-    plt.xticks(rotation=45, ha='right')
-    plt.tight_layout()
-    plt.savefig(f"lora_fraction_heatmap_{target_name}{suffix}.png", dpi=180)
-    plt.close()
+    default_rank = 64
+    heatmap_cols = [c for c in plot_df.columns if c == "8-Node Base" or c.startswith(f"LoRA r{default_rank}")]
+    heatmap_plot_df = plot_df[heatmap_cols].copy()
+    heatmap_plot_df.columns = [c.replace(f"r{default_rank} ", "") for c in heatmap_plot_df.columns]
+
+    if heatmap_plot_df.empty or len(heatmap_plot_df.columns) <= 1:
+        print(f"Warning: No valid metrics found for default rank {default_rank} to populate the heatmap.")
+    else:
+        plt.figure(figsize=(10, len(heatmap_plot_df) * 0.6 + 2))
+        ax = sns.heatmap(heatmap_plot_df.astype(float), annot=True, fmt=".3f", cmap="YlGnBu", cbar_kws={'label': 'mAP@0.5-0.95'}, linewidths=.5)
+        
+        for tick_label in ax.get_yticklabels():
+            if tick_label.get_text() == short_name(target_name):
+                tick_label.set_weight("bold")
+                
+        plt.title(f"LoRA Fine-tuning Performance Heatmap\nTarget: {short_name(target_name)}", pad=20)
+        plt.xlabel("Experiment")
+        plt.ylabel("Evaluation Dataset")
+        plt.xticks(rotation=45, ha='right')
+        plt.tight_layout()
+        plt.savefig(f"lora_fraction_heatmap_{target_name}{suffix}.png", dpi=180)
+        plt.close()
 
     # Create Line Plots
     # We will use plot_df which has the datasets as rows and experiments as columns.
