@@ -251,14 +251,18 @@ def generate_plot(master_df, baseline_name, metric_type="BBOX"):
         if is_lora:
             # Extract fraction for cleaner legend
             match = re.search(r'(?:_|-|^)([0-1]?\.[0-9]+|[0-9]+(?:pct|%))(?:_|-|$)', exp.lower())
+            rank_match = re.search(r'(?:_|-|^)(?:r|rank)(\d+)(?:_|-|$)', exp.lower())
+            rank = int(rank_match.group(1)) if rank_match else 64
+            
             if match:
                 val_str = match.group(1)
                 frac_val = float(val_str.replace('pct', '').replace('%', '')) / 100.0 if 'pct' in val_str or '%' in val_str else float(val_str)
-                legend_label = f"LoRA {int(round(frac_val * 100))}%"
+                legend_label = f"LoRA r{rank} {int(round(frac_val * 100))}%"
                 
                 # Try to extract target name from the experiment
                 t_name = re.sub(r'lora', '', exp, flags=re.IGNORECASE)
                 t_name = re.sub(r'(?:_|-|^)([0-1]?\.[0-9]+|[0-9]+(?:pct|%))(?:_|-|$)', '_', t_name, count=1, flags=re.IGNORECASE)
+                t_name = re.sub(r'(?:_|-|^)(?:r|rank)(\d+)(?:_|-|$)', '_', t_name, count=1, flags=re.IGNORECASE)
                 t_name = re.sub(r'[_\-]+', '_', t_name).strip('_-')
                 if t_name:
                     inferred_target = t_name

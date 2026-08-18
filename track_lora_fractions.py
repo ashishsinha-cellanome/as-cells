@@ -187,22 +187,17 @@ def generate_plots_for_metric(args, metric):
 
     # Create Line Plots
     # We will use plot_df which has the datasets as rows and experiments as columns.
-    # The columns are like "8-Node Base", "LoRA 1%", "LoRA 5%", etc.
-    # We want to plot mAP vs Fraction.
     
     frac_cols = [c for c in plot_df.columns if c.startswith("LoRA")]
-    frac_vals = []
-    for c in frac_cols:
-        val = int(c.replace("LoRA ", "").replace("%", ""))
-        frac_vals.append(val)
-        
-    if frac_vals:
+    ranks = sorted(list(set([x[2] for x in valid_exps])))
+    
+    if frac_cols:
         # Colors and styles
         cmap = plt.get_cmap('tab20')
         colors = [cmap(i) for i in range(20)]
         
         # 1. Absolute Plot
-        plt.figure(figsize=(10, 6))
+        plt.figure(figsize=(12, 8))
         
         target_short = short_name(target_name)
         color_idx = 0
@@ -212,12 +207,30 @@ def generate_plots_for_metric(args, metric):
             c = colors[color_idx % len(colors)]
             color_idx += 1
             
-            y_vals = plot_df.loc[ds_name, frac_cols].values
-            marker = '*' if is_target else 'o'
-            linewidth = 2.5 if is_target else 1.5
-            linestyle = '-' if is_target else '--'
-            
-            plt.plot(frac_vals, y_vals, label=f"{ds_name}", color=c, marker=marker, linestyle=linestyle, linewidth=linewidth, markersize=8)
+            for rank in ranks:
+                rank_cols = [col for col in plot_df.columns if col.startswith(f"LoRA r{rank}")]
+                if not rank_cols:
+                    continue
+                    
+                def get_frac(col):
+                    m = re.search(r'(\d+)%', col)
+                    return int(m.group(1)) if m else 0
+                rank_cols = sorted(rank_cols, key=get_frac)
+                
+                x_vals = [get_frac(col) for col in rank_cols]
+                y_vals = plot_df.loc[ds_name, rank_cols].values
+                
+                if rank == 64:
+                    marker = '*' if is_target else 'o'
+                    linestyle = '-' if is_target else '--'
+                else:
+                    marker = 'X' if is_target else 's'
+                    linestyle = '-.' if is_target else ':'
+                    
+                linewidth = 2.5 if is_target else 1.5
+                label = f"{ds_name} (r{rank})"
+                
+                plt.plot(x_vals, y_vals, label=label, color=c, marker=marker, linestyle=linestyle, linewidth=linewidth, markersize=8, alpha=0.8)
             
             # 8-Node Baseline
             if "8-Node Base" in plot_df.columns and not pd.isna(plot_df.loc[ds_name, "8-Node Base"]):
@@ -235,7 +248,7 @@ def generate_plots_for_metric(args, metric):
         
         # 2. Relative Plot (vs 8-Node Base)
         if "8-Node Base" in plot_df.columns:
-            plt.figure(figsize=(10, 6))
+            plt.figure(figsize=(12, 8))
             color_idx = 0
             
             for ds_name in plot_df.index:
@@ -247,12 +260,30 @@ def generate_plots_for_metric(args, metric):
                 c = colors[color_idx % len(colors)]
                 color_idx += 1
                 
-                y_vals = plot_df.loc[ds_name, frac_cols].values - base_val
-                marker = '*' if is_target else 'o'
-                linewidth = 2.5 if is_target else 1.5
-                linestyle = '-' if is_target else '--'
-                
-                plt.plot(frac_vals, y_vals, label=f"{ds_name}", color=c, marker=marker, linestyle=linestyle, linewidth=linewidth, markersize=8)
+                for rank in ranks:
+                    rank_cols = [col for col in plot_df.columns if col.startswith(f"LoRA r{rank}")]
+                    if not rank_cols:
+                        continue
+                        
+                    def get_frac(col):
+                        m = re.search(r'(\d+)%', col)
+                        return int(m.group(1)) if m else 0
+                    rank_cols = sorted(rank_cols, key=get_frac)
+                    
+                    x_vals = [get_frac(col) for col in rank_cols]
+                    y_vals = plot_df.loc[ds_name, rank_cols].values - base_val
+                    
+                    if rank == 64:
+                        marker = '*' if is_target else 'o'
+                        linestyle = '-' if is_target else '--'
+                    else:
+                        marker = 'X' if is_target else 's'
+                        linestyle = '-.' if is_target else ':'
+                        
+                    linewidth = 2.5 if is_target else 1.5
+                    label = f"{ds_name} (r{rank})"
+                    
+                    plt.plot(x_vals, y_vals, label=label, color=c, marker=marker, linestyle=linestyle, linewidth=linewidth, markersize=8, alpha=0.8)
                 
             plt.axhline(y=0, color='black', linestyle='-', alpha=0.3, label='8-Node Base (0 Delta)')
             plt.xlabel("Data Fraction (%)")
