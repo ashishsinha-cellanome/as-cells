@@ -24,11 +24,18 @@ def extract_fraction(exp_name):
         return float(val_str)
     return None
 
+def extract_rank(exp_name):
+    match = re.search(r'(?:_|-|^)(?:r|rank)(\d+)(?:_|-|$)', exp_name.lower())
+    if match:
+        return int(match.group(1))
+    return 64
+
 def get_target_name(exp_name, target_arg):
     if target_arg:
         return target_arg
     name = re.sub(r'lora', '', exp_name, flags=re.IGNORECASE)
     name = re.sub(r'(?:_|-|^)([0-1]?\.[0-9]+|[0-9]+(?:pct|%))(?:_|-|$)', '_', name, count=1, flags=re.IGNORECASE)
+    name = re.sub(r'(?:_|-|^)(?:r|rank)(\d+)(?:_|-|$)', '_', name, count=1, flags=re.IGNORECASE)
     name = re.sub(r'[_\-]+', '_', name).strip('_-')
     return name if name else "Target"
 
@@ -79,9 +86,10 @@ def generate_plots_for_metric(args, metric):
         if fraction is None:
             continue
             
+        rank = extract_rank(exp)
         inferred = get_target_name(exp, None)
         inferred_targets.add(inferred)
-        valid_exps.append((exp, fraction, inferred))
+        valid_exps.append((exp, fraction, rank, inferred))
 
     target_name = args.target
     if target_name is None:
@@ -104,12 +112,12 @@ def generate_plots_for_metric(args, metric):
                 
     # Now filter valid_exps to only include those matching the target dataset
     filtered_exps = []
-    for exp, fraction, inferred in valid_exps:
+    for exp, fraction, rank, inferred in valid_exps:
         # Match inferred target to the resolved target_name (ignoring hyphens/underscores)
         inferred_clean = inferred.replace('_', '').replace('-', '').lower()
         target_clean = target_name.replace('_', '').replace('-', '').lower()
         if inferred_clean in target_clean:
-            filtered_exps.append((exp, fraction))
+            filtered_exps.append((exp, fraction, rank))
             
     if not filtered_exps:
         print(f"No LoRA experiments found for target: {target_name}")
@@ -137,13 +145,13 @@ def generate_plots_for_metric(args, metric):
             
     heatmap_df = pd.DataFrame(data_rows)
     
-    valid_exps = sorted(filtered_exps, key=lambda x: x[1])
+    valid_exps = sorted(filtered_exps, key=lambda x: (x[1], x[2]))
     
     orig_map = {short_name(x): x for x in anchors + [target_name]}
     
-    for exp, fraction in valid_exps:
+    for exp, fraction, rank in valid_exps:
         fraction_pct = int(round(fraction * 100))
-        col_name = f"LoRA {fraction_pct}%"
+        col_name = f"LoRA r{rank} {fraction_pct}%"
         exp_df = df[df['experiment'] == exp]
         
         for idx, row in heatmap_df.iterrows():
@@ -195,104 +203,129 @@ def generate_plots_for_metric(args, metric):
         # Colors and styles
         cmap = plt.get_cmap('tab20')
         colors = [cmap(i) for i in range(20)]
-        
-        # 1. Absolute Plot
-        plt.figure(figsize=(12, 8))
-        
         target_short = short_name(target_name)
-        color_idx = 0
         
-        for ds_name in plot_df.index:
-            is_target = (ds_name == target_short)
-            c = colors[color_idx % len(colors)]
-            color_idx += 1
+        # 1 & 2. Absolute and Relative Plots PER RANK
+        for rank in ranks:
+            rank_cols = [col for col in plot_df.columns if col.startswith(f"LoRA r{rank}")]
+            if not rank_cols:
+                continue
+                
+            def get_frac(col):
+                m = re.search(r'(\d+)%', col)
+                return int(m.group(1)) if m else 0
+                
+            rank_cols = sorted(rank_cols, key=get_frac)
+            x_vals = [get_frac(col) for col in rank_cols]
+            rank_prefix = "" if rank == 64 else f"_r{rank}"
+            
+            # Absolute Plot
+            plt.figure(figsize=(10, 6))
+            color_idx = 0
+            
+            for ds_name in plot_df.index:
+                is_target = (ds_name == target_short)
+                c = colors[color_idx % len(colors)]
+                color_idx += 1
+                
+                y_vals = plot_df.loc[ds_name, rank_cols].values
+                marker = '*' if is_target else 'o'
+                linewidth = 2.5 if is_target else 1.5
+                linestyle = '-' if is_target else '--'
+                
+                plt.plot(x_vals, y_vals, label=f"{ds_name}", color=c, marker=marker, linestyle=linestyle, linewidth=linewidth, markersize=8)
+                
+                if "8-Node Base" in plot_df.columns and not pd.isna(plot_df.loc[ds_name, "8-Node Base"]):
+                    base_val = plot_df.loc[ds_name, "8-Node Base"]
+                    plt.axhline(y=base_val, color=c, linestyle=':', alpha=0.6, label=f"{ds_name} (Base)" if is_target else None)
+            
+            # Fix duplicate legend entries for None
+            handles, labels = plt.gca().get_legend_handles_labels()
+            by_label = dict(zip(labels, handles))
+            if None in by_label:
+                del by_label[None]
+            
+            plt.xlabel("Data Fraction (%)")
+            plt.ylabel("mAP@0.5-0.95")
+            plt.title(f"LoRA Fine-tuning (r{rank}): Absolute Performance vs Data Fraction\nTarget: {target_short}")
+            plt.legend(by_label.values(), by_label.keys(), bbox_to_anchor=(1.05, 1), loc='upper left')
+            plt.grid(True, alpha=0.3)
+            plt.tight_layout()
+            plt.savefig(f"lora_fraction_absolute_lines{rank_prefix}_{target_name}{suffix}.png", dpi=180)
+            plt.close()
+            
+            # Relative Plot
+            if "8-Node Base" in plot_df.columns:
+                plt.figure(figsize=(10, 6))
+                color_idx = 0
+                for ds_name in plot_df.index:
+                    if pd.isna(plot_df.loc[ds_name, "8-Node Base"]):
+                        continue
+                        
+                    base_val = plot_df.loc[ds_name, "8-Node Base"]
+                    is_target = (ds_name == target_short)
+                    c = colors[color_idx % len(colors)]
+                    color_idx += 1
+                    
+                    y_vals = plot_df.loc[ds_name, rank_cols].values - base_val
+                    marker = '*' if is_target else 'o'
+                    linewidth = 2.5 if is_target else 1.5
+                    linestyle = '-' if is_target else '--'
+                    
+                    plt.plot(x_vals, y_vals, label=f"{ds_name}", color=c, marker=marker, linestyle=linestyle, linewidth=linewidth, markersize=8)
+                    
+                plt.axhline(y=0, color='black', linestyle='-', alpha=0.3, label='8-Node Base (0 Delta)')
+                plt.xlabel("Data Fraction (%)")
+                plt.ylabel("Delta mAP@0.5-0.95")
+                plt.title(f"LoRA Fine-tuning (r{rank}): Relative to 8-Node Baseline\nTarget: {target_short}")
+                plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+                plt.grid(True, alpha=0.3)
+                plt.tight_layout()
+                plt.savefig(f"lora_fraction_relative_lines{rank_prefix}_{target_name}{suffix}.png", dpi=180)
+                plt.close()
+
+        # 3. Rank Comparison Plot
+        if len(ranks) > 1:
+            plt.figure(figsize=(10, 6))
+            anchor_rows = [r for r in plot_df.index if r != target_short]
+            rank_colors = {ranks[i]: colors[i * 2] for i in range(len(ranks))}
             
             for rank in ranks:
                 rank_cols = [col for col in plot_df.columns if col.startswith(f"LoRA r{rank}")]
                 if not rank_cols:
                     continue
-                    
+                
                 def get_frac(col):
                     m = re.search(r'(\d+)%', col)
                     return int(m.group(1)) if m else 0
+                    
                 rank_cols = sorted(rank_cols, key=get_frac)
-                
                 x_vals = [get_frac(col) for col in rank_cols]
-                y_vals = plot_df.loc[ds_name, rank_cols].values
+                c = rank_colors[rank]
                 
-                if rank == 64:
-                    marker = '*' if is_target else 'o'
-                    linestyle = '-' if is_target else '--'
-                else:
-                    marker = 'X' if is_target else 's'
-                    linestyle = '-.' if is_target else ':'
-                    
-                linewidth = 2.5 if is_target else 1.5
-                label = f"{ds_name} (r{rank})"
+                if target_short in plot_df.index:
+                    y_target = plot_df.loc[target_short, rank_cols].values
+                    plt.plot(x_vals, y_target, label=f"Target (r{rank})", color=c, marker='*', linestyle='-', linewidth=2.5, markersize=10)
                 
-                plt.plot(x_vals, y_vals, label=label, color=c, marker=marker, linestyle=linestyle, linewidth=linewidth, markersize=8, alpha=0.8)
+                if anchor_rows:
+                    y_anchors = plot_df.loc[anchor_rows, rank_cols].mean(axis=0).values
+                    plt.plot(x_vals, y_anchors, label=f"Anchors Avg (r{rank})", color=c, marker='o', linestyle='--', linewidth=1.5, markersize=8)
             
-            # 8-Node Baseline
-            if "8-Node Base" in plot_df.columns and not pd.isna(plot_df.loc[ds_name, "8-Node Base"]):
-                base_val = plot_df.loc[ds_name, "8-Node Base"]
-                plt.axhline(y=base_val, color=c, linestyle=':', alpha=0.6, label=f"{ds_name} (Base)")
-                
-        plt.xlabel("Data Fraction (%)")
-        plt.ylabel("mAP@0.5-0.95")
-        plt.title(f"LoRA Fine-tuning: Absolute Performance vs Data Fraction\nTarget: {target_short}")
-        plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-        plt.grid(True, alpha=0.3)
-        plt.tight_layout()
-        plt.savefig(f"lora_fraction_absolute_lines_{target_name}{suffix}.png", dpi=180)
-        plt.close()
-        
-        # 2. Relative Plot (vs 8-Node Base)
-        if "8-Node Base" in plot_df.columns:
-            plt.figure(figsize=(12, 8))
-            color_idx = 0
+            if "8-Node Base" in plot_df.columns:
+                if target_short in plot_df.index and not pd.isna(plot_df.loc[target_short, "8-Node Base"]):
+                    base_target = plot_df.loc[target_short, "8-Node Base"]
+                    plt.axhline(y=base_target, color='black', linestyle=':', alpha=0.6, label="Base Ckpt (Target)")
+                if anchor_rows:
+                    base_anchors = plot_df.loc[anchor_rows, "8-Node Base"].mean()
+                    plt.axhline(y=base_anchors, color='gray', linestyle=':', alpha=0.6, label="Base Ckpt (Anchors Avg)")
             
-            for ds_name in plot_df.index:
-                if pd.isna(plot_df.loc[ds_name, "8-Node Base"]):
-                    continue
-                    
-                base_val = plot_df.loc[ds_name, "8-Node Base"]
-                is_target = (ds_name == target_short)
-                c = colors[color_idx % len(colors)]
-                color_idx += 1
-                
-                for rank in ranks:
-                    rank_cols = [col for col in plot_df.columns if col.startswith(f"LoRA r{rank}")]
-                    if not rank_cols:
-                        continue
-                        
-                    def get_frac(col):
-                        m = re.search(r'(\d+)%', col)
-                        return int(m.group(1)) if m else 0
-                    rank_cols = sorted(rank_cols, key=get_frac)
-                    
-                    x_vals = [get_frac(col) for col in rank_cols]
-                    y_vals = plot_df.loc[ds_name, rank_cols].values - base_val
-                    
-                    if rank == 64:
-                        marker = '*' if is_target else 'o'
-                        linestyle = '-' if is_target else '--'
-                    else:
-                        marker = 'X' if is_target else 's'
-                        linestyle = '-.' if is_target else ':'
-                        
-                    linewidth = 2.5 if is_target else 1.5
-                    label = f"{ds_name} (r{rank})"
-                    
-                    plt.plot(x_vals, y_vals, label=label, color=c, marker=marker, linestyle=linestyle, linewidth=linewidth, markersize=8, alpha=0.8)
-                
-            plt.axhline(y=0, color='black', linestyle='-', alpha=0.3, label='8-Node Base (0 Delta)')
             plt.xlabel("Data Fraction (%)")
-            plt.ylabel("Delta mAP@0.5-0.95")
-            plt.title(f"LoRA Fine-tuning: Relative to 8-Node Baseline\nTarget: {target_short}")
+            plt.ylabel("mAP@0.5-0.95")
+            plt.title(f"LoRA Rank Comparison: Target & Anchor Avg\nTarget: {target_short}")
             plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
             plt.grid(True, alpha=0.3)
             plt.tight_layout()
-            plt.savefig(f"lora_fraction_relative_lines_{target_name}{suffix}.png", dpi=180)
+            plt.savefig(f"lora_fraction_rank_comparison_{target_name}{suffix}.png", dpi=180)
             plt.close()
 
     print(f"Plots generated successfully: lora_fraction_heatmap_{target_name}{suffix}.png, lora_fraction_absolute_lines_{target_name}{suffix}.png, lora_fraction_relative_lines_{target_name}{suffix}.png")
