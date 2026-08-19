@@ -237,6 +237,15 @@ def generate_plot(master_df, baseline_name, metric_type="BBOX"):
         if exp not in filtered_exps:
             continue
             
+        is_lora = 'lora' in exp.lower()
+        
+        # Only plot default rank 64 for the generalization plot to avoid clutter
+        if is_lora:
+            rank_match = re.search(r'(?:_|-|^)(?:r|rank)(\d+)(?:_|-|$)', exp.lower())
+            rank = int(rank_match.group(1)) if rank_match else 64
+            if rank != 64:
+                continue
+                
         exp_df = master_df[master_df['experiment'] == exp]
         valid_datasets = exp_df[exp_df['label'].isin(baseline_df.index)]
         if valid_datasets.empty:
@@ -245,8 +254,6 @@ def generate_plot(master_df, baseline_name, metric_type="BBOX"):
         rel_perf = valid_datasets.set_index('label')['mAP50_95'] / baseline_df['mAP50_95'] * 100
         rel_perf = rel_perf.replace([float('inf'), float('-inf')], float('nan'))
         rel_perf = rel_perf.reindex(baseline_df.index)
-        
-        is_lora = 'lora' in exp.lower()
         
         if is_lora:
             # Extract fraction for cleaner legend
