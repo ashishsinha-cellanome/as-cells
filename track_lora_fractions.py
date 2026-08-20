@@ -182,45 +182,58 @@ def generate_plots_for_metric(args, metric):
     out_dir = os.path.join("lora_plots", args.target)
     os.makedirs(out_dir, exist_ok=True)
 
-    default_rank = 64
-    heatmap_cols = [c for c in plot_df.columns if c == "8-Node Base" or c.startswith(f"LoRA r{default_rank}")]
-    heatmap_plot_df = plot_df[heatmap_cols].copy()
-    heatmap_plot_df.columns = [c.replace(f"r{default_rank} ", "") for c in heatmap_plot_df.columns]
+    ranks = sorted(list(set([x[2] for x in valid_exps])))
 
-    if heatmap_plot_df.empty or len(heatmap_plot_df.columns) <= 1:
-        print(f"Warning: No valid metrics found for default rank {default_rank} to populate the heatmap.")
-    else:
-        plt.figure(figsize=(10, len(heatmap_plot_df) * 0.6 + 2))
-        ax = sns.heatmap(heatmap_plot_df.astype(float), annot=True, fmt=".3f", cmap="YlGnBu", cbar_kws={'label': 'mAP@0.5-0.95'}, linewidths=.5)
-        
-        for tick_label in ax.get_yticklabels():
-            if tick_label.get_text() == short_name(target_name):
-                tick_label.set_weight("bold")
+    # 1. Rank-Specific Heatmaps
+    if ranks:
+        fig, axes = plt.subplots(1, len(ranks), figsize=(max(8, len(ranks) * 6), len(plot_df) * 0.6 + 2), sharey=True)
+        if len(ranks) == 1:
+            axes = [axes]
+            
+        for i, rank in enumerate(ranks):
+            heatmap_cols = [c for c in plot_df.columns if c == "8-Node Base" or c.startswith(f"LoRA r{rank}")]
+            heatmap_plot_df = plot_df[heatmap_cols].copy()
+            heatmap_plot_df.columns = [c.replace(f"r{rank} ", "") for c in heatmap_plot_df.columns]
+            
+            if not heatmap_plot_df.empty and len(heatmap_plot_df.columns) > 1:
+                sns.heatmap(heatmap_plot_df.astype(float), annot=True, fmt=".3f", cmap="YlGnBu", 
+                            cbar_kws={'label': 'mAP@0.5-0.95'} if i == len(ranks)-1 else None, 
+                            linewidths=.5, ax=axes[i], cbar=i == len(ranks)-1)
                 
-        plt.title(f"LoRA Fine-tuning Performance Heatmap\nTarget: {short_name(target_name)}", pad=20)
-        plt.xlabel("Experiment")
-        plt.ylabel("Evaluation Dataset")
-        plt.xticks(rotation=45, ha='right')
+                axes[i].set_title(f"Rank {rank}")
+                axes[i].set_xlabel("Experiment")
+                if i == 0:
+                    axes[i].set_ylabel("Evaluation Dataset")
+                else:
+                    axes[i].set_ylabel("")
+                axes[i].tick_params(axis='x', rotation=45)
+                
+                for tick_label in axes[i].get_yticklabels():
+                    if tick_label.get_text() == short_name(target_name):
+                        tick_label.set_weight("bold")
+            else:
+                axes[i].set_title(f"Rank {rank} (No Data)")
+                axes[i].axis('off')
+
+        fig.suptitle(f"LoRA Fine-tuning Performance Heatmap\nTarget: {short_name(target_name)}", y=1.02)
         plt.tight_layout()
-        plt.savefig(os.path.join(out_dir, f"lora_fraction_heatmap_{target_name}{suffix}.png"), dpi=180)
+        plt.savefig(os.path.join(out_dir, f"lora_fraction_heatmap_{target_name}{suffix}.png"), dpi=180, bbox_inches="tight")
         plt.close()
 
     # Create Line Plots
-    # We will use plot_df which has the datasets as rows and experiments as columns.
-    
     frac_cols = [c for c in plot_df.columns if c.startswith("LoRA")]
-    ranks = sorted(list(set([x[2] for x in valid_exps])))
     
     if frac_cols:
-        # Colors and styles
         cmap = plt.get_cmap('tab20')
         colors = [cmap(i) for i in range(20)]
         target_short = short_name(target_name)
         
-        # 1 & 2. Absolute and Relative Plots for DEFAULT RANK (r64) ONLY
-        default_rank = 64
-        rank_cols = [col for col in plot_df.columns if col.startswith(f"LoRA r{default_rank}")]
-        if rank_cols:
+        # Absolute and Relative Plots PER RANK
+        for rank in ranks:
+            rank_cols = [col for col in plot_df.columns if col.startswith(f"LoRA r{rank}")]
+            if not rank_cols:
+                continue
+                
             def get_frac(col):
                 m = re.search(r'(\d+)%', col)
                 return int(m.group(1)) if m else 0
@@ -248,7 +261,6 @@ def generate_plots_for_metric(args, metric):
                     base_val = plot_df.loc[ds_name, "8-Node Base"]
                     plt.axhline(y=base_val, color=c, linestyle=':', alpha=0.6, label=f"{ds_name} (Base)" if is_target else None)
             
-            # Fix duplicate legend entries for None
             handles, labels = plt.gca().get_legend_handles_labels()
             by_label = dict(zip(labels, handles))
             if None in by_label:
@@ -256,11 +268,11 @@ def generate_plots_for_metric(args, metric):
             
             plt.xlabel("Data Fraction (%)")
             plt.ylabel("mAP@0.5-0.95")
-            plt.title(f"LoRA Fine-tuning: Absolute Performance vs Data Fraction\nTarget: {target_short}")
+            plt.title(f"LoRA Fine-tuning (r{rank}): Absolute Performance vs Data Fraction\nTarget: {target_short}")
             plt.legend(by_label.values(), by_label.keys(), bbox_to_anchor=(1.05, 1), loc='upper left')
             plt.grid(True, alpha=0.3)
             plt.tight_layout()
-            plt.savefig(os.path.join(out_dir, f"lora_fraction_absolute_lines_{target_name}{suffix}.png"), dpi=180)
+            plt.savefig(os.path.join(out_dir, f"lora_fraction_absolute_lines_r{rank}_{target_name}{suffix}.png"), dpi=180)
             plt.close()
             
             # Relative Plot
@@ -286,11 +298,11 @@ def generate_plots_for_metric(args, metric):
                 plt.axhline(y=0, color='black', linestyle='-', alpha=0.3, label='8-Node Base (0 Delta)')
                 plt.xlabel("Data Fraction (%)")
                 plt.ylabel("Delta mAP@0.5-0.95")
-                plt.title(f"LoRA Fine-tuning: Relative to 8-Node Baseline\nTarget: {target_short}")
+                plt.title(f"LoRA Fine-tuning (r{rank}): Relative to 8-Node Baseline\nTarget: {target_short}")
                 plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
                 plt.grid(True, alpha=0.3)
                 plt.tight_layout()
-                plt.savefig(os.path.join(out_dir, f"lora_fraction_relative_lines_{target_name}{suffix}.png"), dpi=180)
+                plt.savefig(os.path.join(out_dir, f"lora_fraction_relative_lines_r{rank}_{target_name}{suffix}.png"), dpi=180)
                 plt.close()
 
         # 3. Rank Comparison Plot

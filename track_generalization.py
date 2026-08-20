@@ -221,16 +221,14 @@ def generate_plot(master_df, baseline_name, metric_type="BBOX"):
         has_other = 'moc22' in e_low or 'astro' in e_low
         return has_all_3 and not has_other
 
-    # Pre-parse LoRA exps and their inferred targets
-    lora_exps_by_target = {}
+    # Pre-parse LoRA exps and their inferred targets and ranks
+    lora_exps_by_target_rank = {}
     for exp in non_baseline_exps:
         if not ('lora' in exp.lower()):
             continue
             
         rank_match = re.search(r'(?:_|-|^)(?:r|rank)(\d+)(?:_|-|$)', exp.lower())
         rank = int(rank_match.group(1)) if rank_match else 64
-        if rank != 64:
-            continue
             
         t_name = re.sub(r'lora', '', exp, flags=re.IGNORECASE)
         t_name = re.sub(r'(?:_|-|^)([0-1]?\.[0-9]+|[0-9]+(?:pct|%))(?:_|-|$)', '_', t_name, count=1, flags=re.IGNORECASE)
@@ -246,14 +244,15 @@ def generate_plot(master_df, baseline_name, metric_type="BBOX"):
         else:
             frac_pct = 0
             
-        if target_group not in lora_exps_by_target:
-            lora_exps_by_target[target_group] = []
-        lora_exps_by_target[target_group].append((exp, frac_pct))
+        key = (target_group, rank)
+        if key not in lora_exps_by_target_rank:
+            lora_exps_by_target_rank[key] = []
+        lora_exps_by_target_rank[key].append((exp, frac_pct))
 
     base_8node_exps = [e for e in non_baseline_exps if is_8_node(e)]
 
-    # Generate one plot per target dataset group
-    for target_group, lora_exps in lora_exps_by_target.items():
+    # Generate one plot per target dataset group and rank
+    for (target_group, rank), lora_exps in lora_exps_by_target_rank.items():
         plt.figure(figsize=(12, 7))
         plt.plot(baseline_df.index, [100]*len(baseline_df), alpha=0.0)
         
@@ -300,14 +299,14 @@ def generate_plot(master_df, baseline_name, metric_type="BBOX"):
         plt.yticks(fontsize=9)
         plt.ylabel("Relative Performance (% of Baseline)", fontsize=11)
         plt.xlabel("Dataset", fontsize=11)
-        plt.title(f"Generalization Performance (Target: {target_group})", fontsize=14)
+        plt.title(f"Generalization Performance (Target: {target_group} | r{rank})", fontsize=14)
         plt.legend(by_label.values(), by_label.keys(), bbox_to_anchor=(1.02, 1), loc='upper left', fontsize=10, title="Experiment Type")
         plt.tight_layout()
         
         import os
         out_dir = os.path.join("lora_plots", target_group)
         os.makedirs(out_dir, exist_ok=True)
-        plt.savefig(os.path.join(out_dir, f"generalization_lora_and_8node_{target_group}{suffix}.png"), dpi=180, bbox_inches="tight")
+        plt.savefig(os.path.join(out_dir, f"generalization_lora_r{rank}_and_8node_{target_group}{suffix}.png"), dpi=180, bbox_inches="tight")
         plt.close()
     
     # 3. Plotly Interactive Plot
