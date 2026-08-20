@@ -333,6 +333,71 @@ def generate_plots_for_metric(args, metric):
             plt.savefig(f"lora_fraction_rank_comparison_{target_name}{suffix}.png", dpi=180)
             plt.close()
 
+            # 4. Rank Comparison Heatmap on Anchor Datasets
+            if anchor_rows:
+                anchor_plot_df = plot_df.loc[anchor_rows].copy()
+                
+                def sort_col(c):
+                    if c == "8-Node Base": return (-1, -1)
+                    m_frac = re.search(r'(\d+)%', c)
+                    m_rank = re.search(r'r(\d+)', c)
+                    f = int(m_frac.group(1)) if m_frac else 0
+                    r = int(m_rank.group(1)) if m_rank else 0
+                    return (f, r)
+                    
+                anchor_plot_df = anchor_plot_df.reindex(sorted(anchor_plot_df.columns, key=sort_col), axis=1)
+                
+                plt.figure(figsize=(max(10, len(anchor_plot_df.columns) * 0.8), len(anchor_plot_df) * 0.6 + 2))
+                sns.heatmap(anchor_plot_df.astype(float), annot=True, fmt=".3f", cmap="YlGnBu", cbar_kws={'label': 'mAP@0.5-0.95'}, linewidths=.5)
+                
+                plt.title(f"LoRA Rank Comparison Heatmap (Anchors Only)\nTarget: {target_short}", pad=20)
+                plt.xlabel("Experiment")
+                plt.ylabel("Anchor Dataset")
+                plt.xticks(rotation=45, ha='right')
+                plt.tight_layout()
+                plt.savefig(f"lora_rank_comparison_heatmap_anchors_{target_name}{suffix}.png", dpi=180)
+                plt.close()
+
+            # 5. Rank Comparison Bar Plot on Target Dataset
+            if target_short in plot_df.index:
+                plt.figure(figsize=(10, 6))
+                
+                def get_frac(col):
+                    m = re.search(r'(\d+)%', col)
+                    return int(m.group(1)) if m else 0
+                
+                fractions = sorted(list(set([get_frac(c) for c in plot_df.columns if c.startswith("LoRA")])))
+                import numpy as np
+                x = np.arange(len(fractions))
+                width = 0.35
+                
+                if "8-Node Base" in plot_df.columns and not pd.isna(plot_df.loc[target_short, "8-Node Base"]):
+                    base_val = plot_df.loc[target_short, "8-Node Base"]
+                    plt.axhline(y=base_val, color='black', linestyle='--', alpha=0.6, label="Base Ckpt")
+                
+                for i, rank in enumerate(ranks):
+                    rank_vals = []
+                    for frac in fractions:
+                        col = f"LoRA r{rank} {frac}%"
+                        if col in plot_df.columns and not pd.isna(plot_df.loc[target_short, col]):
+                            rank_vals.append(plot_df.loc[target_short, col])
+                        else:
+                            rank_vals.append(0)
+                    
+                    offset = (i - len(ranks)/2 + 0.5) * width
+                    c = colors[(i * 2) % 20]
+                    plt.bar(x + offset, rank_vals, width, label=f"r{rank}", color=c, alpha=0.8)
+                    
+                plt.xlabel("Data Fraction (%)")
+                plt.ylabel("mAP@0.5-0.95")
+                plt.title(f"LoRA Rank Comparison: Target Dataset Performance\nTarget: {target_short}")
+                plt.xticks(x, [f"{f}%" for f in fractions])
+                plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+                plt.grid(True, alpha=0.3, axis='y')
+                plt.tight_layout()
+                plt.savefig(f"lora_rank_comparison_bar_target_{target_name}{suffix}.png", dpi=180)
+                plt.close()
+
     print(f"Plots generated successfully: lora_fraction_heatmap_{target_name}{suffix}.png, lora_fraction_absolute_lines_{target_name}{suffix}.png, lora_fraction_relative_lines_{target_name}{suffix}.png")
 
 def main():
