@@ -214,95 +214,97 @@ def generate_plot(master_df, baseline_name, metric_type="BBOX"):
     plt.savefig(f"generalization_relative_performance_lines{suffix}.png", dpi=180, bbox_inches="tight")
     plt.close()
     
-    # 2. Separate Plot for 8-Node & LoRA
-    plt.figure(figsize=(12, 7))
-    
-    plt.plot(baseline_df.index, [100]*len(baseline_df), alpha=0.0)
-    
+    # 2. Separate Plot for 8-Node & LoRA grouped by inferred target
     def is_8_node(e):
         e_low = e.lower()
         has_all_3 = 'a549' in e_low and 'mc38' in e_low and 'hs675' in e_low
         has_other = 'moc22' in e_low or 'astro' in e_low
         return has_all_3 and not has_other
-        
-    filtered_exps = [e for e in non_baseline_exps if 'lora' in e.lower() or is_8_node(e)]
-    
-    # Bright colors for LoRA
-    bright_colors = ['#e6194b', '#3cb44b', '#ffe119', '#4363d8', '#f58231', '#911eb4', '#46f0f0', '#f032e6', '#bcf60c', '#fabebe', '#008080', '#e6beff', '#9a6324', '#fffac8']
-    color_idx = 0
-    
-    inferred_target = "unknown_target"
-    
-    for i, exp in enumerate(non_baseline_exps):
-        if exp not in filtered_exps:
+
+    # Pre-parse LoRA exps and their inferred targets
+    lora_exps_by_target = {}
+    for exp in non_baseline_exps:
+        if not ('lora' in exp.lower()):
             continue
             
-        is_lora = 'lora' in exp.lower()
-        
-        # Only plot default rank 64 for the generalization plot to avoid clutter
-        if is_lora:
-            rank_match = re.search(r'(?:_|-|^)(?:r|rank)(\d+)(?:_|-|$)', exp.lower())
-            rank = int(rank_match.group(1)) if rank_match else 64
-            if rank != 64:
-                continue
-                
-        exp_df = master_df[master_df['experiment'] == exp]
-        valid_datasets = exp_df[exp_df['label'].isin(baseline_df.index)]
-        if valid_datasets.empty:
+        rank_match = re.search(r'(?:_|-|^)(?:r|rank)(\d+)(?:_|-|$)', exp.lower())
+        rank = int(rank_match.group(1)) if rank_match else 64
+        if rank != 64:
             continue
             
-        rel_perf = valid_datasets.set_index('label')['mAP50_95'] / baseline_df['mAP50_95'] * 100
-        rel_perf = rel_perf.replace([float('inf'), float('-inf')], float('nan'))
-        rel_perf = rel_perf.reindex(baseline_df.index)
+        t_name = re.sub(r'lora', '', exp, flags=re.IGNORECASE)
+        t_name = re.sub(r'(?:_|-|^)([0-1]?\.[0-9]+|[0-9]+(?:pct|%))(?:_|-|$)', '_', t_name, count=1, flags=re.IGNORECASE)
+        t_name = re.sub(r'(?:_|-|^)(?:r|rank)(\d+)(?:_|-|$)', '_', t_name, count=1, flags=re.IGNORECASE)
+        t_name = re.sub(r'[_\-]+', '_', t_name).strip('_-')
+        target_group = t_name if t_name else "unknown_target"
         
-        if is_lora:
-            # Extract fraction for cleaner legend
-            match = re.search(r'(?:_|-|^)([0-1]?\.[0-9]+|[0-9]+(?:pct|%))(?:_|-|$)', exp.lower())
-            rank_match = re.search(r'(?:_|-|^)(?:r|rank)(\d+)(?:_|-|$)', exp.lower())
-            rank = int(rank_match.group(1)) if rank_match else 64
+        match = re.search(r'(?:_|-|^)([0-1]?\.[0-9]+|[0-9]+(?:pct|%))(?:_|-|$)', exp.lower())
+        if match:
+            val_str = match.group(1)
+            frac_val = float(val_str.replace('pct', '').replace('%', '')) / 100.0 if 'pct' in val_str or '%' in val_str else float(val_str)
+            frac_pct = int(round(frac_val * 100))
+        else:
+            frac_pct = 0
             
-            if match:
-                val_str = match.group(1)
-                frac_val = float(val_str.replace('pct', '').replace('%', '')) / 100.0 if 'pct' in val_str or '%' in val_str else float(val_str)
-                legend_label = f"LoRA r{rank} {int(round(frac_val * 100))}%"
-                
-                # Try to extract target name from the experiment
-                t_name = re.sub(r'lora', '', exp, flags=re.IGNORECASE)
-                t_name = re.sub(r'(?:_|-|^)([0-1]?\.[0-9]+|[0-9]+(?:pct|%))(?:_|-|$)', '_', t_name, count=1, flags=re.IGNORECASE)
-                t_name = re.sub(r'(?:_|-|^)(?:r|rank)(\d+)(?:_|-|$)', '_', t_name, count=1, flags=re.IGNORECASE)
-                t_name = re.sub(r'[_\-]+', '_', t_name).strip('_-')
-                if t_name:
-                    inferred_target = t_name
-            else:
-                legend_label = exp
-                
+        if target_group not in lora_exps_by_target:
+            lora_exps_by_target[target_group] = []
+        lora_exps_by_target[target_group].append((exp, frac_pct))
+
+    base_8node_exps = [e for e in non_baseline_exps if is_8_node(e)]
+
+    # Generate one plot per target dataset group
+    for target_group, lora_exps in lora_exps_by_target.items():
+        plt.figure(figsize=(12, 7))
+        plt.plot(baseline_df.index, [100]*len(baseline_df), alpha=0.0)
+        
+        bright_colors = ['#e6194b', '#3cb44b', '#ffe119', '#4363d8', '#f58231', '#911eb4', '#46f0f0', '#f032e6', '#bcf60c', '#fabebe']
+        color_idx = 0
+        
+        # Sort lora exps by fraction
+        lora_exps = sorted(lora_exps, key=lambda x: x[1])
+        
+        # Plot 8-node baseline first
+        for exp in base_8node_exps:
+            exp_df = master_df[master_df['experiment'] == exp]
+            valid_datasets = exp_df[exp_df['label'].isin(baseline_df.index)]
+            if valid_datasets.empty: continue
+            rel_perf = valid_datasets.set_index('label')['mAP50_95'] / baseline_df['mAP50_95'] * 100
+            rel_perf = rel_perf.replace([float('inf'), float('-inf')], float('nan')).reindex(baseline_df.index)
+            plt.plot(rel_perf.index, rel_perf.values, label="Base Ckpt", color='black', marker='o', linestyle='--', markersize=8, linewidth=1.5, alpha=0.8)
+
+        # Plot LoRA experiments
+        for exp, frac_pct in lora_exps:
+            exp_df = master_df[master_df['experiment'] == exp]
+            valid_datasets = exp_df[exp_df['label'].isin(baseline_df.index)]
+            if valid_datasets.empty: continue
+            
+            rel_perf = valid_datasets.set_index('label')['mAP50_95'] / baseline_df['mAP50_95'] * 100
+            rel_perf = rel_perf.replace([float('inf'), float('-inf')], float('nan')).reindex(baseline_df.index)
+            
+            legend_label = f"LoRA {frac_pct}%"
             color = bright_colors[color_idx % len(bright_colors)]
             color_idx += 1
-            marker = '*'
-            linestyle = '-'
-            markersize = 12
-        else:
-            legend_label = "Base Ckpt" if is_8_node(exp) else exp
-            color = colors[i]
-            marker = 'o'
-            linestyle = '--'
-            markersize = 8
-        
-        plt.plot(rel_perf.index, rel_perf.values, label=legend_label, color=color, marker=marker, linestyle=linestyle, markersize=markersize, linewidth=1.5, alpha=0.8)
+            
+            plt.plot(rel_perf.index, rel_perf.values, label=legend_label, color=color, marker='*', linestyle='-', markersize=12, linewidth=1.5, alpha=0.8)
 
-    plt.axhline(y=100, color='black', linestyle='-', label='Baseline (100%)')
-    plt.axhline(y=90, color='gray', linestyle='--', label='90% Threshold')
-    plt.axhline(y=50, color='red', linestyle='--', label='50% Threshold')
-    
-    plt.xticks(rotation=90, ha='center', fontsize=9)
-    plt.yticks(fontsize=9)
-    plt.ylabel("Relative Performance (% of Baseline)", fontsize=11)
-    plt.xlabel("Dataset", fontsize=11)
-    plt.title("Generalization Performance: Base Ckpt & LoRA vs Baseline", fontsize=14)
-    plt.legend(bbox_to_anchor=(1.02, 1), loc='upper left', fontsize=10, title="Experiment Type")
-    plt.tight_layout()
-    plt.savefig(f"generalization_lora_and_8node_{inferred_target}{suffix}.png", dpi=180, bbox_inches="tight")
-    plt.close()
+        plt.axhline(y=100, color='black', linestyle='-', label='Baseline (100%)')
+        plt.axhline(y=90, color='gray', linestyle='--', label='90% Threshold')
+        plt.axhline(y=50, color='red', linestyle='--', label='50% Threshold')
+        
+        # Fix duplicate legend entries
+        handles, labels = plt.gca().get_legend_handles_labels()
+        by_label = dict(zip(labels, handles))
+        if None in by_label: del by_label[None]
+        
+        plt.xticks(rotation=90, ha='center', fontsize=9)
+        plt.yticks(fontsize=9)
+        plt.ylabel("Relative Performance (% of Baseline)", fontsize=11)
+        plt.xlabel("Dataset", fontsize=11)
+        plt.title(f"Generalization Performance (Target: {target_group})", fontsize=14)
+        plt.legend(by_label.values(), by_label.keys(), bbox_to_anchor=(1.02, 1), loc='upper left', fontsize=10, title="Experiment Type")
+        plt.tight_layout()
+        plt.savefig(f"generalization_lora_and_8node_{target_group}{suffix}.png", dpi=180, bbox_inches="tight")
+        plt.close()
     
     # 3. Plotly Interactive Plot
     try:
