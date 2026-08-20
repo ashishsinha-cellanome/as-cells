@@ -179,7 +179,7 @@ def generate_plots_for_metric(args, metric):
         print("No valid metrics found to populate the heatmap.")
         return
 
-    out_dir = os.path.join("lora_plots", short_name(target_name))
+    out_dir = os.path.join("lora_plots", args.target)
     os.makedirs(out_dir, exist_ok=True)
 
     default_rank = 64
@@ -399,6 +399,59 @@ def generate_plots_for_metric(args, metric):
                 plt.grid(True, alpha=0.3, axis='y')
                 plt.tight_layout()
                 plt.savefig(os.path.join(out_dir, f"lora_rank_comparison_bar_target_{target_name}{suffix}.png"), dpi=180)
+                plt.close()
+
+            # 6. Rank Comparison Plot on Anchor Datasets (Grid)
+            if anchor_rows:
+                num_anchors = len(anchor_rows)
+                cols = min(3, num_anchors)
+                rows = (num_anchors + cols - 1) // cols
+                
+                fig, axes = plt.subplots(rows, cols, figsize=(cols * 5, rows * 4))
+                if num_anchors == 1:
+                    axes = [axes]
+                else:
+                    axes = axes.flatten()
+                
+                for idx, anchor in enumerate(anchor_rows):
+                    ax = axes[idx]
+                    
+                    if "8-Node Base" in plot_df.columns and not pd.isna(plot_df.loc[anchor, "8-Node Base"]):
+                        base_val = plot_df.loc[anchor, "8-Node Base"]
+                        ax.axhline(y=base_val, color='black', linestyle='--', alpha=0.6, label="Base Ckpt")
+                        
+                    for i, rank in enumerate(ranks):
+                        rank_vals = []
+                        for frac in fractions:
+                            col = f"LoRA r{rank} {frac}%"
+                            if col in plot_df.columns and not pd.isna(plot_df.loc[anchor, col]):
+                                rank_vals.append(plot_df.loc[anchor, col])
+                            else:
+                                rank_vals.append(None)
+                                
+                        c = colors[(i * 2) % 20]
+                        
+                        valid_x = [pos for pos, v in zip(x, rank_vals) if v is not None]
+                        valid_y = [v for v in rank_vals if v is not None]
+                        
+                        marker = '*' if rank == 64 else 'X'
+                        linestyle = '-' if rank == 64 else '-.'
+                        
+                        ax.plot(valid_x, valid_y, label=f"r{rank}", color=c, marker=marker, linestyle=linestyle, linewidth=2, markersize=8)
+                        
+                    ax.set_title(anchor)
+                    ax.set_xticks(x)
+                    ax.set_xticklabels([f"{f}%" for f in fractions])
+                    if idx == 0:
+                        ax.legend()
+                    ax.grid(True, alpha=0.3)
+                    
+                for idx in range(num_anchors, len(axes)):
+                    fig.delaxes(axes[idx])
+                    
+                fig.suptitle(f"LoRA Rank Comparison: Zero-Shot Performance\nTarget: {target_short}", y=1.02, fontsize=16)
+                fig.tight_layout()
+                plt.savefig(os.path.join(out_dir, f"lora_rank_comparison_anchors_grid_{target_name}{suffix}.png"), dpi=180, bbox_inches='tight')
                 plt.close()
 
     print(f"Plots generated successfully in '{out_dir}': lora_fraction_heatmap, absolute_lines, relative_lines, rank_comparison, etc.")

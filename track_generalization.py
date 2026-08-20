@@ -235,7 +235,7 @@ def generate_plot(master_df, baseline_name, metric_type="BBOX"):
         t_name = re.sub(r'lora', '', exp, flags=re.IGNORECASE)
         t_name = re.sub(r'(?:_|-|^)([0-1]?\.[0-9]+|[0-9]+(?:pct|%))(?:_|-|$)', '_', t_name, count=1, flags=re.IGNORECASE)
         t_name = re.sub(r'(?:_|-|^)(?:r|rank)(\d+)(?:_|-|$)', '_', t_name, count=1, flags=re.IGNORECASE)
-        t_name = re.sub(r'[_\-]+', '_', t_name).strip('_-')
+        t_name = re.sub(r'^_+|_+$', '', t_name) # Strip leading/trailing underscores but leave internal hyphens alone
         target_group = t_name if t_name else "unknown_target"
         
         match = re.search(r'(?:_|-|^)([0-1]?\.[0-9]+|[0-9]+(?:pct|%))(?:_|-|$)', exp.lower())
