@@ -16,7 +16,7 @@ def parse_args():
     return parser.parse_args()
 
 def extract_fraction(exp_name):
-    match = re.search(r'(?:_|-|^)([0-1]?\.[0-9]+|[0-9]+(?:pct|%))(?:_|-|$)', exp_name.lower())
+    match = re.search(r'(?:_|-|^)(?:frac)?([0-1]?\.[0-9]+|[0-9]+(?:pct|%))(?:_|-|$)', exp_name.lower())
     if match:
         val_str = match.group(1)
         if 'pct' in val_str or '%' in val_str:
@@ -35,7 +35,7 @@ def get_target_name(exp_name, target_arg):
     if target_arg:
         return target_arg
     name = re.sub(r'lora', '', exp_name, flags=re.IGNORECASE)
-    name = re.sub(r'(?:_|-|^)([0-1]?\.[0-9]+|[0-9]+(?:pct|%))(?:_|-|$)', '_', name, count=1, flags=re.IGNORECASE)
+    name = re.sub(r'(?:_|-|^)(?:frac)?([0-1]?\.[0-9]+|[0-9]+(?:pct|%))(?:_|-|$)', '_', name, count=1, flags=re.IGNORECASE)
     name = re.sub(r'(?:_|-|^)(?:r|rank)(\d+)(?:_|-|$)', '_', name, count=1, flags=re.IGNORECASE)
     name = re.sub(r'[_\-]+', '_', name).strip('_-')
     return name if name else "Target"
@@ -52,6 +52,17 @@ def short_name(d):
     rest = rest.replace("_4_class", "").replace("_10x", "")
     date_short = date_part[2:] if len(date_part) == 8 else date_part
     return f"{rest} ({date_short})" if date_short else rest
+
+def resolve_target_datasets(target_arg):
+    if target_arg == '2024-u87':
+        return ['20240905_u87-adhered_10x_caged_4_class']
+    elif target_arg == '20250108_neuron-adhered':
+        return ['20250108_neuron-adhered_10x_uncaged_4_class']
+    elif target_arg == '2025-neuron-adhered':
+        return ['20250108_neuron-adhered_10x_uncaged_4_class', '20250305_neuron-adhered_10x_uncaged_4_class']
+    elif target_arg == 'u87-2025-neuron-adhered':
+        return ['20240905_u87-adhered_10x_caged_4_class', '20250108_neuron-adhered_10x_uncaged_4_class', '20250305_neuron-adhered_10x_uncaged_4_class']
+    return [target_arg]
 
 def generate_plots_for_metric(args, metric):
     suffix = "_segm" if metric == "SEGM" else ""
@@ -124,15 +135,17 @@ def generate_plots_for_metric(args, metric):
         print(f"No LoRA experiments found for target: {target_name}")
         return
 
-    anchors = [a for a in anchors if a != target_name]
+    anchors = [a for a in anchors if a not in resolve_target_datasets(target_name)]
 
+    actual_targets = resolve_target_datasets(target_name)
     data_rows = []
     
     if not e_df.empty:
         col_name = "8-Node Base"
-        t_row = e_df[e_df['dataset'] == target_name]
-        t_val = t_row['mAP50_95'].values[0] if not t_row.empty else None
-        data_rows.append({'Dataset': short_name(target_name), col_name: t_val, 'Type': 'Target'})
+        for t_ds in actual_targets:
+            t_row = e_df[e_df['dataset'] == t_ds]
+            t_val = t_row['mAP50_95'].values[0] if not t_row.empty else None
+            data_rows.append({'Dataset': short_name(t_ds), col_name: t_val, 'Type': 'Target'})
         
         for anchor in sorted(anchors):
             a_row = e_df[e_df['dataset'] == anchor]
@@ -140,7 +153,8 @@ def generate_plots_for_metric(args, metric):
             data_rows.append({'Dataset': short_name(anchor), col_name: a_val, 'Type': 'Anchor'})
                 
     if not data_rows:
-        data_rows.append({'Dataset': short_name(target_name), 'Type': 'Target'})
+        for t_ds in actual_targets:
+            data_rows.append({'Dataset': short_name(t_ds), 'Type': 'Target'})
         for anchor in sorted(anchors):
             data_rows.append({'Dataset': short_name(anchor), 'Type': 'Anchor'})
             
@@ -148,7 +162,7 @@ def generate_plots_for_metric(args, metric):
     
     valid_exps = sorted(filtered_exps, key=lambda x: (x[1], x[2]))
     
-    orig_map = {short_name(x): x for x in anchors + [target_name]}
+    orig_map = {short_name(x): x for x in anchors + actual_targets}
     
     for exp, fraction, rank in valid_exps:
         fraction_pct = int(round(fraction * 100))
@@ -209,13 +223,13 @@ def generate_plots_for_metric(args, metric):
                 axes[i].tick_params(axis='x', rotation=45)
                 
                 for tick_label in axes[i].get_yticklabels():
-                    if tick_label.get_text() == short_name(target_name):
+                    if tick_label.get_text() in [short_name(t) for t in actual_targets]:
                         tick_label.set_weight("bold")
             else:
                 axes[i].set_title(f"Rank {rank} (No Data)")
                 axes[i].axis('off')
 
-        fig.suptitle(f"LoRA Fine-tuning Performance Heatmap\nTarget: {short_name(target_name)}", y=1.02)
+        fig.suptitle(f"LoRA Fine-tuning Performance Heatmap\nTarget: {target_name}", y=1.02)
         plt.tight_layout()
         plt.savefig(os.path.join(out_dir, f"lora_fraction_heatmap_{target_name}{suffix}.png"), dpi=180, bbox_inches="tight")
         plt.close()
@@ -226,7 +240,7 @@ def generate_plots_for_metric(args, metric):
     if frac_cols:
         cmap = plt.get_cmap('tab20')
         colors = [cmap(i) for i in range(20)]
-        target_short = short_name(target_name)
+        target_shorts = [short_name(t) for t in actual_targets]
         
         # Absolute and Relative Plots PER RANK
         for rank in ranks:
@@ -246,7 +260,7 @@ def generate_plots_for_metric(args, metric):
             color_idx = 0
             
             for ds_name in plot_df.index:
-                is_target = (ds_name == target_short)
+                is_target = ds_name in target_shorts
                 c = colors[color_idx % len(colors)]
                 color_idx += 1
                 
@@ -268,7 +282,7 @@ def generate_plots_for_metric(args, metric):
             
             plt.xlabel("Data Fraction (%)")
             plt.ylabel("mAP@0.5-0.95")
-            plt.title(f"LoRA Fine-tuning (r{rank}): Absolute Performance vs Data Fraction\nTarget: {target_short}")
+            plt.title(f"LoRA Fine-tuning (r{rank}): Absolute Performance vs Data Fraction\nTarget: {target_name}")
             plt.legend(by_label.values(), by_label.keys(), bbox_to_anchor=(1.05, 1), loc='upper left')
             plt.grid(True, alpha=0.3)
             plt.tight_layout()
@@ -284,7 +298,7 @@ def generate_plots_for_metric(args, metric):
                         continue
                         
                     base_val = plot_df.loc[ds_name, "8-Node Base"]
-                    is_target = (ds_name == target_short)
+                    is_target = ds_name in target_shorts
                     c = colors[color_idx % len(colors)]
                     color_idx += 1
                     
@@ -298,7 +312,7 @@ def generate_plots_for_metric(args, metric):
                 plt.axhline(y=0, color='black', linestyle='-', alpha=0.3, label='8-Node Base (0 Delta)')
                 plt.xlabel("Data Fraction (%)")
                 plt.ylabel("Delta mAP@0.5-0.95")
-                plt.title(f"LoRA Fine-tuning (r{rank}): Relative to 8-Node Baseline\nTarget: {target_short}")
+                plt.title(f"LoRA Fine-tuning (r{rank}): Relative to 8-Node Baseline\nTarget: {target_name}")
                 plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
                 plt.grid(True, alpha=0.3)
                 plt.tight_layout()
@@ -308,7 +322,7 @@ def generate_plots_for_metric(args, metric):
         # 3. Rank Comparison Plot
         if len(ranks) > 1:
             plt.figure(figsize=(10, 6))
-            anchor_rows = [r for r in plot_df.index if r != target_short]
+            anchor_rows = [r for r in plot_df.index if r not in target_shorts]
             rank_colors = {ranks[i]: colors[i * 2] for i in range(len(ranks))}
             
             for rank in ranks:
@@ -324,25 +338,27 @@ def generate_plots_for_metric(args, metric):
                 x_vals = [get_frac(col) for col in rank_cols]
                 c = rank_colors[rank]
                 
-                if target_short in plot_df.index:
-                    y_target = plot_df.loc[target_short, rank_cols].values
-                    plt.plot(x_vals, y_target, label=f"Target (r{rank})", color=c, marker='*', linestyle='-', linewidth=2.5, markersize=10)
+                valid_target_shorts = [t for t in target_shorts if t in plot_df.index]
+                if valid_target_shorts:
+                    y_target = plot_df.loc[valid_target_shorts, rank_cols].mean(axis=0).values
+                    plt.plot(x_vals, y_target, label=f"Target Avg (r{rank})", color=c, marker='*', linestyle='-', linewidth=2.5, markersize=10)
                 
                 if anchor_rows:
                     y_anchors = plot_df.loc[anchor_rows, rank_cols].mean(axis=0).values
                     plt.plot(x_vals, y_anchors, label=f"Anchors Avg (r{rank})", color=c, marker='o', linestyle='--', linewidth=1.5, markersize=8)
             
             if "8-Node Base" in plot_df.columns:
-                if target_short in plot_df.index and not pd.isna(plot_df.loc[target_short, "8-Node Base"]):
-                    base_target = plot_df.loc[target_short, "8-Node Base"]
-                    plt.axhline(y=base_target, color='black', linestyle=':', alpha=0.6, label="Base Ckpt (Target)")
+                valid_target_shorts = [t for t in target_shorts if t in plot_df.index and not pd.isna(plot_df.loc[t, "8-Node Base"])]
+                if valid_target_shorts:
+                    base_target = plot_df.loc[valid_target_shorts, "8-Node Base"].mean()
+                    plt.axhline(y=base_target, color='black', linestyle=':', alpha=0.6, label="Base Ckpt (Target Avg)")
                 if anchor_rows:
                     base_anchors = plot_df.loc[anchor_rows, "8-Node Base"].mean()
                     plt.axhline(y=base_anchors, color='gray', linestyle=':', alpha=0.6, label="Base Ckpt (Anchors Avg)")
             
             plt.xlabel("Data Fraction (%)")
             plt.ylabel("mAP@0.5-0.95")
-            plt.title(f"LoRA Rank Comparison: Target & Anchor Avg\nTarget: {target_short}")
+            plt.title(f"LoRA Rank Comparison: Target & Anchor Avg\nTarget: {target_name}")
             plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
             plt.grid(True, alpha=0.3)
             plt.tight_layout()
@@ -366,7 +382,7 @@ def generate_plots_for_metric(args, metric):
                 plt.figure(figsize=(max(10, len(anchor_plot_df.columns) * 0.8), len(anchor_plot_df) * 0.6 + 2))
                 sns.heatmap(anchor_plot_df.astype(float), annot=True, fmt=".3f", cmap="YlGnBu", cbar_kws={'label': 'mAP@0.5-0.95'}, linewidths=.5)
                 
-                plt.title(f"LoRA Rank Comparison Heatmap (Anchors Only)\nTarget: {target_short}", pad=20)
+                plt.title(f"LoRA Rank Comparison Heatmap (Anchors Only)\nTarget: {target_name}", pad=20)
                 plt.xlabel("Experiment")
                 plt.ylabel("Anchor Dataset")
                 plt.xticks(rotation=45, ha='right')
@@ -375,7 +391,8 @@ def generate_plots_for_metric(args, metric):
                 plt.close()
 
             # 5. Rank Comparison Bar Plot on Target Dataset
-            if target_short in plot_df.index:
+            valid_target_shorts = [t for t in target_shorts if t in plot_df.index]
+            if valid_target_shorts:
                 plt.figure(figsize=(10, 6))
                 
                 def get_frac(col):
@@ -386,16 +403,19 @@ def generate_plots_for_metric(args, metric):
                 x = np.arange(len(fractions))
                 width = 0.35
                 
-                if "8-Node Base" in plot_df.columns and not pd.isna(plot_df.loc[target_short, "8-Node Base"]):
-                    base_val = plot_df.loc[target_short, "8-Node Base"]
-                    plt.axhline(y=base_val, color='black', linestyle='--', alpha=0.6, label="Base Ckpt")
+                if "8-Node Base" in plot_df.columns:
+                    base_target_shorts = [t for t in valid_target_shorts if not pd.isna(plot_df.loc[t, "8-Node Base"])]
+                    if base_target_shorts:
+                        base_val = plot_df.loc[base_target_shorts, "8-Node Base"].mean()
+                        plt.axhline(y=base_val, color='black', linestyle='--', alpha=0.6, label="Base Ckpt (Target Avg)")
                 
                 for i, rank in enumerate(ranks):
                     rank_vals = []
                     for frac in fractions:
                         col = f"LoRA r{rank} {frac}%"
-                        if col in plot_df.columns and not pd.isna(plot_df.loc[target_short, col]):
-                            rank_vals.append(plot_df.loc[target_short, col])
+                        if col in plot_df.columns:
+                            val = plot_df.loc[valid_target_shorts, col].mean()
+                            rank_vals.append(val if not pd.isna(val) else 0)
                         else:
                             rank_vals.append(0)
                     
@@ -405,7 +425,7 @@ def generate_plots_for_metric(args, metric):
                     
                 plt.xlabel("Data Fraction (%)")
                 plt.ylabel("mAP@0.5-0.95")
-                plt.title(f"LoRA Rank Comparison: Target Dataset Performance\nTarget: {target_short}")
+                plt.title(f"LoRA Rank Comparison: Target Dataset Performance (Avg)\nTarget: {target_name}")
                 plt.xticks(x, [f"{f}%" for f in fractions])
                 plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
                 plt.grid(True, alpha=0.3, axis='y')
@@ -461,7 +481,7 @@ def generate_plots_for_metric(args, metric):
                 for idx in range(num_anchors, len(axes)):
                     fig.delaxes(axes[idx])
                     
-                fig.suptitle(f"LoRA Rank Comparison: Zero-Shot Performance\nTarget: {target_short}", y=1.02, fontsize=16)
+                fig.suptitle(f"LoRA Rank Comparison: Zero-Shot Performance\nTarget: {target_name}", y=1.02, fontsize=16)
                 fig.tight_layout()
                 plt.savefig(os.path.join(out_dir, f"lora_rank_comparison_anchors_grid_{target_name}{suffix}.png"), dpi=180, bbox_inches='tight')
                 plt.close()

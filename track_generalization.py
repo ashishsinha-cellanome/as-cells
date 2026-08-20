@@ -231,12 +231,12 @@ def generate_plot(master_df, baseline_name, metric_type="BBOX"):
         rank = int(rank_match.group(1)) if rank_match else 64
             
         t_name = re.sub(r'lora', '', exp, flags=re.IGNORECASE)
-        t_name = re.sub(r'(?:_|-|^)([0-1]?\.[0-9]+|[0-9]+(?:pct|%))(?:_|-|$)', '_', t_name, count=1, flags=re.IGNORECASE)
+        t_name = re.sub(r'(?:_|-|^)(?:frac)?([0-1]?\.[0-9]+|[0-9]+(?:pct|%))(?:_|-|$)', '_', t_name, count=1, flags=re.IGNORECASE)
         t_name = re.sub(r'(?:_|-|^)(?:r|rank)(\d+)(?:_|-|$)', '_', t_name, count=1, flags=re.IGNORECASE)
         t_name = re.sub(r'^_+|_+$', '', t_name) # Strip leading/trailing underscores but leave internal hyphens alone
         target_group = t_name if t_name else "unknown_target"
         
-        match = re.search(r'(?:_|-|^)([0-1]?\.[0-9]+|[0-9]+(?:pct|%))(?:_|-|$)', exp.lower())
+        match = re.search(r'(?:_|-|^)(?:frac)?([0-1]?\.[0-9]+|[0-9]+(?:pct|%))(?:_|-|$)', exp.lower())
         if match:
             val_str = match.group(1)
             frac_val = float(val_str.replace('pct', '').replace('%', '')) / 100.0 if 'pct' in val_str or '%' in val_str else float(val_str)
