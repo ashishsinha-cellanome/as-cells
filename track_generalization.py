@@ -303,7 +303,11 @@ def generate_plot(master_df, baseline_name, metric_type="BBOX"):
         plt.title(f"Generalization Performance (Target: {target_group})", fontsize=14)
         plt.legend(by_label.values(), by_label.keys(), bbox_to_anchor=(1.02, 1), loc='upper left', fontsize=10, title="Experiment Type")
         plt.tight_layout()
-        plt.savefig(f"generalization_lora_and_8node_{target_group}{suffix}.png", dpi=180, bbox_inches="tight")
+        
+        import os
+        out_dir = os.path.join("lora_plots", target_group)
+        os.makedirs(out_dir, exist_ok=True)
+        plt.savefig(os.path.join(out_dir, f"generalization_lora_and_8node_{target_group}{suffix}.png"), dpi=180, bbox_inches="tight")
         plt.close()
     
     # 3. Plotly Interactive Plot

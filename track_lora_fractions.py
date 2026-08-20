@@ -2,6 +2,7 @@ import argparse
 import os
 import re
 import pandas as pd
+import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 
@@ -178,6 +179,9 @@ def generate_plots_for_metric(args, metric):
         print("No valid metrics found to populate the heatmap.")
         return
 
+    out_dir = os.path.join("lora_plots", short_name(target_name))
+    os.makedirs(out_dir, exist_ok=True)
+
     default_rank = 64
     heatmap_cols = [c for c in plot_df.columns if c == "8-Node Base" or c.startswith(f"LoRA r{default_rank}")]
     heatmap_plot_df = plot_df[heatmap_cols].copy()
@@ -198,7 +202,7 @@ def generate_plots_for_metric(args, metric):
         plt.ylabel("Evaluation Dataset")
         plt.xticks(rotation=45, ha='right')
         plt.tight_layout()
-        plt.savefig(f"lora_fraction_heatmap_{target_name}{suffix}.png", dpi=180)
+        plt.savefig(os.path.join(out_dir, f"lora_fraction_heatmap_{target_name}{suffix}.png"), dpi=180)
         plt.close()
 
     # Create Line Plots
@@ -256,7 +260,7 @@ def generate_plots_for_metric(args, metric):
             plt.legend(by_label.values(), by_label.keys(), bbox_to_anchor=(1.05, 1), loc='upper left')
             plt.grid(True, alpha=0.3)
             plt.tight_layout()
-            plt.savefig(f"lora_fraction_absolute_lines_{target_name}{suffix}.png", dpi=180)
+            plt.savefig(os.path.join(out_dir, f"lora_fraction_absolute_lines_{target_name}{suffix}.png"), dpi=180)
             plt.close()
             
             # Relative Plot
@@ -286,7 +290,7 @@ def generate_plots_for_metric(args, metric):
                 plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
                 plt.grid(True, alpha=0.3)
                 plt.tight_layout()
-                plt.savefig(f"lora_fraction_relative_lines_{target_name}{suffix}.png", dpi=180)
+                plt.savefig(os.path.join(out_dir, f"lora_fraction_relative_lines_{target_name}{suffix}.png"), dpi=180)
                 plt.close()
 
         # 3. Rank Comparison Plot
@@ -330,7 +334,7 @@ def generate_plots_for_metric(args, metric):
             plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
             plt.grid(True, alpha=0.3)
             plt.tight_layout()
-            plt.savefig(f"lora_fraction_rank_comparison_{target_name}{suffix}.png", dpi=180)
+            plt.savefig(os.path.join(out_dir, f"lora_fraction_rank_comparison_{target_name}{suffix}.png"), dpi=180)
             plt.close()
 
             # 4. Rank Comparison Heatmap on Anchor Datasets
@@ -355,7 +359,7 @@ def generate_plots_for_metric(args, metric):
                 plt.ylabel("Anchor Dataset")
                 plt.xticks(rotation=45, ha='right')
                 plt.tight_layout()
-                plt.savefig(f"lora_rank_comparison_heatmap_anchors_{target_name}{suffix}.png", dpi=180)
+                plt.savefig(os.path.join(out_dir, f"lora_rank_comparison_heatmap_anchors_{target_name}{suffix}.png"), dpi=180)
                 plt.close()
 
             # 5. Rank Comparison Bar Plot on Target Dataset
@@ -367,7 +371,6 @@ def generate_plots_for_metric(args, metric):
                     return int(m.group(1)) if m else 0
                 
                 fractions = sorted(list(set([get_frac(c) for c in plot_df.columns if c.startswith("LoRA")])))
-                import numpy as np
                 x = np.arange(len(fractions))
                 width = 0.35
                 
@@ -395,10 +398,10 @@ def generate_plots_for_metric(args, metric):
                 plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
                 plt.grid(True, alpha=0.3, axis='y')
                 plt.tight_layout()
-                plt.savefig(f"lora_rank_comparison_bar_target_{target_name}{suffix}.png", dpi=180)
+                plt.savefig(os.path.join(out_dir, f"lora_rank_comparison_bar_target_{target_name}{suffix}.png"), dpi=180)
                 plt.close()
 
-    print(f"Plots generated successfully: lora_fraction_heatmap_{target_name}{suffix}.png, lora_fraction_absolute_lines_{target_name}{suffix}.png, lora_fraction_relative_lines_{target_name}{suffix}.png")
+    print(f"Plots generated successfully in '{out_dir}': lora_fraction_heatmap, absolute_lines, relative_lines, rank_comparison, etc.")
 
 def main():
     args = parse_args()
