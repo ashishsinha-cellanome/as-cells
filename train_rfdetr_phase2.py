@@ -344,6 +344,16 @@ def main(config: DictConfig):
     data_config_choice = hc.runtime.choices.data
     motif_config_name = os.path.basename(data_config_choice)
     
+    # Append target dataset names to make checkpoint and run names more descriptive
+    # and prevent information loss when finetuning on multiple datasets
+    target_ds = getattr(config.data, "target_datasets", [])
+    if isinstance(target_ds, str):
+        target_ds = [target_ds]
+    else:
+        target_ds = list(target_ds)
+    if len(target_ds) > 0:
+        motif_config_name = f"{motif_config_name}_" + "_".join(target_ds)
+    
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     finetune_mode = config.model.rfdetr.get("finetune_mode", "full")
     if finetune_mode == "decoder":
@@ -456,7 +466,11 @@ def main(config: DictConfig):
             import os
             
             target_datasets = getattr(config.data, "target_datasets", ["unknown_target"])
-            target = target_datasets[0] if len(target_datasets) > 0 else "unknown_target"
+            if isinstance(target_datasets, str):
+                target_datasets = [target_datasets]
+            else:
+                target_datasets = list(target_datasets)
+            target = "_".join(target_datasets) if len(target_datasets) > 0 else "unknown_target"
             frac = getattr(config.data, "target_data_frac", getattr(config.data, "lora_frac", "unknown"))
             adapter_dir = os.path.join(config.checkpointing.save_dir, "phase2", "adapters", f"{target}_r{lora_cfg.get('r', 32)}_frac{frac}_best")
             
