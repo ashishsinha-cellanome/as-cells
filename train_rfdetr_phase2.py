@@ -63,7 +63,7 @@ class PreBuiltRFDETRModelModule(RFDETRModelModule):
         
         # Exact regex matching leaf nodes for segmentation head, decoder object queries, and transformer attention/dense layers.
         # We explicitly exclude the backbone to keep the LoRA footprint low and focused on the decoder/heads.
-        target_modules = lc.get("target_modules", r".*(pwconv1|spatial_features_proj|query_features_proj|refpoint_embed|query_feat|enc_out_bbox_embed\.\d+\.layers\.\d+|enc_out_class_embed\.\d+|(?<!enc_out_)class_embed|bbox_embed\.layers\.\d+|segmentation_head.*pwconv1|qkv|query|key|value|dense|q_proj|k_proj|v_proj|out_proj|output_proj|value_proj|in_proj_weight)$")
+        target_modules = lc.get("target_modules", r".*(pwconv1|spatial_features_proj|query_features_proj|refpoint_embed|query_feat|enc_out_bbox_embed\.\d+\.layers\.\d+|enc_out_class_embed\.\d+|(?<!enc_out_)class_embed|bbox_embed\.layers\.\d+|segmentation_head.*pwconv1|qkv|query|key|value|dense|q_proj|k_proj|v_proj|out_proj|output_proj|value_proj|sampling_offsets|attention_weights)$")
         exclude_modules = lc.get("exclude_modules", r".*(dwconv|norm|bn|act|relu|gelu|backbone).*")
         
         r_val = lc.get("r", 32)
@@ -269,7 +269,7 @@ class Phase2MotifDataModule(MotifDataModule):
         )
 
     def test_dataloader(self):
-        eval_batch_size = int(getattr(self.config.data, "eval_batch_size", 1))
+        eval_batch_size = int(getattr(self.config.data, "eval_batch_size", 64))
         eval_num_workers = min(self._args.num_workers, 8)
         dataloaders = []
         
@@ -343,6 +343,16 @@ def main(config: DictConfig):
     hc = hydra.core.hydra_config.HydraConfig.get()
     data_config_choice = hc.runtime.choices.data
     motif_config_name = os.path.basename(data_config_choice)
+    
+    # Append target dataset names to make checkpoint and run names more descriptive
+    # and prevent information loss when finetuning on multiple datasets
+    target_ds = getattr(config.data, "target_datasets", [])
+    if isinstance(target_ds, str):
+        target_ds = [target_ds]
+    else:
+        target_ds = list(target_ds)
+    if len(target_ds) > 0:
+        motif_config_name = f"{motif_config_name}_" + "_".join(target_ds)
     
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     finetune_mode = config.model.rfdetr.get("finetune_mode", "full")
@@ -456,6 +466,10 @@ def main(config: DictConfig):
             import os
             
             target_datasets = getattr(config.data, "target_datasets", ["unknown_target"])
+            if isinstance(target_datasets, str):
+                target_datasets = [target_datasets]
+            else:
+                target_datasets = list(target_datasets)
             target = "+".join(target_datasets) if len(target_datasets) > 0 else "unknown_target"
             frac = getattr(config.data, "target_data_frac", getattr(config.data, "lora_frac", "unknown"))
             adapter_dir = os.path.join(config.checkpointing.save_dir, "phase2", "adapters", f"{target}_r{lora_cfg.get('r', 32)}_frac{frac}_best")
@@ -544,6 +558,20 @@ def main(config: DictConfig):
         except Exception:
             cfg_for_log = OmegaConf.to_container(config, resolve=False)
             
+        # Ensure LoRA configs (like rank and alpha) are explicitly logged, including defaults
+        if finetune_mode == "lora" or config.model.rfdetr.get("backbone_lora", False):
+            r_val = lora_cfg.get("r", 32)
+            lora_log_info = {
+                "r": r_val,
+                "alpha": lora_cfg.get("alpha", r_val * 2),
+                "use_dora": lora_cfg.get("use_dora", False),
+                "dropout": lora_cfg.get("dropout", 0.05),
+            }
+            if "model" in cfg_for_log and "rfdetr" in cfg_for_log["model"]:
+                if "lora" not in cfg_for_log["model"]["rfdetr"] or not cfg_for_log["model"]["rfdetr"]["lora"]:
+                    cfg_for_log["model"]["rfdetr"]["lora"] = {}
+                cfg_for_log["model"]["rfdetr"]["lora"].update(lora_log_info)
+
         custom_logger = WandbLogger(
             project="cell-detection-motifs",
             name=run_name,

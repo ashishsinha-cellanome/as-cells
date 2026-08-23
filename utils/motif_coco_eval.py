@@ -381,8 +381,9 @@ class MotifCocoEvalCallback(DetailedCocoEvalCallback):
                 try:
                     import wandb
                     import markdown
-                    html = markdown.markdown(md_report, extensions=["tables"])
-                    trainer.logger.experiment.log({"Inference Summary Report": wandb.Html(html)})
-                    print("[MotifCocoEvalCallback] Logged report to W&B")
+                    if hasattr(trainer.logger.experiment, "log"):
+                        html = markdown.markdown(md_report, extensions=["tables"])
+                        trainer.logger.experiment.log({"Inference Summary Report": wandb.Html(html)})
+                        print("[MotifCocoEvalCallback] Logged report to W&B")
                 except ImportError:
                     print("[MotifCocoEvalCallback] Could not log report to W&B: `markdown` package not installed.")
