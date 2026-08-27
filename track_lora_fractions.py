@@ -53,16 +53,25 @@ def short_name(d):
     date_short = date_part[2:] if len(date_part) == 8 else date_part
     return f"{rest} ({date_short})" if date_short else rest
 
-def resolve_target_datasets(target_arg):
-    if target_arg == '2024-u87':
-        return ['20240905_u87-adhered_10x_caged_4_class']
-    elif target_arg == '20250108_neuron-adhered':
-        return ['20250108_neuron-adhered_10x_uncaged_4_class']
-    elif target_arg == '2025-neuron-adhered':
-        return ['20250108_neuron-adhered_10x_uncaged_4_class', '20250305_neuron-adhered_10x_uncaged_4_class']
-    elif target_arg == 'u87-2025-neuron-adhered':
-        return ['20240905_u87-adhered_10x_caged_4_class', '20250108_neuron-adhered_10x_uncaged_4_class', '20250305_neuron-adhered_10x_uncaged_4_class']
-    return [target_arg]
+def resolve_target_datasets(target_arg, all_datasets):
+    if not target_arg: return []
+    targets = []
+    # If the target_arg has +, split it
+    parts = target_arg.split('+')
+    
+    for part in parts:
+        part_clean = part.strip().lower()
+        matched = False
+        for ds in all_datasets:
+            # We want to check if our short string is part of the full dataset name
+            if part_clean in str(ds).lower():
+                targets.append(str(ds))
+                matched = True
+                break
+        if not matched:
+            targets.append(part) # Fallback
+            
+    return targets
 
 def generate_plots_for_metric(args, metric):
     suffix = "_segm" if metric == "SEGM" else ""
@@ -135,9 +144,10 @@ def generate_plots_for_metric(args, metric):
         print(f"No LoRA experiments found for target: {target_name}")
         return
 
-    anchors = [a for a in anchors if a not in resolve_target_datasets(target_name)]
+    unique_ds = df['dataset'].unique()
+    actual_targets = resolve_target_datasets(target_name, unique_ds)
+    anchors = [a for a in anchors if a not in actual_targets]
 
-    actual_targets = resolve_target_datasets(target_name)
     data_rows = []
     
     if not e_df.empty:

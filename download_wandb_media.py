@@ -2,23 +2,13 @@ import wandb
 import os
 import argparse
 from pathlib import Path
+import re
 
-def get_dataset_type(targets):
-    targets_str = str(targets).lower()
-    has_u87 = 'u87' in targets_str
-    has_20250108_neuron = '20250108_neuron' in targets_str or 'uncaged-202501' in targets_str
-    has_20250305_neuron = '20250305_neuron' in targets_str
-    
-    if has_u87 and has_20250108_neuron:
-        return 'u87-2025-neuron-adhered'
-    elif has_u87 and not has_20250108_neuron:
-        return '2024-u87'
-    elif not has_u87 and has_20250108_neuron and has_20250305_neuron:
-        return '2025-neuron-adhered'
-    elif not has_u87 and has_20250108_neuron and not has_20250305_neuron:
-        return '20250108_neuron-adhered'
-    
-    return 'unknown'
+def shorten_dataset_name(ds_name):
+    m = re.match(r"^(\d{6,8})_(.*?)(?:_10x|_multichannel|_4_class).*", str(ds_name))
+    if m:
+        return f"{m.group(1)}_{m.group(2)}"
+    return str(ds_name)
 
 def download_wandb_files(output_dir):
     api = wandb.Api(timeout=120)
@@ -37,6 +27,7 @@ def download_wandb_files(output_dir):
     runs = api.runs(
         "sinashish/cell-detection-motifs",
         filters=filters,
+        order="-created_at",
         per_page=50,
         include_sweeps=False,
     )
@@ -53,13 +44,18 @@ def download_wandb_files(output_dir):
         
         # Pull targets
         targets = data_cfg.get("target_datasets", [])
-        train_datasets = data_cfg.get("train_datasets", [])
-        all_targets = targets + train_datasets
         
-        target_str = get_dataset_type(all_targets)
-        
-        if target_str == 'unknown':
+        # If there are no specific target datasets defined, fallback to checking lora_frac
+        if not targets:
             continue
+            
+        # The user requested full dataset names concatenated by "+" for the filenames
+        if isinstance(targets, str):
+            target_str = shorten_dataset_name(targets)
+        elif isinstance(targets, list):
+            target_str = "+".join([shorten_dataset_name(str(t)) for t in targets])
+        else:
+            target_str = "unknown"
             
         # Determine the rank (defaulting to 64 if not explicitly saved)
         rank = config.get("model", {}).get("rfdetr", {}).get("lora", {}).get("r", 64)
