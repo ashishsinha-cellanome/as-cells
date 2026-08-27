@@ -152,6 +152,10 @@ def update_master_csv(master_csv_path, exp_name, new_df):
     updated_df.to_csv(master_csv_path, index=False)
     return updated_df
 
+def wrap_title(title, width=60):
+    import textwrap
+    return "\n".join(textwrap.wrap(title, width))
+
 def generate_plot(master_df, baseline_name, metric_type="BBOX"):
     # Filter out commented out datasets
     master_df = master_df[~master_df['dataset'].astype(str).str.startswith('#')]
@@ -299,7 +303,7 @@ def generate_plot(master_df, baseline_name, metric_type="BBOX"):
         plt.yticks(fontsize=9)
         plt.ylabel("Relative Performance (% of Baseline)", fontsize=11)
         plt.xlabel("Dataset", fontsize=11)
-        plt.title(f"Generalization Performance (Target: {target_group} | r{rank})", fontsize=14)
+        plt.title(wrap_title(f"Generalization Performance (Target: {target_group} | r{rank})"), fontsize=14)
         plt.legend(by_label.values(), by_label.keys(), bbox_to_anchor=(1.02, 1), loc='upper left', fontsize=10, title="Experiment Type")
         plt.tight_layout()
         

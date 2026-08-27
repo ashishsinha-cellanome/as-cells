@@ -73,6 +73,10 @@ def resolve_target_datasets(target_arg, all_datasets):
             
     return targets
 
+def wrap_title(title, width=60):
+    import textwrap
+    return "\n".join(textwrap.wrap(title, width))
+
 def generate_plots_for_metric(args, metric):
     suffix = "_segm" if metric == "SEGM" else ""
     current_csv = args.master_csv.replace(".csv", f"{suffix}.csv") if metric == "SEGM" else args.master_csv
@@ -137,7 +141,7 @@ def generate_plots_for_metric(args, metric):
         # Match inferred target to the resolved target_name (ignoring hyphens/underscores)
         inferred_clean = inferred.replace('_', '').replace('-', '').lower()
         target_clean = target_name.replace('_', '').replace('-', '').lower()
-        if inferred_clean in target_clean:
+        if inferred_clean == target_clean or inferred_clean == target_clean.replace("+", ""):
             filtered_exps.append((exp, fraction, rank))
             
     if not filtered_exps:
@@ -239,7 +243,8 @@ def generate_plots_for_metric(args, metric):
                 axes[i].set_title(f"Rank {rank} (No Data)")
                 axes[i].axis('off')
 
-        fig.suptitle(f"LoRA Fine-tuning Performance Heatmap\nTarget: {target_name}", y=1.02)
+        title_text = wrap_title(f"LoRA Fine-tuning Performance Heatmap | Target: {target_name}", 80)
+        fig.suptitle(title_text, y=1.02)
         plt.tight_layout()
         plt.savefig(os.path.join(out_dir, f"lora_fraction_heatmap_{target_name}{suffix}.png"), dpi=180, bbox_inches="tight")
         plt.close()
@@ -292,7 +297,7 @@ def generate_plots_for_metric(args, metric):
             
             plt.xlabel("Data Fraction (%)")
             plt.ylabel("mAP@0.5-0.95")
-            plt.title(f"LoRA Fine-tuning (r{rank}): Absolute Performance vs Data Fraction\nTarget: {target_name}")
+            plt.title(wrap_title(f"LoRA Fine-tuning (r{rank}): Absolute Performance vs Data Fraction | Target: {target_name}"))
             plt.legend(by_label.values(), by_label.keys(), bbox_to_anchor=(1.05, 1), loc='upper left')
             plt.grid(True, alpha=0.3)
             plt.tight_layout()
@@ -322,7 +327,7 @@ def generate_plots_for_metric(args, metric):
                 plt.axhline(y=0, color='black', linestyle='-', alpha=0.3, label='8-Node Base (0 Delta)')
                 plt.xlabel("Data Fraction (%)")
                 plt.ylabel("Delta mAP@0.5-0.95")
-                plt.title(f"LoRA Fine-tuning (r{rank}): Relative to 8-Node Baseline\nTarget: {target_name}")
+                plt.title(wrap_title(f"LoRA Fine-tuning (r{rank}): Relative to 8-Node Baseline | Target: {target_name}"))
                 plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
                 plt.grid(True, alpha=0.3)
                 plt.tight_layout()
@@ -368,7 +373,7 @@ def generate_plots_for_metric(args, metric):
             
             plt.xlabel("Data Fraction (%)")
             plt.ylabel("mAP@0.5-0.95")
-            plt.title(f"LoRA Rank Comparison: Target & Anchor Avg\nTarget: {target_name}")
+            plt.title(wrap_title(f"LoRA Rank Comparison: Target & Anchor Avg | Target: {target_name}"))
             plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
             plt.grid(True, alpha=0.3)
             plt.tight_layout()
@@ -392,7 +397,7 @@ def generate_plots_for_metric(args, metric):
                 plt.figure(figsize=(max(10, len(anchor_plot_df.columns) * 0.8), len(anchor_plot_df) * 0.6 + 2))
                 sns.heatmap(anchor_plot_df.astype(float), annot=True, fmt=".3f", cmap="YlGnBu", cbar_kws={'label': 'mAP@0.5-0.95'}, linewidths=.5)
                 
-                plt.title(f"LoRA Rank Comparison Heatmap (Anchors Only)\nTarget: {target_name}", pad=20)
+                plt.title(wrap_title(f"LoRA Rank Comparison Heatmap (Anchors Only) | Target: {target_name}"), pad=20)
                 plt.xlabel("Experiment")
                 plt.ylabel("Anchor Dataset")
                 plt.xticks(rotation=45, ha='right')
@@ -435,7 +440,7 @@ def generate_plots_for_metric(args, metric):
                     
                 plt.xlabel("Data Fraction (%)")
                 plt.ylabel("mAP@0.5-0.95")
-                plt.title(f"LoRA Rank Comparison: Target Dataset Performance (Avg)\nTarget: {target_name}")
+                plt.title(wrap_title(f"LoRA Rank Comparison: Target Dataset Performance (Avg) | Target: {target_name}"))
                 plt.xticks(x, [f"{f}%" for f in fractions])
                 plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
                 plt.grid(True, alpha=0.3, axis='y')
@@ -491,7 +496,7 @@ def generate_plots_for_metric(args, metric):
                 for idx in range(num_anchors, len(axes)):
                     fig.delaxes(axes[idx])
                     
-                fig.suptitle(f"LoRA Rank Comparison: Zero-Shot Performance\nTarget: {target_name}", y=1.02, fontsize=16)
+                fig.suptitle(wrap_title(f"LoRA Rank Comparison: Zero-Shot Performance | Target: {target_name}", 80), y=1.02, fontsize=16)
                 fig.tight_layout()
                 plt.savefig(os.path.join(out_dir, f"lora_rank_comparison_anchors_grid_{target_name}{suffix}.png"), dpi=180, bbox_inches='tight')
                 plt.close()
