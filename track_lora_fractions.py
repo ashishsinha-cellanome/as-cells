@@ -129,11 +129,6 @@ def generate_plots_for_metric(args, metric):
             return
 
     unique_ds = df['dataset'].unique()
-    if target_name not in unique_ds:
-        for ds in unique_ds:
-            if target_name.lower() in str(ds).lower():
-                target_name = str(ds)
-                break
                 
     # Now filter valid_exps to only include those matching the target dataset
     filtered_exps = []
