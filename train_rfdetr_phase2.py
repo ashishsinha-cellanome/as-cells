@@ -362,6 +362,9 @@ def main(config: DictConfig):
             else:
                 short_names.append(name)
         target_str = "_".join(short_names)
+        if len(target_str) > 120:
+            import hashlib
+            target_str = f"multi_{len(target_ds)}_datasets_" + hashlib.md5(target_str.encode()).hexdigest()[:8]
         motif_config_name = f"{motif_config_name}_{target_str}"
     
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -490,6 +493,9 @@ def main(config: DictConfig):
                     else:
                         short_names.append(name)
                 target = "_".join(short_names)
+                if len(target) > 120:
+                    import hashlib
+                    target = f"multi_{len(target_datasets)}_datasets_" + hashlib.md5(target.encode()).hexdigest()[:8]
             else:
                 target = "unknown_target"
             frac = getattr(config.data, "target_data_frac", getattr(config.data, "lora_frac", "unknown"))
