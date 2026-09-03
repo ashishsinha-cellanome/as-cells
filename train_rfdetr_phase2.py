@@ -337,6 +337,8 @@ def _get_model_class(size_name: str, is_seg: bool = True):
 
 @hydra.main(config_path="configs", config_name="config.yaml", version_base=None)
 def main(config: DictConfig):
+    import torch.multiprocessing
+    torch.multiprocessing.set_sharing_strategy('file_system')
     OmegaConf.set_struct(config, False)
     setup_cluster_env()
     
@@ -352,7 +354,15 @@ def main(config: DictConfig):
     else:
         target_ds = list(target_ds)
     if len(target_ds) > 0:
-        motif_config_name = f"{motif_config_name}_" + "_".join(target_ds)
+        short_names = []
+        for name in target_ds:
+            parts = name.split('_')
+            if len(parts) >= 2:
+                short_names.append(f"{parts[0]}_{parts[1].split('-')[0]}")
+            else:
+                short_names.append(name)
+        target_str = "_".join(short_names)
+        motif_config_name = f"{motif_config_name}_{target_str}"
     
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     finetune_mode = config.model.rfdetr.get("finetune_mode", "full")
@@ -470,7 +480,18 @@ def main(config: DictConfig):
                 target_datasets = [target_datasets]
             else:
                 target_datasets = list(target_datasets)
-            target = "+".join(target_datasets) if len(target_datasets) > 0 else "unknown_target"
+            
+            if len(target_datasets) > 0:
+                short_names = []
+                for name in target_datasets:
+                    parts = name.split('_')
+                    if len(parts) >= 2:
+                        short_names.append(f"{parts[0]}_{parts[1].split('-')[0]}")
+                    else:
+                        short_names.append(name)
+                target = "_".join(short_names)
+            else:
+                target = "unknown_target"
             frac = getattr(config.data, "target_data_frac", getattr(config.data, "lora_frac", "unknown"))
             adapter_dir = os.path.join(config.checkpointing.save_dir, "phase2", "adapters", f"{target}_r{lora_cfg.get('r', 32)}_frac{frac}_best")
             
