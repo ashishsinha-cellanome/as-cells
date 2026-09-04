@@ -1,8 +1,11 @@
 # Object Detection and Instance Segmentation models for Cell Detection
 
-This repository provides Jupyter Notebooks and python scripts for pre-processing the training data, training and running inference for the following models:
-1) Object Detection: YOLOv5
-2) Instance Segmentation: Mask R-CNN
+> **📘 Project Guide**: See [docs/PROJECT_GUIDE.md](docs/PROJECT_GUIDE.md) for a comprehensive overview of the project phases (Benchmarking, Coverage-based Selection, LoRA Adaptation), repository structure, and configuration instructions.
+
+This repository provides a comprehensive pipeline for evaluating and deploying transformer-based object detection and instance segmentation models for automated cellular analysis (Cellanome). 
+The primary goal is to accurately detect and segment cells, beads, cell-adhered instances, and soma across high-throughput microscopy imagery. 
+
+The models supported include YOLOv5, RT-DETR, Mask2Former, RF-DETR, DEIMv2, and YOLOv26.
 
 ## Training (PyTorch Lightning + Hydra)
 
