@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
 # DO NOT USE THIS
+import os, sys
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+
 import json
 import shutil
 from collections import Counter, defaultdict

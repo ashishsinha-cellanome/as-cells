@@ -4,6 +4,9 @@ Verification script for RT-DETR training setup.
 - Checks the dataloader and visualizes a batch of data.
 - Performs an overfitting test on a single batch to ensure the model can learn.
 """
+import os, sys
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+
 
 import argparse
 import yaml
