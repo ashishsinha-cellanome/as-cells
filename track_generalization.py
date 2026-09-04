@@ -218,6 +218,59 @@ def generate_plot(master_df, baseline_name, metric_type="BBOX"):
     plt.savefig(f"generalization_relative_performance_lines{suffix}.png", dpi=180, bbox_inches="tight")
     plt.close()
     
+    # Generate grouped plots by node count (2, 5, 6, 7, 8)
+    from collections import defaultdict
+    node_groups = defaultdict(list)
+    for exp in non_baseline_exps:
+        if 'lora' in exp.lower():
+            continue
+        m = re.match(r'^(\d+)\s*Nodes?', exp, re.IGNORECASE)
+        if m:
+            node_groups[m.group(1)].append(exp)
+        else:
+            node_groups['other'].append(exp)
+            
+    for node_count, exps in node_groups.items():
+        if node_count == 'other':
+            continue
+        plt.figure(figsize=(12, 7))
+        plt.plot(baseline_df.index, [100]*len(baseline_df), alpha=0.0)
+        
+        group_colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
+        
+        has_data = False
+        for idx, exp in enumerate(exps):
+            exp_df = master_df[master_df['experiment'] == exp]
+            valid_datasets = exp_df[exp_df['label'].isin(baseline_df.index)]
+            if valid_datasets.empty:
+                continue
+                
+            rel_perf = valid_datasets.set_index('label')['mAP50_95'] / baseline_df['mAP50_95'] * 100
+            rel_perf = rel_perf.replace([float('inf'), float('-inf')], float('nan'))
+            rel_perf = rel_perf.reindex(baseline_df.index)
+            
+            color = group_colors[idx % len(group_colors)]
+            plt.plot(rel_perf.index, rel_perf.values, label=exp, color=color, marker='o', linestyle='-', markersize=8, linewidth=2, alpha=0.9)
+            has_data = True
+
+        if not has_data:
+            plt.close()
+            continue
+
+        plt.axhline(y=100, color='black', linestyle='-', label='Baseline (100%)')
+        plt.axhline(y=90, color='gray', linestyle='--', label='90% Threshold')
+        plt.axhline(y=50, color='red', linestyle='--', label='50% Threshold')
+        
+        plt.xticks(rotation=90, ha='center', fontsize=9)
+        plt.yticks(fontsize=9)
+        plt.ylabel("Relative Performance (% of Baseline)", fontsize=11)
+        plt.xlabel("Dataset", fontsize=11)
+        plt.title(f"Generalization Performance relative to Baseline: {node_count}-Node Configurations", fontsize=14)
+        plt.legend(bbox_to_anchor=(1.02, 1), loc='upper left', fontsize=10, title="Experiment Type")
+        plt.tight_layout()
+        plt.savefig(f"generalization_relative_performance_lines_{node_count}Node{suffix}.png", dpi=180, bbox_inches="tight")
+        plt.close()
+
     # 2. Separate Plot for 8-Node & LoRA grouped by inferred target
     def is_8_node(e):
         e_low = e.lower()
